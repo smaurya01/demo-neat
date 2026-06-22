@@ -1,0 +1,223 @@
+# NEAT Installation & Setup Guide
+
+Scope: concise, practical steps to install, pair, and run Palette Neat (Host + Modalix DevKit).
+
+Primary reference: https://developer.sima.ai/software/getting-started/
+
+---
+
+**Quick checklist (start here)**
+
+- Confirm your Modalix board software: `cat /etc/buildinfo`
+- **First-time setup:** complete Step 1, Step 2, Step 3 and Step 5.
+- **Second and later runs:** run `sima-cli sdk setup --devkit <devkit-ip>` again, but at setup prompt 6 press `n` so setup reuses the existing SDK container instead of creating a new one.
+- After setup completes, continue with Step 5 to attach VS Code to the SDK container and open `/workspace`.
+- Use a supported host (Ubuntu 22.04/24.04, Windows+WSL, macOS with Colima)
+- Install `sima-cli`, container runtime (Docker/Colima), then the NEAT SDK matching your board
+- Use `dk` from inside the SDK to run binaries and PyNeat scripts on the board
+
+---
+
+## 1. Host prerequisites
+
+## Component Overview
+
+- **Host:** Development machine with `sima-cli`, container runtime, and local workspace.
+- **Modalix DevKit (Board):** Target hardware running Modalix firmware where applications execute.
+- **NEAT SDK (cross-compile):** Containerized environment for building C++ apps, preparing model artifacts, and pairing with the board.
+- **Neat Core:** Runtime C++ libraries that power model execution and app APIs on Modalix.
+- **PyNeat:** Python bindings/runtime for prototyping and running NEAT apps on the DevKit.
+- **Model Compiler:** Optional toolchain to compile/quantize ONNX or GenAI models for Modalix.
+
+---
+
+- **NEAT Insight:** Browser-based inspection and debugging tool for runtime streams, files, and logs.
+- **NEAT Apps:** User applications built with NEAT C++ or PyNeat deployed to the DevKit.
+
+![NEAT software stack diagram](https://developer.sima.ai/software/assets/images/neat-software-stack-animated-cdd17bb3f6d7e02b6b2742cdf649b6bf.svg)
+
+
+- Host OS: Ubuntu 22.04/24.04 (recommended), Windows 11 (WSL2), macOS (Colima/Apple Silicon supported inside SDK)
+- Tools: `sudo` access, Git, `curl`/`wget`, a container runtime (Docker or Colima), and sufficient disk space (~10+ GB)
+- Install `sima-cli` (example):
+
+```bash
+# download and install sima-cli (verify latest instructions on the official site)
+curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
+```
+---
+
+## 2. Install the NEAT SDK on HOST (Cross-Compiler)
+
+Do this once during first-time setup. On second and later runs, skip this step unless you intentionally want to install a different SDK version or a fresh SDK image.
+
+1. Choose the SDK image that matches your board version. Example for recent releases:
+
+```bash
+# recommended current image tag
+sima-cli install ghcr:sima-neat/sdk:v2.1-latest
+
+# or pin an older image if your board is older
+sima-cli install ghcr:sima-neat/sdk:v2.0.0
+```
+
+![Docker Image Download](images/Download.png)
+
+Reference:
+
+- https://developer.sima.ai/software/getting-started/dev-environment/install-the-environment#install
+
+- https://developer.sima.ai/software/getting-started/compatibility/
+
+---
+
+## 3. Pair with the Modalix DevKit (recommended for first-time setup)
+
+![Host-Container-DevKit workspace mapping](images/devkit-workspace.svg)
+
+Before starting, make sure the host machine and Modalix DevKit can reach each other on the network. You should be able to ping the DevKit IP from the host.
+
+- Run the guided pairing/setup command. This installs the matching runtime components and configures the shared `/workspace`.
+- The setup flow may ask whether to install the Model Compiler. Install it only if you plan to compile or quantize models locally.
+- The screenshots below walk through each setup prompt. The SDK/container image name may be different on your machine.
+
+**Repeat-run shortcut:** For the second and later runs, use the same setup command below, but when you reach setup prompt 6, press `n`. After setup completes, continue to Step 5 and attach VS Code to the running SDK container.
+
+If you know the DevKit IP address, run:
+
+```bash
+sima-cli sdk setup --devkit <devkit-ip>
+```
+
+If you do not have the DevKit IP address yet, run setup without the `--devkit` option:
+
+```bash
+sima-cli sdk setup
+```
+
+1. Run the setup command.
+
+    ![Install and Setup](images/Install-setup1.png)
+
+2. System check: press `Y`.
+
+    ![Install and Setup](images/Install-setup2.png)
+
+3. Select the Docker image that you downloaded in Step 2.
+
+    ![Install and Setup](images/Install-setup3.png)
+
+4. Select the default workspace, or enter a custom workspace path.
+
+    ![Install and Setup](images/Install-setup4.png)
+
+5. SDK extension: press `Enter`.
+
+    ![Install and Setup](images/Install-setup5.png)
+
+6. **Important for second and later runs:** press `n`. This reuses the existing SDK container. If you press `y`, setup may create a new container and run the installation again.
+
+   For first-time installation only, follow the prompt as needed to create the SDK container.
+
+    ![Install and Setup](images/Install-setup6.png)
+
+7. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
+
+    ![Install and Setup](images/Install-setup7.png)
+
+8. Select the workspace path for the Modalix DevKit. By default, setup uses `/workspace` on the board and mounts the host workspace folder there.
+
+    ![Install and Setup](images/Install-setup8.png)
+
+9. Confirm that the installation completed successfully.
+
+    ![Install and Setup](images/Install-setup9.png)
+
+Reference: https://developer.sima.ai/software/getting-started/dev-environment/pair-with-a-devkit/
+
+---
+
+## 4. (Optional) Install the Model Compiler
+
+Install only if you need to compile ONNX/GenAI models for Modalix. Choose the correct architecture (amd64/arm64) and version that matches your board/SDK.
+
+Example:
+
+```bash
+# amd64 example for v2.1.2
+sima-cli install -v 2.1.2 tools/model-compiler/amd64
+activate-model-compiler
+```
+
+Reference: https://developer.sima.ai/software/compile-a-model/
+
+---
+
+## 5. Open the SDK container in VS Code, then build and run
+
+1. Install VS Code on the host machine:
+
+   - Download: https://code.visualstudio.com/download
+   - Ubuntu example:
+
+```bash
+sudo apt update
+sudo snap install code --classic
+```
+
+2. Open VS Code and install these extensions:
+
+   - **Dev Containers** by Microsoft
+   - **Codex** extension
+   - **Claude** extension
+
+   After installing the extensions, close VS Code and reopen it so the extensions load cleanly.
+
+3. Attach VS Code to the running NEAT SDK container:
+
+   - Open the VS Code Command Palette with `Ctrl+Shift+P`.
+   - Select **Dev Containers: Attach to Running Container...**.
+   - Select the downloaded and installed `sima-neat/sdk` container.
+   - In the attached VS Code window, open the `/workspace` folder.
+
+![VS Code attach to NEAT SDK container](images/vscode-container-attach.svg)
+
+4. From inside the attached SDK container, build your C++ app or prepare a PyNeat script in `/workspace`.
+
+5. Use `dk` to execute on the paired DevKit:
+
+```bash
+# run a compiled C++ binary on devkit
+dk build/<binary-name>
+
+# run a PyNeat script on devkit
+dk hello_neat.py
+```
+
+6. Minimal PyNeat smoke test (`hello_neat.py`):
+
+```python
+import neat
+print("PyNeat import successful")
+```
+
+Run inside the SDK using `dk hello_neat.py` to confirm runtime availability on the Modalix DevKit.
+
+Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
+
+---
+
+## 6. Troubleshooting & tips
+
+- If versions mismatch: confirm board with `cat /etc/buildinfo` and pin the SDK/model-compiler versions accordingly.
+- Use the shared `/workspace` (set by pairing) to avoid manual file copies between host and DevKit.
+- NEAT Insight: available at `https://localhost:9900` when running inside the SDK — use it to inspect streams, files, and runtime logs.
+- For network pairing issues, ensure the DevKit and host are reachable on the same network and firewall rules allow the pairing flow.
+
+---
+
+## References
+
+- https://developer.sima.ai/software/getting-started/
+- https://developer.sima.ai/software/getting-started/dev-environment/
+- https://developer.sima.ai/software/compile-a-model/
