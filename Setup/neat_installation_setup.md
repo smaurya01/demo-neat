@@ -83,19 +83,24 @@ Reference:
 
 **Repeat-run shortcut:** *For the second and later runs, use the same setup command below, but when you reach setup prompt 6, press `n`. After setup completes, continue to Step 5 and attach VS Code to the running SDK container.*
 
+--- 
+
+**NOTE-**
+```
+If you do not have the DevKit IP address yet, run setup without the `--devkit` option:    
+    - sima-cli sdk setup
+    - And then install the NEAT library separately on Modalix devkit, using this guide - https://developer.sima.ai/software/getting-started/neat-library/install-or-update
+```
+
+---
+
 If you know the DevKit IP address, run:
 
 ```bash
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
-If you do not have the DevKit IP address yet, run setup without the `--devkit` option:
-
-```bash
-sima-cli sdk setup
-```
-
-1. Run the setup command.
+1. Run the setup command. `sima-cli sdk setup --devkit XX.XX.XX.XX`
 
 
     <img src="images/Install-setup1.png" alt="Install and Setup" width="900">
