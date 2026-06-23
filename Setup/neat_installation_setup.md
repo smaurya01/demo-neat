@@ -230,14 +230,6 @@ Reference:
 
         <img src="images/VS-5.png" alt="Install and Setup" width="600">
 
-    - Check if sima-skill get picked by `Codex` / `Claude`.
-
-        <img src="images/VS-5.png" alt="Install and Setup" width="600">
-
-    - Check if sima-skill get picked by `Codex` / `Claude`.
-
-        <img src="images/VS-5.png" alt="Install and Setup" width="600">
-
     - Done with the setup
 
 4. From inside the attached SDK container, build your C++ app or prepare a PyNeat script in `/workspace`.
