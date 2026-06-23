@@ -81,7 +81,7 @@ Reference:
 - The setup flow may ask whether to install the Model Compiler. Install it only if you plan to compile or quantize models locally.
 - The screenshots below walk through each setup prompt. The SDK/container image name may be different on your machine.
 
-**Repeat-run shortcut:** *For the second and later runs, use the same setup command below, but when you reach setup prompt 6, press `n`. After setup completes, continue to Step 5 and attach VS Code to the running SDK container.*
+**Repeat-run shortcut:** *For the second and later runs, use the same setup command below, but when you reach setup prompt 6, press `n` to use existing container instead of creating a new one. After setup completes, continue and attach VS Code to the running SDK container.*
 
 --- 
 
@@ -184,10 +184,11 @@ Example:
 ```bash
 # amd64 example for v2.1.2
 sima-cli install -v 2.1.2 tools/model-compiler/amd64
-activate-model-compiler
 ```
 
-Reference: https://developer.sima.ai/software/compile-a-model/
+Reference: 
+- https://developer.sima.ai/software/getting-started/compatibility#model-compiler
+- https://developer.sima.ai/software/compile-a-model/
 
 ---
 
