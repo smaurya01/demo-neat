@@ -31,7 +31,7 @@ Primary reference: https://developer.sima.ai/software/getting-started/
 
 ---
 
-- **NEAT Insight:** Browser-based inspection and debugging tool for runtime streams, files, and logs.
+- **NEAT Insight:** Browser-based inspection and debugging tool for runtime streams, files, and logs. See [neat_insight.md](neat_insight.md).
 - **NEAT Apps:** User applications built with NEAT C++ or PyNeat deployed to the DevKit.
 
 ![NEAT software stack diagram](https://developer.sima.ai/software/assets/images/neat-software-stack-animated-cdd17bb3f6d7e02b6b2742cdf649b6bf.svg)
@@ -211,7 +211,7 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 
 - If versions mismatch: confirm board with `cat /etc/buildinfo` and pin the SDK/model-compiler versions accordingly.
 - Use the shared `/workspace` (set by pairing) to avoid manual file copies between host and DevKit.
-- NEAT Insight: available at `https://localhost:9900` when running inside the SDK — use it to inspect streams, files, and runtime logs.
+- NEAT Insight: available at `https://localhost:9900` when running inside the SDK — use it to inspect streams, files, and runtime logs. See [neat_insight.md](neat_insight.md).
 - For network pairing issues, ensure the DevKit and host are reachable on the same network and firewall rules allow the pairing flow.
 
 ---
@@ -221,3 +221,4 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 - https://developer.sima.ai/software/getting-started/
 - https://developer.sima.ai/software/getting-started/dev-environment/
 - https://developer.sima.ai/software/compile-a-model/
+- NEAT Insight guide: [neat_insight.md](neat_insight.md)
