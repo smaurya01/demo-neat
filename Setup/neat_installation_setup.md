@@ -28,14 +28,13 @@ Primary reference: https://developer.sima.ai/software/getting-started/
 - **Neat Core:** Runtime C++ libraries that power model execution and app APIs on Modalix.
 - **PyNeat:** Python bindings/runtime for prototyping and running NEAT apps on the DevKit.
 - **Model Compiler:** Optional toolchain to compile/quantize ONNX or GenAI models for Modalix.
-
----
-
 - **NEAT Insight:** Browser-based inspection and debugging tool for runtime streams, files, and logs. See [neat_insight.md](neat_insight.md).
 - **NEAT Apps:** User applications built with NEAT C++ or PyNeat deployed to the DevKit.
 
 ![NEAT software stack diagram](https://developer.sima.ai/software/assets/images/neat-software-stack-animated-cdd17bb3f6d7e02b6b2742cdf649b6bf.svg)
 
+
+---
 
 - Host OS: Ubuntu 22.04/24.04 (recommended), Windows 11 (WSL2), macOS (Colima/Apple Silicon supported inside SDK)
 - Tools: `sudo` access, Git, `curl`/`wget`, a container runtime (Docker or Colima), and sufficient disk space (~10+ GB)
@@ -57,7 +56,7 @@ Do this once during first-time setup. On second and later runs, skip this step u
 # recommended current image tag
 sima-cli install ghcr:sima-neat/sdk:v2.1-latest
 
-# or pin an older image if your board is older
+# sse sdk:v2.0.0 if your board is 2.0.0
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 ```
 
@@ -213,6 +212,7 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 - Use the shared `/workspace` (set by pairing) to avoid manual file copies between host and DevKit.
 - NEAT Insight: available at `https://localhost:9900` when running inside the SDK — use it to inspect streams, files, and runtime logs. See [neat_insight.md](neat_insight.md).
 - For network pairing issues, ensure the DevKit and host are reachable on the same network and firewall rules allow the pairing flow.
+- Primary reference: https://developer.sima.ai/software/getting-started/
 
 ---
 
