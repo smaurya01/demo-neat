@@ -20,7 +20,7 @@ The typical Insight development loop:
 
 upload media → convert to RTSP sources (e.g. `rtsp://127.0.0.1:8554/src1`) → run your application against those sources → view output through the WebRTC Video Viewer → analyze runtime metrics and logs.
 
-![NEAT Insight development loop](images/insight-development-loop.jpg)
+![NEAT Insight development loop](images/linux/insight-development-loop.jpg)
 
 Core functions:
 
@@ -119,7 +119,7 @@ The Insight interface is organized into five tabs:
 - **Video Viewer:** Display WebRTC output (up to 80 channels) with metadata overlays for detection, classification, pose estimation, segmentation, and tracking.
 - **Stats:** Placeholder for planned CPU, memory, disk, temperature, and profiling metrics.
 
-![NEAT Insight — Workspace overview](images/insight-workspace-overview.png)
+![NEAT Insight — Workspace overview](images/linux/insight-workspace-overview.png)
 
 ---
 
@@ -129,17 +129,17 @@ The Insight interface is organized into five tabs:
 
 2. Navigate to **Media Library** and upload the media video. The view provides file selection, preview, metadata inspection, upload, and delete actions in one place.
 
-    ![NEAT Insight — Media Library](images/insight-media-library.png)
+    ![NEAT Insight — Media Library](images/linux/insight-media-library.png)
 
 3. Navigate to **RTSP Source**. Assign media files to source slots (`src1`, `src2`, `src3`) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
 
-    ![NEAT Insight — RTSP Source](images/insight-rtsp-source.png)
+    ![NEAT Insight — RTSP Source](images/linux/insight-rtsp-source.png)
 
 4. Run your NEAT application / pipeline against the RTSP source(s).
 
 5. After the pipeline runs, view the output in the **Video Viewer** tab to verify video/metadata arrival and overlay alignment.
 
-    ![NEAT Insight — Video Viewer](images/insight-video-viewer.png)
+    ![NEAT Insight — Video Viewer](images/linux/insight-video-viewer.png)
 
 Reference: https://developer.sima.ai/software/tools/insight/user-interface
 

@@ -61,7 +61,7 @@ sima-cli install ghcr:sima-neat/sdk:v2.1-latest
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 ```
 
-![Docker Image Download](images/Download.png)
+![Docker Image Download](images/linux/Download.png)
 
 Reference:
 
@@ -97,41 +97,41 @@ sima-cli sdk setup
 
 1. Run the setup command.
 
-    ![Install and Setup](images/Install-setup1.png)
+    ![Install and Setup](images/linux/Install-setup1.png)
 
 2. System check: press `Y`.
 
-    ![Install and Setup](images/Install-setup2.png)
+    ![Install and Setup](images/linux/Install-setup2.png)
 
 3. Select the Docker image that you downloaded in Step 2.
 
-    ![Install and Setup](images/Install-setup3.png)
+    ![Install and Setup](images/linux/Install-setup3.png)
 
 4. Select the default workspace, or enter a custom workspace path.
 
-    ![Install and Setup](images/Install-setup4.png)
+    ![Install and Setup](images/linux/Install-setup4.png)
 
 5. SDK extension: press `Enter`.
 
-    ![Install and Setup](images/Install-setup5.png)
+    ![Install and Setup](images/linux/Install-setup5.png)
 
 6. **Important for second and later runs:** press `n`. This reuses the existing SDK container. If you press `y`, setup may create a new container and run the installation again.
 
    For first-time installation only, follow the prompt as needed to create the SDK container.
 
-    ![Install and Setup](images/Install-setup6.png)
+    ![Install and Setup](images/linux/Install-setup6.png)
 
 7. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
 
-    ![Install and Setup](images/Install-setup7.png)
+    ![Install and Setup](images/linux/Install-setup7.png)
 
 8. Select the workspace path for the Modalix DevKit. By default, setup uses `/workspace` on the board and mounts the host workspace folder there.
 
-    ![Install and Setup](images/Install-setup8.png)
+    ![Install and Setup](images/linux/Install-setup8.png)
 
 9. Confirm that the installation completed successfully.
 
-    ![Install and Setup](images/Install-setup9.png)
+    ![Install and Setup](images/linux/Install-setup9.png)
 
 Reference: https://developer.sima.ai/software/getting-started/dev-environment/pair-with-a-devkit/
 
