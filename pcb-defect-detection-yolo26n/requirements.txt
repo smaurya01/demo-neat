@@ -1,0 +1,3 @@
+# On-device runtime deps (the DevKit already provides `pyneat` via the NEAT SDK).
+numpy
+opencv-python
