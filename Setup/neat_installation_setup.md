@@ -59,7 +59,11 @@ sima-cli install ghcr:sima-neat/sdk:v2.1-latest
 sima-cli install ghcr:sima-neat/sdk:v2.0.0
 ```
 
+<<<<<<< HEAD:Setup/neat_installation_setup-.md
+![Docker Image Download](images/linux/Download.png)
+=======
 <img src="images/Download.png" alt="Docker Image Download" width="900">
+>>>>>>> origin/develop:Setup/neat_installation_setup.md
 
 Reference:
 
@@ -103,6 +107,27 @@ sima-cli sdk setup --devkit <devkit-ip>
 1. Run the setup command. `sima-cli sdk setup --devkit XX.XX.XX.XX`
 
 
+<<<<<<< HEAD:Setup/neat_installation_setup-.md
+1. Run the setup command.
+
+    ![Install and Setup](images/linux/Install-setup1.png)
+
+2. System check: press `Y`.
+
+    ![Install and Setup](images/linux/Install-setup2.png)
+
+3. Select the Docker image that you downloaded in Step 2.
+
+    ![Install and Setup](images/linux/Install-setup3.png)
+
+4. Select the default workspace, or enter a custom workspace path.
+
+    ![Install and Setup](images/linux/Install-setup4.png)
+
+5. SDK extension: press `Enter`.
+
+    ![Install and Setup](images/linux/Install-setup5.png)
+=======
     <img src="images/Install-setup1.png" alt="Install and Setup" width="900">
     
     ---
@@ -131,11 +156,19 @@ sima-cli sdk setup --devkit <devkit-ip>
 
 5. SDK extension: press `Enter`.
 
+>>>>>>> origin/develop:Setup/neat_installation_setup.md
 
     <img src="images/Install-setup5.png" alt="Install and Setup" width="900">
 
     ---
 
+<<<<<<< HEAD:Setup/neat_installation_setup-.md
+    ![Install and Setup](images/linux/Install-setup6.png)
+
+7. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
+
+    ![Install and Setup](images/linux/Install-setup7.png)
+=======
 6. **Important for second and later runs:** press `n`. This reuses the existing SDK container. 
 
     If you press `y`, setup may create a new container and run the installation again.
@@ -149,9 +182,17 @@ sima-cli sdk setup --devkit <devkit-ip>
 
 7. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
 
+>>>>>>> origin/develop:Setup/neat_installation_setup.md
 
     <img src="images/Install-setup7.png" alt="Install and Setup" width="900">
 
+<<<<<<< HEAD:Setup/neat_installation_setup-.md
+    ![Install and Setup](images/linux/Install-setup8.png)
+
+9. Confirm that the installation completed successfully.
+
+    ![Install and Setup](images/linux/Install-setup9.png)
+=======
     ---
 
 8. Select the workspace path for the Modalix DevKit. 
@@ -167,6 +208,7 @@ sima-cli sdk setup --devkit <devkit-ip>
 
 9. Confirm that the installation completed successfully.
 
+>>>>>>> origin/develop:Setup/neat_installation_setup.md
 
     <img src="images/Install-setup9.png" alt="Install and Setup" width="900">
 
