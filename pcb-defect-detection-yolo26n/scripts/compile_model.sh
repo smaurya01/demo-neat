@@ -6,7 +6,7 @@
 # Run inside the SiMa Model SDK container (the `afe` toolchain + ultralytics +
 # model_to_pipeline must be importable), e.g.:
 #
-#   sima-cli sdk model "bash /workspace/NEAT/demo-neat/plc-defect-detection-yolo26n/scripts/compile_model.sh"
+#   sima-cli sdk model "bash /workspace/demo-neat/pcb-defect-detection-yolo26n/scripts/compile_model.sh"
 #
 # All artifacts are written into assets/models/. The final pack is staged to
 # assets/models/plc_yolo26n_mpk.tar.gz (the path config/default.conf points to).
