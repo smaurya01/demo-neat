@@ -9,9 +9,9 @@ Primary reference: https://developer.sima.ai/software/getting-started/
 **Quick checklist**
 
 - Confirm your Modalix board software: `cat /etc/buildinfo`
-- **First-time setup:** complete Steps 1–3 and 5 (Step 4, Model Compiler, is optional).
-- **Second and later runs:** run `sima-cli sdk setup --devkit <devkit-ip>` again, but at setup prompt 6 press `n` so setup reuses the existing SDK container instead of creating a new one.
-- After setup completes, continue with Step 5 to attach VS Code to the SDK container and open `/workspace`.
+- **First-time setup:** complete Steps 1–2 and 4 (Step 3, Model Compiler, is optional). The Step 2 install command downloads the SDK image **and** starts setup/pairing in one continuous flow.
+- **Second and later runs:** run `sima-cli sdk setup --devkit <devkit-ip>` again, but at the container prompt press `n` so setup reuses the existing SDK container instead of creating a new one.
+- After setup completes, continue with Step 4 to attach VS Code to the SDK container and open `/workspace`.
 - Use a supported host (Ubuntu 22.04/24.04, Windows+WSL, macOS with Colima)
 - Install `sima-cli`, container runtime (Docker/Colima), then the NEAT SDK matching your board
 - Use `dk` from inside the SDK to run binaries and PyNeat scripts on the board
@@ -45,137 +45,143 @@ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 ```
 ---
 
-## 2. Install the NEAT SDK on HOST (Cross-Compiler)
+## 2. Install the NEAT SDK and pair with the DevKit
 
-Do this once during first-time setup. On second and later runs, skip this step unless you intentionally want to install a different SDK version or a latest SDK image.
+There are two ways to install, depending on your SDK version:
 
-1. Choose the SDK image that matches your board version. Example for recent releases:
+- **Single-step install (Section 2.1)** — the **latest** method for the current `release-2.1` channel (NEAT SDK 2.1.2.x). One command installs the SDK **and** pairs with the DevKit.
+- **Two-step install (Section 2.2)** — the **previous** method, for older SDK releases (**2.0.0, 2.1.2.0, 2.1.2.1**): pull the image, then run setup.
+
+Either way, setup finishes with the same [standard setup prompts](#standard-setup-prompts) shown at the end of this section.
+
+<img src="images/devkit-workspace.svg" alt="Host-Container-DevKit workspace mapping" width="900">
+
+**Before pairing,** make sure the host and the Modalix DevKit can reach each other on the network — you should be able to `ping` the DevKit IP from the host. Confirm your board software first with `cat /etc/buildinfo`.
+
+---
+
+### 2.1 Single-step install (latest — recommended)
+
+Reference: https://developer.sima.ai/software/getting-started/dev-environment/install-the-environment/
+
+Install the current NEAT SDK 2.1 release channel. **Installation and DevKit pairing are a single flow** — the command downloads the SDK image and then automatically starts setup and prompts you to pair, taking the **DevKit IP inline** at the prompt:
 
 ```bash
-# recommended current image tag
-sima-cli install ghcr:sima-neat/sdk:v2.1-latest
-
-# sse sdk:v2.0.0 if your board is 2.0.0
-sima-cli install ghcr:sima-neat/sdk:v2.0.0
+sima-cli neat install sdk@release-2.1
 ```
 
-<img src="images/Download.png" alt="Docker Image Download" width="900">
+`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **NEAT SDK 2.1.2.2**, which is compatible with **DevKit software 2.1.2**.
+
+1. Run the command. It validates the release metadata and downloads the SDK image. The first install can take several minutes.
+
+    ![Running sima-cli neat install sdk@release-2.1](images/linux/neat-install.png)
+
+    ---
+
+2. Once the image is available locally, setup starts automatically. At `Do you want to pair this SDK with a DevKit now? [y/N]`, press `y`, then enter the DevKit IP at `Enter DevKit IP address:` (for example, `192.168.135.156`).
+
+    ![Pair the SDK with a DevKit — enter the DevKit IP inline](images/linux/neat-pair-devkit.png)
+
+    ---
+
+**Skip pairing:** *if you do not have the DevKit IP yet, press `N`. The SDK workspace is still created, and you can pair later with `sima-cli sdk setup` (then install the NEAT library on the DevKit — see https://developer.sima.ai/software/getting-started/neat-library/install-or-update).*
+
+Setup then continues with the [standard setup prompts](#standard-setup-prompts) below.
+
+---
+
+### 2.2 Two-step install (previous — older SDK releases)
+
+Reference: https://developer.sima.ai/software/reference/two-step-sdk-installation/
+
+For SDK **2.0.0, 2.1.2.0, or 2.1.2.1**, install in two separate commands — first pull the SDK image, then run setup and pair.
+
+1. **Pull the SDK image** that matches your board:
+
+    ```bash
+    sima-cli install ghcr:sima-neat/sdk:v2.1-latest   # or pin e.g. :v2.0.0 for a 2.0.0 board
+    ```
+
+    ![Pulling the SDK container image](images/linux/Download.png)
+
+    ---
+
+2. **Run setup and pair** with the DevKit, passing the IP with `--devkit`:
+
+    ```bash
+    sima-cli sdk setup --devkit <devkit-ip>
+    ```
+
+    ![Running sima-cli sdk setup --devkit](images/linux/Install-setup1.png)
+
+    ---
+
+Setup then continues with the same [standard setup prompts](#standard-setup-prompts) below.
+
+---
+
+### Standard setup prompts
+
+After either install method above, setup walks through the same prompts. Your DevKit IP, workspace path, and container/image name will differ.
+
+1. Review the **System Requirements Report**. If `Some system checks failed` appears only because of a `Firewall` `WARNING`, press `y` at `Do you want to continue anyway? [y/N]`.
+
+    ![Install and Setup](images/linux/Install-setup2.png)
+
+    ---
+
+2. Select the SDK Docker image (the one you downloaded is pre-selected). Press `Enter` to confirm.
+
+    ![Install and Setup](images/linux/Install-setup3.png)
+
+    ---
+
+3. Select the default workspace, or enter a custom workspace path.
+
+    ![Install and Setup](images/linux/Install-setup4.png)
+
+    ---
+
+4. SDK extension: press `Enter`.
+
+    ![Install and Setup](images/linux/Install-setup5.png)
+
+    ---
+
+5. **Important for second and later runs:** press `n` to reuse the existing SDK container. If you press `y`, setup may create a new container and run the installation again. For a first-time install, follow the prompt to create the SDK container.
+
+    ![Install and Setup](images/linux/Install-setup6.png)
+
+    ---
+
+6. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
+
+    ![Install and Setup](images/linux/Install-setup7.png)
+
+    ---
+
+7. Select the workspace path for the Modalix DevKit. By default, setup uses `/workspace` on the board and mounts the host workspace folder there. Press `Enter` to accept the default. If it asks for a password, enter `edgeai`.
+
+    ![Install and Setup](images/linux/Install-setup8.png)
+
+    ---
+
+8. Confirm that the installation completed successfully.
+
+    ![Install and Setup](images/linux/Install-setup9.png)
+
+    ---
+
+**Repeat runs:** *You do not need to reinstall or re-pull the image. Re-run setup directly with `sima-cli sdk setup --devkit <devkit-ip>`, and press `n` at the container prompt to reuse the existing container.*
 
 Reference:
 
-- https://developer.sima.ai/software/getting-started/dev-environment/install-the-environment#install
-
+- https://developer.sima.ai/software/getting-started/dev-environment/pair-with-a-devkit/
 - https://developer.sima.ai/software/getting-started/compatibility/
 
 ---
 
-## 3. Pair with the Modalix DevKit (recommended setup)
-
-<img src="images/devkit-workspace.svg" alt="Host-Container-DevKit workspace mapping" width="900">
-
----
-
-**Before starting, make sure the host machine and Modalix DevKit can reach each other on the network. You should be able to ping the DevKit IP from the host.**
-
-- Run the guided pairing/setup command. This installs the matching runtime components and configures the shared `/workspace`.
-- The setup flow may ask whether to install the Model Compiler. Install it only if you plan to compile or quantize models locally.
-- The screenshots below walk through each setup prompt. The SDK/container image name may be different on your machine.
-
-**Repeat-run shortcut:** *For the second and later runs, use the same setup command below, but when you reach setup prompt 6, press `n` to use existing container instead of creating a new one. After setup completes, continue and attach VS Code to the running SDK container.*
-
---- 
-
-**NOTE-**
-```
-If you do not have the DevKit IP address yet, run setup without the `--devkit` option:    
-    - sima-cli sdk setup
-    - And then install the NEAT library separately on Modalix devkit, using this guide - https://developer.sima.ai/software/getting-started/neat-library/install-or-update
-```
-
----
-
-If you know the DevKit IP address, run:
-
-```bash
-sima-cli sdk setup --devkit <devkit-ip>
-```
-
-1. Run the setup command. `sima-cli sdk setup --devkit XX.XX.XX.XX`
-
-
-    <img src="images/Install-setup1.png" alt="Install and Setup" width="900">
-    
-    ---
-
-2. System check: press `Y`.
-
-
-    <img src="images/Install-setup2.png" alt="Install and Setup" width="900">
-
-    ---
-
-
-3. Select the Docker image that you downloaded in Step 2.
-
-
-    <img src="images/Install-setup3.png" alt="Install and Setup" width="900">
-
-    ---
-
-4. Select the default workspace, or enter a custom workspace path.
-
-
-    <img src="images/Install-setup4.png" alt="Install and Setup" width="900">
-
-    ---
-
-5. SDK extension: press `Enter`.
-
-
-    <img src="images/Install-setup5.png" alt="Install and Setup" width="900">
-
-    ---
-
-6. **Important for second and later runs:** press `n`. This reuses the existing SDK container. 
-
-    If you press `y`, setup may create a new container and run the installation again.
-
-    For first-time installation only, follow the prompt as needed to create the SDK container.
-
-
-    <img src="images/Install-setup6.png" alt="Install and Setup" width="900">
-
-    ---
-
-7. Install the Model Compiler extension only if needed. This is optional and may take about 15 minutes and around 10 GB of disk space.
-
-
-    <img src="images/Install-setup7.png" alt="Install and Setup" width="900">
-
-    ---
-
-8. Select the workspace path for the Modalix DevKit. 
-
-    By default, setup uses `/workspace` on the board and mounts the host workspace folder there.
-
-    Press `Enter` to select default location. If it asks for a password, enter  `edgeai`.
-
-
-    <img src="images/Install-setup8.png" alt="Install and Setup" width="900">
-
-    ---
-
-9. Confirm that the installation completed successfully.
-
-
-    <img src="images/Install-setup9.png" alt="Install and Setup" width="900">
-
-    ---
-Reference: https://developer.sima.ai/software/getting-started/dev-environment/pair-with-a-devkit/
-
----
-
-## 4. (Optional) Install the Model Compiler
+## 3. (Optional) Install the Model Compiler
 
 Install only if you need to compile ONNX/GenAI models for Modalix. Choose the correct architecture (amd64/arm64) and version that matches your board/SDK.
 
@@ -192,7 +198,7 @@ Reference:
 
 ---
 
-## 5. Open the SDK container in VS Code, then build and run
+## 4. Open the SDK container in VS Code, then build and run
 
 1. Install VS Code on the host machine:
 
@@ -257,7 +263,7 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 
 ---
 
-## 6. Troubleshooting & tips
+## 5. Troubleshooting & tips
 
 - If versions mismatch: confirm board with `cat /etc/buildinfo` and pin the SDK/model-compiler versions accordingly.
 - Use the shared `/workspace` (set by pairing) to avoid manual file copies between host and DevKit.
@@ -271,5 +277,6 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 
 - https://developer.sima.ai/software/getting-started/
 - https://developer.sima.ai/software/getting-started/dev-environment/
+- https://developer.sima.ai/software/getting-started/dev-environment/install-the-environment/
 - https://developer.sima.ai/software/compile-a-model/
 - NEAT Insight guide: [neat_insight.md](neat_insight.md)
