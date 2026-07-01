@@ -87,6 +87,23 @@ dk /workspace/demo-neat/single-stream-yolo26n/build/single_stream_yolo26n \
   --frames 30
 ```
 
+## How To Run With Python
+
+Run the Python version on the DevKit from the SDK shell:
+
+```bash
+dk /workspace/demo-neat/single-stream-yolo26n/main.py \
+  --config /workspace/demo-neat/single-stream-yolo26n/config/default.conf
+```
+
+Bounded smoke test:
+
+```bash
+dk /workspace/demo-neat/single-stream-yolo26n/main.py \
+  --config /workspace/demo-neat/single-stream-yolo26n/config/default.conf \
+  --frames 30
+```
+
 ## How To See The Output
 
 Run this on the host machine receiving UDP. Use the same port configured by `udp_port_base`.
