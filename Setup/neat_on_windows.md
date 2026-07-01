@@ -143,7 +143,7 @@ All commands in this step run in **PowerShell as Administrator**.
 
 ## 3. Configure WSL networking
 
-NEAT **DevKit Sync** (the shared `/workspace` mapping) needs the host and DevKit to reach each other over the network. On Windows, set WSL to **mirrored** networking so the DevKit can see the WSL environment.
+NEAT **DevKit Sync** (the shared `/workspace` mapping) needs the host and DevKit to reach each other over the network. On Windows, set WSL to **mirrored** networking so the DevKit can see the WSL environment. This lets WSL share the host network configuration, which both **DevKit Sync** and **NFS communication** rely on.
 
 1. In Windows, edit (or create) the file `%UserProfile%\.wslconfig` and add:
 
@@ -273,20 +273,19 @@ Authenticate with your **SiMa Developer Portal** credentials when prompted.
 
 ## 8. Install the NEAT SDK
 
-Install the SDK image that matches your DevKit software version. Example for current releases:
+Install the current NEAT SDK 2.1 release channel. From the **Ubuntu terminal**, this **single command** downloads the SDK container image and then automatically starts SDK setup, including the DevKit pairing prompt covered in [Step 9](#9-pair-with-the-modalix-devkit):
 
 ```bash
-sima-cli install ghcr:sima-neat/sdk:v2.1-latest
-
-# or pin a specific version if your board is older
-sima-cli install ghcr:sima-neat/sdk:v2.0.0
+sima-cli neat install sdk@release-2.1
 ```
+
+`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **NEAT SDK 2.1.2.2**, which is compatible with **DevKit software 2.1.2**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
 
 > **If this fails with a Docker permission error** — `Docker daemon is running, but this user lacks permission to access it` (cannot access `/var/run/docker.sock`) — your shell has not picked up `docker` group membership yet. `sima-cli` prints the exact fix: run `newgrp docker` (or log out and back in), then re-run the install:
 >
 > ```bash
 > newgrp docker
-> sima-cli install ghcr:sima-neat/sdk:v2.1-latest
+> sima-cli neat install sdk@release-2.1
 > ```
 >
 > If `newgrp` itself is missing (`Command 'newgrp' not found`, common on newer Ubuntu), install it first, then retry:
@@ -294,7 +293,7 @@ sima-cli install ghcr:sima-neat/sdk:v2.0.0
 > ```bash
 > sudo apt install util-linux-extra
 > newgrp docker
-> sima-cli install ghcr:sima-neat/sdk:v2.1-latest
+> sima-cli neat install sdk@release-2.1
 > ```
 >
 > ![sima-cli install — Docker permission error and the newgrp docker fix](images/windows/docker-permission-newgrp.png)
@@ -305,16 +304,21 @@ On success, `sima-cli` confirms the Docker daemon and starts pulling the image:
 
 ```text
 ✓ Docker daemon is running
-Pulling container image: ghcr:sima-neat/sdk:v2.1-latest
-v2.1-latest: Pulling from sima-neat/sdk
-...
+Pulling container image ...
 ```
 
-The initial download can take several minutes and may show no progress bar.
+The initial download can take several minutes and may show no progress bar. After the image is downloaded, setup runs automatically and asks whether to pair with a DevKit — continue with [Step 9](#9-pair-with-the-modalix-devkit). If you skip pairing, the SDK workspace is still created and you can pair later.
+
+> **Windows ordering note.** Pairing needs the DevKit reachable, which on Windows depends on the [ICS networking](#91-connect-the-devkit-windows-networking) and [NFS firewall](#92-allow-nfs-traffic-through-the-windows-firewall) setup in Step 9. Either complete Step 9.1–9.2 **before** running this install command, or press `N` at the pairing prompt to skip pairing and pair afterward with `sima-cli sdk setup --devkit <devkit-ip>`.
 
 ![NEAT SDK install — pulling the container image](images/windows/sima-neat-install.png)
 
-> Confirm your board software first with `cat /etc/buildinfo` on the DevKit, then pick a matching SDK tag.
+> **Older SDK releases (legacy two-step install).** For SDK **2.0.0, 2.1.2.0, or 2.1.2.1**, use the legacy image-pull + setup flow instead — pull the image that matches your board, then run setup separately:
+>
+> ```bash
+> sima-cli install ghcr:sima-neat/sdk:v2.0.0   # match the tag to your board
+> sima-cli sdk setup --devkit <devkit-ip>
+> ```
 
 References:
 
@@ -360,23 +364,26 @@ ssh sima@<devkit-ip>   # optional connectivity check
 
 ### 9.3 Run guided setup
 
-From the Ubuntu terminal, if you know the DevKit IP:
+The `sima-cli neat install sdk@release-2.1` command in [Step 8](#8-install-the-neat-sdk) starts this guided setup automatically once the image is downloaded. It asks whether you want to pair with a DevKit and takes the **DevKit IP inline** at the prompt — you do not pass it as a flag:
+
+```text
+Do you want to pair this SDK with a DevKit now? [y/N]: y
+Enter DevKit IP address: 192.168.135.156
+```
+
+Run the commands below directly only when you need to re-run setup later (for example, to re-pair or restart the container). From the Ubuntu terminal, if you know the DevKit IP:
 
 ```bash
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
-If you do not have the DevKit IP yet:
-
-```bash
-sima-cli sdk setup
-```
+If you do not have the DevKit IP yet, press `N` at the pairing prompt (or run `sima-cli sdk setup` without a flag) to skip pairing — the workspace is still created and you can pair later.
 
 Walk through the prompts (your DevKit IP, workspace path, and container name will differ):
 
-1. Run the setup command with your DevKit IP.
+1. At `Do you want to pair this SDK with a DevKit now? [y/N]`, press `y`, then enter the DevKit IP at `Enter DevKit IP address:`.
 
-   ![Run sima-cli sdk setup with the DevKit IP](images/windows/Install_1.png)
+   ![Pair the SDK with a DevKit — enter the DevKit IP inline](images/windows/Install_1.png)
 
 2. **System requirements check.** Setup verifies Python, Docker, and CPU/RAM (all should `PASS`). **Firewall** often shows a `WARNING` because it cannot verify the Windows firewall from inside WSL — that is expected once you have added the NFS rules in [Step 9.2](#92-allow-nfs-traffic-through-the-windows-firewall). At `Do you want to continue anyway? [y/N]`, press `y`.
 
@@ -543,7 +550,7 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 Tips:
 
 - Use the shared `/workspace` (set by pairing) instead of copying files between host and DevKit.
-- **NEAT Insight** runs inside the SDK at `https://localhost:9900` for inspecting streams, files, and logs. See [neat_insight.md](neat_insight.md).
+- **NEAT Insight** runs inside the SDK for inspecting streams, files, and logs. On a Windows direct-link (ICS) setup, open it **locally** at `https://localhost:9900` — firewall and WSL port-forwarding constraints prevent reaching it remotely from other machines on the network. See [neat_insight.md](neat_insight.md).
 
 ---
 
