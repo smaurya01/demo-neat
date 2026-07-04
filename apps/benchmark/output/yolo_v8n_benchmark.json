@@ -1,0 +1,28 @@
+{
+  "benchmark": {
+    "type": "model.synthetic",
+    "frames": 1000,
+    "timestamp_utc": "2026-07-04T09:43:39.348406+00:00"
+  },
+  "model": {
+    "path": "/workspace/demo-neat/apps/benchmark/assets/yolo_v8n_mpk.tar.gz",
+    "file": "yolo_v8n_mpk.tar.gz",
+    "input_specs": [
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff894a23f0>"
+    ],
+    "output_specs": [
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff894a23f0>",
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff892b5620>",
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff892b56f0>",
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff892b5890>",
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff892b5960>",
+      "<pyneat._pyneat_core.TensorConstraint object at 0xffff892b5a30>"
+    ]
+  },
+  "metrics": {
+    "latency_ms": 6.945749735999999,
+    "fps": 387.39698691371,
+    "avg_power_watts": 0.0,
+    "energy_joules": 0.0
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "compiled_model": "compile/build/latest_yolo26n_compile/yolo26n_einsum_raw/yolo26n_einsum_raw_prepared.onnx",
+  "input_model": "assets/models/yolo26n_einsum_raw.onnx",
+  "inputs": [
+    [
+      "images",
+      [
+        1,
+        3,
+        640,
+        640
+      ]
+    ]
+  ],
+  "model_sdk_version": "2.1.0",
+  "mpk": {
+    "files": [
+      "0_detessellate.json",
+      "0_preproc.json",
+      "0_process_mla.json",
+      "archived_compile_script.compile_yolo26_modelsdk.py",
+      "pipeline_sequence.json",
+      "yolo26n_einsum_raw_mpk.json",
+      "yolo26n_einsum_raw_stage1_mla.elf",
+      "yolo26n_einsum_raw_stage1_mla_stats.yaml"
+    ],
+    "mla_elf_count": 1,
+    "mpk": "compile/build/latest_yolo26n_compile/yolo26n_einsum_raw/yolo26n_einsum_raw_mpk.tar.gz",
+    "process_tvm_count": 0,
+    "processor_counts": {
+      "EV74": 15,
+      "MLA": 1
+    },
+    "so_count": 0
+  },
+  "output_root": "compile/build/latest_yolo26n_compile/yolo26n_einsum_raw",
+  "outputs": [
+    "bbox_0",
+    "bbox_1",
+    "bbox_2",
+    "class_logit_0",
+    "class_logit_1",
+    "class_logit_2"
+  ]
+}

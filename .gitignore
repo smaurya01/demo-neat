@@ -28,6 +28,7 @@ Makefile
 *.pid
 logs/
 tmp/
+.ipynb_checkpoints/
 
 # Editor/OS noise
 .DS_Store
