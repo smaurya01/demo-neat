@@ -1,0 +1,151 @@
+# Single Stream YOLOv8n Segmentation
+
+## Introduction
+
+This demo runs one RTSP stream through the SiMa Neat YOLOv8n segmentation model, draws
+class-colored masks plus labeled boxes, and publishes one annotated H.264/RTP UDP stream.
+
+## About Project
+
+- Application: `single_stream_yolov8n_seg`
+- Model: `yolo_v8n_seg_mpk.tar.gz`
+- Input: RTSP H.264 stream
+- Output: one UDP/RTP H.264 stream with segmentation overlay
+- Runtime config: `./config/default.conf`
+
+## Requirements
+
+Run build commands from the Modalix SDK/eLxr environment where the Modalix SDK sysroot
+and `dk` are available. Run the final binary on the DevKit with `dk`.
+
+
+Run the commands below from this app folder:
+
+```bash
+cd /path/to/demo-neat/apps/single-stream-yolov8n-seg
+```
+
+## Model Download Command
+
+Run this in the SDK shell:
+
+```bash
+mkdir -p ./assets/models
+cd ./assets/models
+sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8n_seg
+```
+
+Expected model path:
+
+```text
+./assets/models/yolo_v8n_seg_mpk.tar.gz
+```
+
+## Configure
+
+Edit `./config/default.conf` before running. At minimum, set:
+
+```text
+rtsp_url=rtsp://<rtsp-server-ip>:8555/stream
+model_path=./assets/models/yolo_v8n_seg_mpk.tar.gz
+udp_host=<host-ip-that-receives-video>
+udp_port_base=5202
+```
+
+For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
+
+## Config Parameters
+
+`rtsp_url`: RTSP H.264 input stream consumed by the source graph.
+
+`rtsp_transport`: RTSP transport mode. Use `tcp` for reliability or `udp` for lower latency.
+
+`udp_host`: Host/IP that receives the annotated UDP/RTP output stream.
+
+`udp_port_base`: UDP/RTP output port used by the H.264 video sender.
+
+`model_path`: Model archive loaded by the Neat model node.
+
+`model_width`: Model input width used by Neat preprocessing.
+
+`model_height`: Model input height used by Neat preprocessing.
+
+`fallback_width`: Fallback decoded frame width used when RTSP caps are incomplete.
+
+`fallback_height`: Fallback decoded frame height used when RTSP caps are incomplete.
+
+`fallback_fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
+
+`latency_ms`: RTSP receiver latency buffer in milliseconds.
+
+`score_threshold`: Segmentation score threshold used by YOLOv8 segmentation decode.
+
+`nms_iou`: NMS IoU threshold used by Neat decode.
+
+`top_k`: Maximum decoded detections or instances per frame.
+
+`num_classes`: Number of classes in the model output.
+
+`frames`: Number of frames to process. Use `0` to run until interrupted.
+
+`bitrate_kbps`: H.264 output encoder bitrate in kbps.
+
+`print_backend`: Print generated backend pipelines when set to `true`.
+
+## How To Build
+
+Run from the SDK shell:
+
+```bash
+cmake -S . \
+  -B ./build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
+cmake --build ./build --parallel
+```
+
+## How To Run
+
+Run on the DevKit from the SDK shell. The C++ demo reads `./config/default.conf`; it does not use
+`--config` or `--frames` command-line flags.
+
+```bash
+dk ./build/single_stream_yolov8n_seg
+```
+
+For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`, then run the same command.
+
+## How To Run With Python
+
+Run the Python version on the DevKit from the SDK shell:
+
+```bash
+dk ./main.py \
+  --config ./config/default.conf
+```
+
+Bounded smoke test:
+
+```bash
+dk ./main.py \
+  --config ./config/default.conf \
+  --frames 30
+```
+
+## How To See The Output
+
+Install host viewer tools if needed:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+```
+
+
+Run this on the host machine receiving UDP. Use the same port configured by `udp_port_base`.
+
+```bash
+gst-launch-1.0 -v udpsrc port=5202 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+```
+
+Expected output: live video with YOLOv8n segmentation masks and labeled boxes.
