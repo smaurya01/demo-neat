@@ -184,3 +184,46 @@ lifetime; agents poll instead of blocking in the foreground.
   share one MLA hardware gatekeeper; one process/many served names does not multiply throughput).
 - NOTE for Agent F: llima/README.md folder map currently says 04/05 are "owned by other tracks and
   not part of this folder's basics". Those sections now exist and could be linked from the README.
+
+## T3 — detection-vlm-assistant app + llima/03 notebook (Agent D, 2026-07-09)
+
+- **New app `apps/detection-vlm-assistant/`** (`main.py`, `src/vlm_commenter.py`,
+  `config/default.conf`, `README.md`, `assets/models/` git-ignored with the T1 yolo11n
+  archive copied in as `yolo_11n_mpk.tar.gz`). Adapted from
+  `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM) + Agent A's
+  `apps/multi-stream-yolo-yolo11` (detector idioms). Detection leg validated LIVE; VLM leg
+  code-complete + API-checked, NOT executed (per split-validation rule).
+
+- **Decision: detector uses `push([tensor])` + `pull("detections", ...)`, NOT `run([...])`.**
+  Why: on the compile_ready yolo11n archive, the reference app's synchronous
+  `detector_run.run([tensor])` returned a sample with **0 extractable tensors** -> 0
+  detections, even though the raw 6-tensor YoloV26 head was present. Switching to Agent A's
+  named-output push/pull pattern surfaced the model-managed box-decode output (a 1-tensor
+  TensorSet) which `pyneat.decode_bbox` turned into real boxes (PERSON/CHAIR/TV/... verified
+  live). Alternative (reference's `run()` + `parse_boxes`) left on the table because it
+  produced nothing here. Reverse: revert `detect()` to `run([...])` if a future archive
+  surfaces decode output through the sync helper.
+
+- **Decision: explicit letterbox resize in ModelOptions** (`resize.enable=On`,
+  `width/height=model_width/height=640`, `mode=Letterbox`, `pad_value=114`, plus
+  `color_convert` BGR->RGB, `num_classes=80`). Why: the reference's auto-only preprocess did
+  not resize full-size frames to the 640 model input on this archive. Mirrors Agent A's proven
+  block. Reverse: drop the resize block to test auto-planner behaviour.
+
+- **Decision: VLM via direct `pyneat.genai.VisionLanguageModel` (in-process), not the
+  upstream OpenAI-compatible `GenAIServer` HTTP path.** Why: one process owns both detector and
+  VLM, so a function call beats an HTTP round-trip; matches the house `02-run-llm-vlm` usage.
+  Server path documented in the notebook + README as the alternative (use when the boundary is
+  a network). Reverse: swap `_call_vlm` for an HTTP client if the VLM becomes a separate service.
+
+- **Decision: dry-run (`--no-vlm`) is the default whenever the VLM dir is missing / disabled.**
+  The bounded background worker logs the crop + the exact prompt that WOULD be sent instead of
+  calling the VLM. This is how the detection leg was validated live without touching the VLM,
+  and is genuinely useful for tuning triggers/prompts. Colour trap (`cv2.cvtColor BGR2RGB` at
+  the request boundary) called out in code, README, and notebook.
+
+- **Trigger/dedup/rate-limit knobs** (class allow-list, min score, min area frac, IoU dedup +
+  cooldown, wall-clock interval, bounded queue) live in `config/default.conf` so operators
+  retune without editing code. `vlm_interval_seconds` is wall-clock (noted in README): over a
+  fast still-image batch only the first qualifying crop fires — intended for the always-on RTSP
+  case.
