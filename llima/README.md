@@ -33,10 +33,40 @@ llima/
       run_llm.py                  # minimal CLI version of 01_run_llm
       run_vlm.py                  # minimal CLI version of 02_run_vlm
       run_asr.py                  # minimal CLI version of 03_audio_input_asr
+  03-yolo-plus-vlm/
+    01_detection_to_vlm.ipynb     # detection -> trigger-gated VLM captions (pairs with
+                                   # apps/detection-vlm-assistant)
+  04-llm-vlm-compilation/
+    01_llm_compilation.ipynb      # bring-your-own LLM: host-side llima-compile flow,
+                                   # supported formats, artifact contract
+    02_vlm_compilation.ipynb      # VLM specifics: vision encoder + LM, common failures
+    notes/triage_checklist.md     # "is this model LLiMa-able?" decision checklist
+  05-genai-server/
+    01_genai_server.ipynb         # pyneat.genai.GenAIServer, OpenAI-compatible endpoints
+    02_multi_model_server.ipynb   # serving multiple models: memory budgeting, concurrency
+    scripts/
+      serve_multi_model.py        # in-process multi-model GenAIServer
+      client_examples.py          # text / image / transcription request clients
 ```
 
-Sections `03-yolo-plus-vlm/`, `04-llm-vlm-compilation/`, and `05-genai-server/` are owned by other
-tracks and are not part of this folder's basics + run material.
+Sections `01-llima-basics/` and `02-run-llm-vlm/` are the foundations + run material this README
+introduces. The later sections extend the same track and were added by other agents in this wave:
+
+- **[`03-yolo-plus-vlm/`](03-yolo-plus-vlm/01_detection_to_vlm.ipynb)** — trigger-based
+  detection→VLM teaching notebook (pairs with `../apps/detection-vlm-assistant`).
+- **[`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb)** — bring-your-own
+  LLM/VLM compilation via the host-side `llima-compile` tool (docs-derived; see the honesty note
+  below), plus a [triage checklist](04-llm-vlm-compilation/notes/triage_checklist.md).
+- **[`05-genai-server/`](05-genai-server/01_genai_server.ipynb)** — `pyneat.genai.GenAIServer`,
+  OpenAI-compatible endpoints, and multi-model serving.
+
+> **Honesty note on `04-llm-vlm-compilation/`:** there is **no `llima compile` subcommand** — the
+> on-board `llima` CLI is runtime + model-manager only (`run, search, pull, list, rm,
+> benchmark-server`). GenAI compilation is a separate **host-side `llima-compile` (Model Compiler)**
+> tool that is not on the board or in `/workspace/core`, so those notebooks are **docs-derived, not
+> source-verified**, and two official doc pages returned HTTP 403 (exact flags unconfirmed). The
+> load-bearing, testable part — the deployed model-directory contract — IS verified in
+> `core/src/genai/GenAIInternal.cpp`. The notebooks label every fact `[docs]` vs `[core]`.
 
 ## Two layers, do not confuse them
 

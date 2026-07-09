@@ -51,17 +51,13 @@ cd /path/to/demo-neat/apps/multi-stream-yolo-yolo11
 
 ## Model Download / Build
 
-Option A — download the prebuilt YOLO11n archive from the model zoo (SDK shell):
+> **There is no prebuilt YOLO11n in the model zoo.** The SDK 2.1.2 Modalix zoo exposes only
+> `yolo_v8n`, `yolo_v8n_seg`, and `open_pose` — no yolo11 variant. (As of 2026-07-09 the zoo
+> metadata URL also 302-redirects to `auth.sima.ai`, so it can no longer be listed anonymously.)
+> A `sima-cli modelzoo ... get yolo_11n` command will not give you this model. Compile it yourself.
 
-```bash
-mkdir -p ./assets/models
-cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
-```
-
-Option B — compile it yourself with the graph-surgery flow (recommended, this is
-the flow T1 verifies). See `../../model-compilation/README.md` for the full
-walkthrough. The compiled archive is:
+Compile it with the graph-surgery flow (this is the flow T1 verifies). See
+`../../model-compilation/README.md` for the full walkthrough. The compiled archive is:
 
 ```text
 ../../model-compilation/work/yolo11n/<...>/compile_int8/.../yolo11n.compile_ready_mpk.tar.gz
