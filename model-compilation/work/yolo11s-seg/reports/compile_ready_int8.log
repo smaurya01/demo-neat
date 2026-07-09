@@ -1,0 +1,101 @@
+[INFO] ------------------------------------------------------------
+[INFO] Model Compiler Version: 2.1.0
+[INFO] Python Version: 3.12.3
+[INFO] Output Directory: /workspace/demo-neat/model-compilation/work/yolo11s-seg/compile_int8/yolo11s-seg.compile_ready
+[INFO] ------------------------------------------------------------
+[INFO] Preparing ONNX model: /workspace/demo-neat/model-compilation/work/yolo11s-seg/surgery/yolo11s-seg.compile_ready.onnx
+[INFO] Simplifying with fixed shapes: {'images': [1, 3, 640, 640]}
+[INFO] Prepared model saved to: /workspace/demo-neat/model-compilation/work/yolo11s-seg/surgery/yolo11s-seg.compile_ready_prepared.onnx
+[INFO] Model successfully loaded for modalix
+[INFO] Initializing quantization...
+[INFO] Loading real calibration data from: /workspace/demo-neat/model-compilation/assets/yolo_calibration
+2026-07-09 20:38:06,033 - afe.apis.loaded_net - INFO - Quantize loaded net, layout = NCHW, arm_only = False
+2026-07-09 20:38:06,034 - afe.apis.loaded_net - INFO - Calibration method = mse
+2026-07-09 20:39:07,681 - afe.ir.transform.calibration_transforms - INFO - Running Calibration ...
+2026-07-09 20:39:13,221 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 2 samples
+2026-07-09 20:39:19,206 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 4 samples
+2026-07-09 20:39:25,313 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 6 samples
+2026-07-09 20:39:31,271 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 8 samples
+2026-07-09 20:39:37,469 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 10 samples
+2026-07-09 20:39:43,390 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 12 samples
+2026-07-09 20:39:49,312 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 14 samples
+2026-07-09 20:39:55,215 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 16 samples
+2026-07-09 20:40:01,316 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 18 samples
+2026-07-09 20:40:06,991 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 20 samples
+Running Calibration ...
+Running Calibration ...DONE
+Running quantization ...
+Running quantization ...DONE
+[INFO] Quantized model saved.
+[INFO] ------------------------------------------------------------
+[INFO] Internal graph structure (for tessellate parameters):
+[INFO]   Input node names: ['images']
+[INFO]   Output node name: yolo11s-seg.compile_ready/tuple_out
+[INFO]   All nodes:
+[INFO]     PLACEHOLDER: images
+[INFO] ------------------------------------------------------------
+[INFO] Compiling for modalix with batch size 1...
+[INFO] ------------------------------------------------------------
+[INFO] MLA TESSELATION MODE ENABLED: Using internal MLA node names
+[INFO] DEBUG: Checking for MLA_0 node...
+[INFO] DEBUG: Available nodes: ['images', 'quantize_0', 'MLA_0/tuple_get_item_0', 'MLA_0/tuple_get_item_1', 'MLA_0/tuple_get_item_2', 'MLA_0/tuple_get_item_3', 'MLA_0/tuple_get_item_4', 'MLA_0/tuple_get_item_5', 'MLA_0/tuple_get_item_6', 'MLA_0/tuple_get_item_7']...
+[INFO] DEBUG: MLA node found!
+[INFO] DEBUG: MLA node has 1 inputs
+[INFO] DEBUG: MLA input names: ['MLA_0/placeholder_0_0']
+[INFO]   Input 0: 'MLA_0/placeholder_0_0' -> MLA Direct (HWC)
+[INFO] DEBUG: MLA output node name: MLA_0/tuple_out
+[INFO] DEBUG: Output node is tuple: True
+[INFO] DEBUG: Output names: ['MLA_0/tuple_concat_167', 'MLA_0/tuple_concat_200', 'MLA_0/tuple_concat_245', 'MLA_0/conv2d_add_254', 'MLA_0/conv2d_add_263', 'MLA_0/conv2d_add_272', 'MLA_0/conv2d_add_277', 'MLA_0/conv2d_add_282', 'MLA_0/conv2d_add_287', 'MLA_0/swish_294']
+[INFO]   Output 0: 'MLA_0/tuple_concat_167_output' -> MLA Direct (HWC16)
+[INFO]   Output 1: 'MLA_0/tuple_concat_200_output' -> MLA Direct (HWC16)
+[INFO]   Output 2: 'MLA_0/tuple_concat_245_output' -> MLA Direct (HWC16)
+[INFO]   Output 3: 'MLA_0/conv2d_add_254_output' -> MLA Direct (HWC16)
+[INFO]   Output 4: 'MLA_0/conv2d_add_263_output' -> MLA Direct (HWC16)
+[INFO]   Output 5: 'MLA_0/conv2d_add_272_output' -> MLA Direct (HWC16)
+[INFO]   Output 6: 'MLA_0/conv2d_add_277_output' -> MLA Direct (HWC16)
+[INFO]   Output 7: 'MLA_0/conv2d_add_282_output' -> MLA Direct (HWC16)
+[INFO]   Output 8: 'MLA_0/conv2d_add_287_output' -> MLA Direct (HWC16)
+[INFO]   Output 9: 'MLA_0/swish_294_output' -> MLA Direct (HWC16)
+[INFO] ------------------------------------------------------------
+[INFO] DEBUG: Final tessellate_parameters keys: ['MLA_0/placeholder_0_0', 'MLA_0/tuple_concat_167_output', 'MLA_0/tuple_concat_200_output', 'MLA_0/tuple_concat_245_output', 'MLA_0/conv2d_add_254_output', 'MLA_0/conv2d_add_263_output', 'MLA_0/conv2d_add_272_output', 'MLA_0/conv2d_add_277_output', 'MLA_0/conv2d_add_282_output', 'MLA_0/conv2d_add_287_output', 'MLA_0/swish_294_output']
+[INFO] ------------------------------------------------------------
+2026-07-09 20:40:11,453 - afe.apis.model - INFO - Compiling quantized net "yolo11s-seg.compile_ready"
+2026-07-09 20:40:11,503 - afe.core.compile_networks - INFO - The model is split into 1 segments for MLA and APU
+2026-07-09 20:40:11,503 - afe.backends.mla.afe_to_n2a_compiler.n2a_compiler_operations - INFO - Stage 1 of 1: compiling for MLA
+2026-07-09 20:40:11,531 - mlc.compiler.model_graph.l1_based - INFO - Get model compilation properties
+2026-07-09 20:40:11,541 - mlc.compiler.model_graph.l1_based - INFO - Checking if layers fit into memory without splitting
+2026-07-09 20:40:11,541 - mlc.compiler.model_graph.l1_based - INFO - Generating the list of feasible layouts
+2026-07-09 20:40:11,541 - mlc.compiler.model_graph.l1_based - INFO - Setting layer parameters
+2026-07-09 20:40:55,019 - mlc.compiler.model_graph.l1_based - INFO - Splitting large tensor placeholders by height
+2026-07-09 20:41:38,436 - mlc.compiler.model_graph.l1_based - INFO - Setting tile layouts
+2026-07-09 20:42:04,572 - mlc.compiler.model_graph.l1_based - INFO - Allocating memory for IFM/OFM tensors
+2026-07-09 20:42:04,903 - mlc.compiler.model_graph.l1_based - INFO - Get model compilation properties done
+2026-07-09 20:42:05,259 - afe.backends.mla.afe_to_n2a_compiler.n2a_backend_runner - INFO - Start evaluate process to generate check file
+2026-07-09 20:42:05,260 - mlc.kernel.layout - INFO - L2 caching mode: L2CachingMode.NONE
+2026-07-09 20:42:05,326 - mlc.compiler.model_graph.l1_based - INFO - Generating model code
+2026-07-09 20:42:46,759 - mlc.compiler.model_graph.l1_based - INFO - Generating model code done
+2026-07-09 20:42:47,193 - mlc.test_util.test_context - INFO - Scheduling instructions
+2026-07-09 20:43:23,393 - mlc.test_util.test_context - INFO - Performing DRAM/L2 synchronization
+2026-07-09 20:43:24,803 - mlc.test_util.test_context - INFO - Inserting and merging NOPs
+2026-07-09 20:43:26,276 - mlc.test_util.test_context - INFO - Setting IQ sync bits
+2026-07-09 20:43:26,413 - mlc.test_util.test_context - INFO - Run compression
+2026-07-09 20:43:27,767 - mlc.test_util.test_context - INFO - Compression done in 1s. Compression ratio: 0.814
+2026-07-09 20:43:27,767 - mlc.test_util.test_context - INFO - Re-allocate dram memory
+2026-07-09 20:43:27,815 - mlc.test_util.test_context - INFO - Generating metrics
+2026-07-09 20:43:28,398 - mlc.test_util.test_context - INFO - Writing report to MLC file
+2026-07-09 20:43:28,398 - mlc.test_util.test_context - INFO - Writing instructions to MLC file
+2026-07-09 20:43:44,235 - mlc.test_util.test_context - INFO - Code generation done
+2026-07-09 20:43:44,243 - afe.backends.mla.afe_to_n2a_compiler.n2a_compiler_operations - INFO -   Evaluate model and writing chk file done in 13s.
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - ==============================
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - Compilation summary:
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - Desired batch size: 1
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - Achieved batch size: 1
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - 	MLA : 1
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - 	EV74: 16
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - 	A65 : 0
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-09 20:44:02,114 - afe.backends.mpk.interface - INFO - Generated files: yolo11s-seg.compile_ready_stage1_mla.elf, 0_process_mla.json, yolo11s-seg.compile_ready_mpk.json, pipeline_sequence.json, 0_detessellate.json, yolo11s-seg.compile_ready_stage1_mla_stats.yaml, quantize_compile.py
+[INFO] Compilation complete.

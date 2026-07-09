@@ -1,0 +1,21 @@
+{
+  "archive": "work/yolox_s/compile_int8/yolox_s.compile_ready/yolox_s.compile_ready_mpk.tar.gz",
+  "exists": true,
+  "is_tar_gz": true,
+  "members": [
+    "yolox_s.compile_ready_stage1_mla_stats.yaml",
+    "yolox_s.compile_ready_mpk.json",
+    "0_process_mla.json",
+    "pipeline_sequence.json",
+    "0_detessellate.json",
+    "yolox_s.compile_ready_stage1_mla.elf",
+    "archived_compile_script.quantize_compile.py"
+  ],
+  "elf_members": [
+    "yolox_s.compile_ready_stage1_mla.elf"
+  ],
+  "so_members": [],
+  "status": "pass",
+  "single_elf": true,
+  "no_so": true
+}

@@ -1,0 +1,23 @@
+{
+  "model_id": "yolo11s",
+  "arch": "yolo11s.pt",
+  "task": "detect",
+  "pt": "/workspace/demo-neat/model-compilation/work/yolo11s/source/yolo11s.pt",
+  "ultralytics_pt_source": "/workspace/demo-neat/model-compilation/yolo11s.pt",
+  "ultralytics_export": "/workspace/demo-neat/model-compilation/yolo11s.onnx",
+  "onnx": "/workspace/demo-neat/model-compilation/work/yolo11s/onnx/yolo11s.onnx",
+  "source_export": "/workspace/demo-neat/model-compilation/work/yolo11s/source/ultralytics_export_yolo11s.onnx",
+  "metadata": {
+    "ir_version": 8,
+    "opsets": {
+      "ai.onnx": 17
+    },
+    "inputs": [
+      "images"
+    ],
+    "outputs": [
+      "output0"
+    ],
+    "nodes": 355
+  }
+}

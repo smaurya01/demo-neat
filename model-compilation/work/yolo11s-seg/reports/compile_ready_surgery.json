@@ -1,0 +1,23 @@
+{
+  "model_id": "yolo11s-seg",
+  "status": "exported",
+  "source": "/workspace/demo-neat/model-compilation/work/yolo11s-seg/onnx/yolo11s-seg.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/yolo11s-seg/surgery/yolo11s-seg.compile_ready.onnx",
+  "attention_rewrites": [
+    "/model.10/m/m.0/attn"
+  ],
+  "outputs": [
+    "bbox_0",
+    "bbox_1",
+    "bbox_2",
+    "class_logit_0",
+    "class_logit_1",
+    "class_logit_2",
+    "mask_coeff_0",
+    "mask_coeff_1",
+    "mask_coeff_2",
+    "proto"
+  ],
+  "num_outputs": 10,
+  "contract": "raw YOLO head outputs; CPU decode/NMS removed"
+}

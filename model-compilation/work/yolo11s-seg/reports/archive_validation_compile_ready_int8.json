@@ -1,0 +1,21 @@
+{
+  "archive": "work/yolo11s-seg/compile_int8/yolo11s-seg.compile_ready/yolo11s-seg.compile_ready_mpk.tar.gz",
+  "exists": true,
+  "is_tar_gz": true,
+  "members": [
+    "yolo11s-seg.compile_ready_stage1_mla.elf",
+    "0_process_mla.json",
+    "yolo11s-seg.compile_ready_mpk.json",
+    "pipeline_sequence.json",
+    "0_detessellate.json",
+    "yolo11s-seg.compile_ready_stage1_mla_stats.yaml",
+    "archived_compile_script.quantize_compile.py"
+  ],
+  "elf_members": [
+    "yolo11s-seg.compile_ready_stage1_mla.elf"
+  ],
+  "so_members": [],
+  "status": "pass",
+  "single_elf": true,
+  "no_so": true
+}

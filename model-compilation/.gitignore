@@ -1,0 +1,30 @@
+# Model artifacts are large and reproducible from the scripts. Never commit them.
+# Reports, surgery writeups, status tables, audits and logs ARE tracked — they are the payload.
+
+# Source checkpoints and exported/surgery graphs
+*.pt
+*.onnx
+*.onnx.data
+
+# Compiler intermediates and outputs
+*.sima
+*.tar.gz
+*.elf
+*.so
+*.npy
+*.npz
+
+# Compile scratch dirs
+work/**/compile_int8/
+work/**/source/
+work/**/onnx/
+work/**/surgery/
+
+# But always keep the human-readable evidence
+!work/**/reports/
+!work/**/reports/**
+!**/*.md
+!**/*.json
+!**/*.csv
+!**/*.txt
+!**/*.log
