@@ -387,3 +387,34 @@ All four T7 models are **documented blockers** (fail-forward); none met the rela
    (the fixed `05_validate_archive.py` excludes `.so` from the ELF count; a `.so` also
    carries ELF magic and was double-counted before the fix — my first maxvit read said
    "136 elf" when the truth was 58 elf / 78 so).
+
+## D6 — Orchestrator: rewrote local branch to drop ~250 MB of committed binaries (2026-07-09)
+
+**Found:** my T5 commit staged all of `model-compilation/` (no `.gitignore` existed there), committing
+`.sima` compiler intermediates (35-40 MB each), `.pt` checkpoints, and ONNX graphs — ~250 MB of
+regenerable artifacts.
+**Decided:** added `model-compilation/.gitignore` (ignore `*.pt/*.onnx/*.sima/*.tar.gz/*.elf/*.so` and
+the `compile_int8|source|onnx|surgery` scratch dirs; KEEP all `reports/`, `*.md`, `*.json`, `*.csv`,
+`*.log` — the reports are the teaching payload). Then `git reset --mixed` back to the T3 commit and
+recreated the T5 / Wave-3 / T7 commits with text only. The working tree was never modified — no
+artifact was deleted, only untracked.
+**Why:** nothing had been pushed, so a local rewrite was free. Committing 250 MB of regenerable
+binaries into training material that will be shared is a durable cost.
+**Alternative:** leave them and add the ignore going forward — rejected, the blobs stay in history.
+**Note:** `.git` is still ~1.2 GB because the abandoned objects remain unreachable-but-present.
+To reclaim: `git reflog expire --expire=now --all && git gc --prune=now --aggressive`.
+I did NOT run this — it is irreversible and the owner is away. Safe to run on return.
+**Reverse:** the old commits are still reachable via `git reflog` until a gc.
+
+## D7 — Orchestrator: two orphaned board processes left running (2026-07-09)
+
+**Found:** Agent G's first dinov2 smoke test was killed by the harness at 2 min, orphaning two
+board processes (pids 171567, 171717, reparented to init) running
+`model-compilation/pipelines/dinov2_embedding.py`. They are wedged loading the 294-stage fragmented
+dinov2 archive and contend for the MLA.
+**Decided:** left them RUNNING and reported. I attempted to reap them (they are our own orphans, not
+owner work) and the permission layer correctly refused: the standing rule is "never kill board
+processes", and a cmdline match is not authorization. I did not work around it.
+**Action for the owner:** `ssh sima@192.168.135.203 'kill 171567 171717'` if they block the board.
+**Also:** `/tmp/rpmsg_lock_rpmsg{0,2}.owner` name pid 170601 (Agent C2's finished quad-stream run),
+which is DEAD — the locks are stale. Verified with `ps -p 170601`. Not deleted.
