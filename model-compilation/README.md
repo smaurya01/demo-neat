@@ -329,3 +329,132 @@ Per-run verification logs live in `results/` (e.g.
 For transformer / non-CNN models (ViT, MaxViT, DINOv2, DETR) the artifact policy
 is relaxed (1–3 ELF, `.so` only with a written justification) — that is separate
 work tracked in `results/summary.md`, not covered by this YOLO walkthrough.
+
+---
+
+## 10. Transformer and difficult models — patterns and gotchas
+
+*Day-4, Session-1 teaching payload (T7). Distilled from the per-model surgery
+reports under `work/<model>/reports/surgery.md`. Where §0–9 above cover the YOLO
+detection flow, this section covers the harder non-CNN graphs: ViT, MaxViT, DINOv2,
+and DETR. The artifact policy here is **relaxed**: 1–3 `.elf` are acceptable, and a
+`.so` is acceptable only with a written justification (which op forced the host
+fallback, why surgery could not remove it, the runtime implication). An unexplained
+`.so` is a failure.*
+
+### The mental model shift from YOLO
+
+For YOLO the hard part was the **head**: a decode/NMS tail had to be *cut* and
+replaced by Neat's hardware box-decode. For transformers the head is trivial (keep
+the natural `logits` / `features` / `pred_*` output and postprocess on the CPU) and
+the hard part is the **body**: attention layout, LayerNorm, dynamic token reshapes,
+and dead export-time branches. So the T7 surgery toolbox is different:
+
+| Concern | YOLO (§3) | Transformer (T7) |
+| --- | --- | --- |
+| Head | cut decode tail, expose 6 raw tensors | keep natural output, CPU postprocess |
+| Attention | C2PSA `MatMul`→`Einsum` | self-attn `MatMul`→`Einsum` (same idea) |
+| Norm | BN fused into conv | LayerNorm — legal, but 3-D token-LayerNorm falls to HOST (see Pattern 2) |
+| Shapes | static export | static `onnxsim` + constant-`Gather`→`Slice` |
+| Dead branches | none | drop optional-arg `Where`/`If` (e.g. DINOv2 `masks`) |
+
+### Pattern 1 — attention `MatMul` → `Einsum` (the recurring one)
+
+Multi-head self-attention exports two batched matmuls per block where **both
+operands are activations** (the linear q/k/v/proj/mlp matmuls each have a *weight*
+operand and are left alone). Rewrite only the two-activation ones:
+
+- **Rank-4** export `[1,h,n,c]` (torchvision ViT, DINOv2): replace with
+  `Einsum("bhmk,bhkn->bhmn")`. That one equation is the layout-agnostic form of any
+  4-D batched matmul, correct for both Q·Kᵀ and A·V — no case analysis. Verify
+  `A.shape[-1]==B.shape[-2]` and `out==[b,h,m,n]`, then let `onnx.checker` re-validate.
+  Script: `scripts/19_vit_attention_surgery.py` (24 rewrites for both vit_b_16 and
+  dinov2_vits14 = 12 blocks × 2).
+- **Rank-3** export `[heads*batch, seq, dim]` (`nn.MultiheadAttention`, e.g. DETR):
+  the head dim is folded into batch; the analogous equation is `"bmk,bkn->bmn"`.
+- **Already `Einsum`** (torchvision MaxViT exports 44 `Einsum`s natively): **nothing
+  to do** — run the pass, confirm 0 rewrites, move on. Do not invent matmuls.
+
+**Why:** an explicit-equation `Einsum` makes the batched dims and contraction axis
+unambiguous, so the MLA tessellator maps the block onto tiles cleanly — this is what
+fixed YOLO (§3a). **Measured caveat for pure ViTs (SDK 2.1.0):** the Einsum rewrite was
+*accepted* by the compiler for `dinov2_vits14` (it is not in the fallback list), but it
+was **neither sufficient nor the bottleneck** — the model still fragmented on LayerNorm
+and batch-axis reshapes (Pattern 2). And for `vit_b_16` the rewritten graph triggered an
+importer **conv2d layout error during quantization** (`64` vs `768` channels), so the
+recommended next step there is to compile the *plain-MatMul* graph and skip the rewrite.
+Net lesson: **rewrite attention MatMul→Einsum only where the compiler actually rejects
+the matmul (YOLO); for a stock ViT the matmul is already supported and the rewrite can
+hurt more than help.**
+
+### Pattern 2 — the "unknown" op trap, and the LayerNorm reality (measured)
+
+The op audit (`scripts/02_audit_onnx.py`) buckets ops as supported / unsupported /
+**unknown**. For every transformer here the count was **0 unsupported** but several
+"unknown": `LayerNormalization`, `Gemm`, `Squeeze`, `Unsqueeze`, `BatchNormalization`,
+`GlobalAveragePool`. **"unknown" ≠ unsupported — but it also does NOT guarantee the op
+stays on the MLA.** The audit says the op is *legal*; it does not say the compiler can
+*place* it. Those differ, and the gap is where pure transformers fail (measured, gen2):
+
+- **`LayerNormalization` over a 3-D token tensor falls to the host.** For `vit_b_16` /
+  `dinov2_vits14`, every block's LayerNorm normalizes over the channel dim (768 / 384)
+  of a 3-D `[1,N,C]` tensor. Placement rejects it: *"Input is not 4D or 5D tensor"* and
+  *"Mean or sum reduction over batch or channel axis is not supported and dimension
+  should be less than 128."* You cannot op-rewrite this away — the reduction is the
+  unsupported primitive. Together with *"Reshape affecting the batch axis is not
+  supported"* (the head-fold reshapes), `dinov2_vits14` compiled to **99 `.elf` / 195
+  `.so`** (294 segments): a **blocker, not a pass**.
+- **The same LayerNorm in a 4-D spatial (conv-hybrid) context is fine.** `fastvit_t8`
+  in this folder compiles to **1 `.elf` / 0 `.so`** — it keeps NCHW 4-D tensors and
+  conv token-mixing, so its norms/reshapes stay 4-D and MLA-placeable.
+
+**Takeaway:** on SDK 2.1.0 whether a "ViT" compiles cleanly is decided by whether it
+stays in a **4-D spatial layout**, not by the attention op. A stock pure ViT / DINOv2
+fragments regardless of surgery. Always confirm placement with the real `.elf`/`.so`
+count — an rc=0 compile with 195 `.so` is a failure, not a success.
+
+### Pattern 3 — static shapes + constant `Gather` → `Slice`
+
+Transformer exports carry dynamic `Shape`/`Gather` index math around token reshapes.
+`onnxsim.simplify(..., overwrite_input_shapes={input:[1,3,H,W]})` folds them, and any
+surviving constant-index `Gather` on a static tensor is rewritten to `Slice`(+`Squeeze`)
+by `scripts/03_surgery.py` — `Slice` is supported ("converted to Conv2d"), dynamic
+`Gather` is not. vit_b_16 needed 37 such rewrites, DETR 2, DINOv2 1, MaxViT 0.
+
+### Pattern 4 — dead export-time branches (`torch.hub` gotcha)
+
+`torch.hub` models trace **optional forward arguments** into the graph as dead
+inputs. DINOv2's `forward(x, masks=None)` leaves a rank-0 `masks` input feeding
+`masks→Unsqueeze→Where(cond, mask_token, patch_embed)→Concat`. At inference `masks`
+is all-false, so `Where` is the identity on its patch-embed branch. Rewire the
+`Where` consumers to that branch, delete `Where`/`Unsqueeze`, and drop the `masks`
+input — otherwise the compiler importer (bound to one input) fails. Symptom to
+recognize: an extra/unbound or rank-0 graph input, or an importer input-count error.
+
+### Pattern 5 — DETR-style detection heads (no in-graph decode)
+
+DETR is set-prediction and **NMS-free**; Hungarian matching is a **training-only**
+loss and is absent at inference. The exported graph ends at two heads
+`pred_logits[1,100,92]` + `pred_boxes[1,100,4]`, and the whole postprocess is CPU:
+softmax over the 92-way class axis, drop the no-object class, threshold,
+`cxcywh(normalised)→xyxy(pixels)`. So DETR needs **no** MLA box-decode unit — keep
+the two heads as outputs and decode on the host (`pipelines/detr_detect.py`). Its
+generic static-shape surgery already stripped the dynamic NestedTensor-mask
+machinery, leaving 0 unsupported ops.
+
+### Validation recipe (per model)
+
+1. Audit the compile-ready ONNX: `scripts/02_audit_onnx.py` (or the surgery guard)
+   → expect **0 unsupported**; a non-empty "unknown" list is normal.
+2. Compile INT8 through the **global compile slot**, one model at a time:
+   `scripts/18_compile_transformer_int8.py --model-id <id>` (20 real calibration
+   images, `--any_shape_on_mla` for the pure-transformer sequence models).
+3. Archive contract (relaxed): `scripts/05_validate_archive.py --archive <tar.gz>
+   --max-elf 3 --allow-so`. 1–3 `.elf` pass; a `.so` yields
+   `pass_requires_justification` and must be explained in the model's surgery report.
+4. Board smoke test via the reference pipelines (`pipelines/`), over ssh + `timeout`:
+   ViT/MaxViT top-5 on a known image; DINOv2 embedding-dim + nearest-neighbour;
+   DETR boxes/classes on a COCO sample.
+
+Per-model detail and the exact op tables are in `work/<model>/reports/surgery.md`;
+status is tracked in `results/summary.md`.

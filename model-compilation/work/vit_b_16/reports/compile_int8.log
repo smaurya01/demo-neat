@@ -1,0 +1,22 @@
+[INFO] ------------------------------------------------------------
+[INFO] Model Compiler Version: 2.1.0
+[INFO] Python Version: 3.12.3
+[INFO] Output Directory: /workspace/demo-neat/model-compilation/work/vit_b_16/compile_int8/vit_b_16.compile_ready
+[INFO] ------------------------------------------------------------
+[INFO] Preparing ONNX model: /workspace/demo-neat/model-compilation/work/vit_b_16/surgery/vit_b_16.compile_ready.onnx
+[INFO] Simplifying with fixed shapes: {'input': [1, 3, 224, 224]}
+[INFO] Prepared model saved to: /workspace/demo-neat/model-compilation/work/vit_b_16/surgery/vit_b_16.compile_ready_prepared.onnx
+[INFO] Model successfully loaded for modalix
+[INFO] Initializing quantization...
+[INFO] Loading real calibration data from: /workspace/calibration_images
+2026-07-09 21:50:39,285 - afe.apis.loaded_net - INFO - Quantize loaded net, layout = NCHW, arm_only = False
+2026-07-09 21:50:39,285 - afe.apis.loaded_net - INFO - Calibration method = mse
+conv2d: requires that `64`, the input channels (64) divided by groups (1),
+ must match the input channels of the weight `768`, where the weight shape is ([768, 768, 1, 1]).
+The type inference pass was unable to infer a type for this expression.
+This usually occurs when an operator call is under constrained in some way, check other reported errors for hints of what may of happened.
+The type inference pass was unable to infer a type for this expression.
+This usually occurs when an operator call is under constrained in some way, check other reported errors for hints of what may of happened.
+The type inference pass was unable to infer a type for this expression.
+This usually occurs when an operator call is under constrained in some way, check other reported errors for hints of what may of happened.
+note: run with `TVM_BACKTRACE=1` environment variable to display a backtrace.

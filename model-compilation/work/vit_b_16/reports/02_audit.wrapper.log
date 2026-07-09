@@ -1,0 +1,241 @@
+{
+  "release": "2.1",
+  "dtype": "int8",
+  "model_operator_total": 1016,
+  "unique_operator_total": 25,
+  "supported_count": 12,
+  "unsupported_count": 1,
+  "unknown_count": 12,
+  "supported": [
+    {
+      "operator": "Add",
+      "count": 85,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": "Can be fused with conv or matmul."
+    },
+    {
+      "operator": "Concat",
+      "count": 13,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Conv",
+      "count": 1,
+      "onnx-opset-version": "11",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "dilation = [1, 63] (HW)\nstrides = [1, 31] (HW)",
+      "notes": "fused with bias and activation.  ONNX does not have 1D convolution, though we support it for other frontends."
+    },
+    {
+      "operator": "Div",
+      "count": 24,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Erf",
+      "count": 12,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "MatMul",
+      "count": 60,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": "Batched MatMul."
+    },
+    {
+      "operator": "Mul",
+      "count": 49,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Reshape",
+      "count": 133,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "allowzero = 0 (SW)\nShape cannot be empty. (SW)",
+      "notes": "batch_flatten, expand_dims, and squeeze are converted to reshape, and they are supported if the reshape operator is supported"
+    },
+    {
+      "operator": "Slice",
+      "count": 36,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "Positive strides. (SW)",
+      "notes": "Converted to Conv2d."
+    },
+    {
+      "operator": "Softmax",
+      "count": 12,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Sqrt",
+      "count": 36,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "N",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Transpose",
+      "count": 97,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    }
+  ],
+  "unsupported": [
+    {
+      "operator": "Gather",
+      "count": 37,
+      "onnx-opset-version": "13",
+      "int8": "N",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "Indices must be a constant, and it must be 0D or 1D. (HW)",
+      "notes": "Converted to slice or conv2d."
+    }
+  ],
+  "unknown": [
+    {
+      "operator": "Cast",
+      "count": 24,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Constant",
+      "count": 295,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "ConstantOfShape",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Equal",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Expand",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Gemm",
+      "count": 13,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "LayerNormalization",
+      "count": 25,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Mod",
+      "count": 12,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Shape",
+      "count": 24,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Squeeze",
+      "count": 12,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Unsqueeze",
+      "count": 12,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Where",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    }
+  ]
+}
+

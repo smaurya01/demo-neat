@@ -1,0 +1,11 @@
+{
+  "model_id": "maxvit_t",
+  "source": "/workspace/demo-neat/model-compilation/work/maxvit_t/onnx/maxvit_t.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/maxvit_t/surgery/maxvit_t.surgery.onnx",
+  "surgery_applied": true,
+  "constant_gather_replacements": 0,
+  "notes": [
+    "Applied fixed-shape ONNX simplification.",
+    "No constant-index Gather nodes were replaced."
+  ]
+}

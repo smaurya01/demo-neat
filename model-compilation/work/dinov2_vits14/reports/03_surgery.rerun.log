@@ -1,0 +1,11 @@
+{
+  "model_id": "dinov2_vits14",
+  "source": "/workspace/demo-neat/model-compilation/work/dinov2_vits14/onnx/dinov2_vits14.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/dinov2_vits14/surgery/dinov2_vits14.surgery.onnx",
+  "surgery_applied": true,
+  "constant_gather_replacements": 1,
+  "notes": [
+    "Applied fixed-shape ONNX simplification.",
+    "Replaced 1 constant-index Gather node(s) with Slice/Squeeze."
+  ]
+}

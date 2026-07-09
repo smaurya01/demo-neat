@@ -1,0 +1,4 @@
+{
+  "status": "interrupted_after_quantization",
+  "notes": "Quantization produced .sima artifacts, but the compile process was interrupted after a long CPU-bound run before MPK packaging."
+}

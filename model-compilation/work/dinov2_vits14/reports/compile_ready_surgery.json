@@ -1,0 +1,552 @@
+{
+  "model_id": "dinov2_vits14",
+  "status": "exported",
+  "source": "/workspace/demo-neat/model-compilation/work/dinov2_vits14/surgery/dinov2_vits14.surgery.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/dinov2_vits14/surgery/dinov2_vits14.compile_ready.onnx",
+  "attention_rewrites": [
+    {
+      "node": "/blocks.0/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.0/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.1/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.1/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.2/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.2/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.3/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.3/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.4/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.4/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.5/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.5/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.6/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.6/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.7/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.7/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.8/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.8/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.9/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.9/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.10/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.10/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    },
+    {
+      "node": "/blocks.11/attn/MatMul",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "b": [
+        1,
+        6,
+        64,
+        257
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        257
+      ]
+    },
+    {
+      "node": "/blocks.11/attn/MatMul_1",
+      "equation": "bhmk,bhkn->bhmn",
+      "a": [
+        1,
+        6,
+        257,
+        257
+      ],
+      "b": [
+        1,
+        6,
+        257,
+        64
+      ],
+      "out": [
+        1,
+        6,
+        257,
+        64
+      ]
+    }
+  ],
+  "num_attention_rewrites": 24,
+  "dinov2_masks_removal": {
+    "removed": true,
+    "patch_tensor": "/patch_embed/Transpose_output_0",
+    "removed_nodes": [
+      "/Where",
+      "/Unsqueeze"
+    ]
+  },
+  "inputs": [
+    "input"
+  ],
+  "outputs": [
+    "features"
+  ],
+  "contract": "static-shape ViT; attention batched-MatMul->Einsum; DINOv2 masks/Where removed; LayerNorm lowered by compiler"
+}

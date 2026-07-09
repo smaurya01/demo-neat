@@ -1,0 +1,10 @@
+{
+  "model_id": "vit_b_16",
+  "source": "/workspace/demo-neat/model-compilation/work/vit_b_16/onnx/vit_b_16.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/vit_b_16/surgery/vit_b_16.surgery.onnx",
+  "surgery_applied": false,
+  "notes": [
+    "No model-specific surgery rule has been applied yet.",
+    "This pass validates the ONNX and copies it as the surgery-stage candidate."
+  ]
+}
