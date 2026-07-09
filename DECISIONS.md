@@ -72,3 +72,64 @@ alternative and cited every source; nothing invented.
 CLI-only requirement; the Python `ASRModel` takes the model dir in its constructor and needs no such
 flag — I called this out explicitly so readers don't copy the CLI flag into Python.
 **Reverse:** N/A (additive teaching content).
+
+## T5 phase 1 (Agent C) — 2026-07-09
+
+- **Zoo availability check**: `https://docs.sima.ai/pkg_downloads/SDK2.1.2/model_zoo/metadata_gen2.json`
+  now returns HTTP 302 to `auth.sima.ai/authorize` (auth-gated), so it cannot be parsed
+  programmatically without a login token. Documented and proceeded to compile all four T5
+  models (plan already expected none of the four to be in the 2.1.2 zoo). To reverse: obtain a
+  `sima-cli login` token and re-check the metadata before compiling.
+- **New scripts 13-16 instead of editing 09/11/12** (frozen 01-12 per ownership rules):
+  `13_export_t5_models.py` (export yolo11s / yolo11s-seg / yolo26s-pose),
+  `14_t5_compile_ready_surgery.py` (generalized head-exposing surgery: detection + seg + pose),
+  `15_compile_t5_int8.py` (compile; output names read from surgery report),
+  `16_yolox_surgery.py` (YOLOX-specific surgery). Alternative was editing the frozen scripts;
+  reversed by deleting 13-16.
+- **models.yaml NOT edited** (not an owned path). Input name/shape hardcoded as `images` /
+  `1,3,640,640` in scripts 14-16 (true for all YOLO variants). Reverse: add the four models to
+  models.yaml if the registry-driven scripts are preferred later.
+- **YOLOX source**: used Megvii's official pre-exported `yolox_s.onnx` (0.1.1rc0 release,
+  opset 11) instead of installing the `yolox` pip package (would perturb the model-compiler
+  venv). The exported ONNX is already NMS-free with only MLA-supported ops. Reverse: `pip install
+  yolox` in a separate venv and re-export from `.pth` if a different opset/head is needed.
+- **Surgery = expose raw per-scale heads, remove CPU decode tail** for all four (same pattern as
+  proven yolo11n/yolo26n). Seg adds mask_coeff + proto outputs; pose adds kpt outputs; YOLOX
+  exposes the 3 decoupled [1,85,H,W] heads. Task-specific decode (seg mask assembly, pose kpt
+  mapping, YOLOX grid+stride) stays on the host — Neat has no built-in seg/pose/YOLOX decode
+  type. Documented per-model in work/<model>/reports/SURGERY.md.
+- **All four audited clean**: 0 unsupported ops for int8 (incl. seg ConvTranspose stride-2,
+  YOLO26 Einsum). No `.so` fallback expected; strict one-ELF/no-.so policy achievable.
+
+## T1 / Agent A — YOLO11 verification + 2x RTSP app (2026-07-09)
+
+- Decision: Ran the fresh YOLO11n verification chain in a NEW scratch subdir
+  `model-compilation/work/yolo11n/t1_verify/` instead of the existing
+  `work/yolo11n/`. Why: the brief forbids deleting/overwriting existing owner
+  artifacts, and scripts 11/09/12 write to hard-coded `work/<id>/` paths.
+  Alternative: `--force` in place (would overwrite the prior run). Reverse:
+  delete the `t1_verify/` subdir; nothing else is touched. Implementation: copies
+  of scripts 11/09/12 in `<scratchpad>/t1_scripts/` with `ROOT` pinned to the real
+  model-compilation dir and `base` redirected to the `t1_verify` subdir. The
+  committed scripts under `scripts/` were NOT modified.
+- Decision: multi-stream app uses ONE shared model Run handle serviced
+  round-robin by the two streams (push frame -> pull result before next stream),
+  rather than two independent model graphs. Why: matches the "shared YOLO11 model
+  stage" requirement and keeps one MLA ELF resident; identity is preserved because
+  each result belongs to the frame just pushed. Alternative: per-stream model
+  graph (needed only if the two inputs have different resolutions — the app
+  raises a clear error and documents that fallback in the README). Reverse: call
+  `build_model_graph` per context in `run()`.
+- Decision: app decode uses `BoxDecodeType.YoloV26` for the yolo11 archive
+  (not YoloV8). Why: the compile_ready surgery exposes the YoloV26 6-tensor
+  grouped contract (bbox_0..2 + class_logit_0..2), confirmed at runtime by the
+  board log "Configuring for the decoding type: 8:yolo26 / Configured for
+  subtensors: 6". No deprecated boxdecode_original_width/height set (Model.h
+  deprecates them).
+- Note: `scripts/06_neat_smoke_test.py` fails on this archive with
+  `misconfig.caps ... not-negotiated` because its default-ModelOptions raw-tensor
+  route mis-negotiates appsrc caps. Verification instead used
+  `scripts/10_run_yolo_sample_pipeline.py` (proper tensor ModelOptions route) which
+  passes, and the 2x RTSP app (image route). Not a model defect. If 06 is meant to
+  be the canonical smoke test, its route/options need fixing (owned by scripts/,
+  not modified here).
