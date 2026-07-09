@@ -133,3 +133,28 @@ flag — I called this out explicitly so readers don't copy the CLI flag into Py
   passes, and the 2x RTSP app (image route). Not a model defect. If 06 is meant to
   be the canonical smoke test, its route/options need fixing (owned by scripts/,
   not modified here).
+
+## D4 — Orchestrator: pre-existing bug found in `scripts/06_neat_smoke_test.py` (2026-07-09)
+
+**Found:** Agent A could not use `scripts/06_neat_smoke_test.py` on a valid yolo11n archive — it
+fails with `misconfig.caps ... not-negotiated`. Root cause: it feeds a raw NCHW tensor using
+*default* `ModelOptions`, so the appsrc caps mis-negotiate. This is a **defect in the existing
+script, not in the model or the archive** — `scripts/10_run_yolo_sample_pipeline.py` (proper tensor
+`ModelOptions` route) passes on the same archive, and the new RTSP app (image route) runs it
+end to end.
+**Decided:** Do NOT fix script 06 in this wave. Agent A used script 10 for the smoke test instead.
+**Why:** `scripts/01-12` are pre-existing owner files; Agent C was concurrently working in
+`scripts/`, and a same-wave edit risked a write conflict on a file neither agent owned.
+**Alternative:** Patch 06 to set an explicit tensor route (`InputKind.Tensor` + EV74 tensor memory).
+That is the correct fix and is a small, self-contained change — recommended as a follow-up.
+**Reverse:** N/A — nothing was changed.
+
+## D5 — Orchestrator: compile slot must be held from a background process (2026-07-09)
+
+**Found:** the agent harness kills a foreground shell call at ~2 minutes. When that call held the
+`flock` compile slot, the SIGTERM released the lock — which would let a second agent start a
+concurrent compile and silently break the "exactly one compile at a time" invariant.
+**Decided:** long compiles are launched as background processes that hold the lock for their whole
+lifetime; agents poll instead of blocking in the foreground.
+**Why:** the invariant must survive harness timeouts, not just agent good behaviour.
+**Reverse:** N/A (operational practice, recorded in overall-learning.md).
