@@ -158,3 +158,29 @@ concurrent compile and silently break the "exactly one compile at a time" invari
 lifetime; agents poll instead of blocking in the foreground.
 **Why:** the invariant must survive harness timeouts, not just agent good behaviour.
 **Reverse:** N/A (operational practice, recorded in overall-learning.md).
+
+## T6 (Agent E) — LLM/VLM compilation + GenAI server — 2026-07-09
+
+- DECIDED: Documented BYO LLM/VLM compilation as the host-side `llima-compile` (Model Compiler)
+  step, NOT a `llima` subcommand. WHY: the on-board `llima` CLI has no `compile` verb
+  ({run,search,pull,list,rm,benchmark-server}); the official docs
+  (developer.sima.ai/software/genai-llima/compilation_genai) name `llima-compile`, and
+  core/docs/getting-started/compatibility.mdx confirms the Model Compiler is required for GenAI
+  compile/quantize. ALTERNATIVE: invent a `llima compile` command — rejected as fabrication.
+  REVERSE: if the compiler tool is later confirmed to have a different name/flags, edit the printed
+  command strings in 04-*/*.ipynb (all heavy commands are inert printed strings).
+- DECIDED: Every `llima-compile` fact is marked [docs] (WebFetch of official docs, NOT executed) vs
+  [core] (verified in /workspace/core/src/genai/GenAIInternal.cpp). WHY: honesty requirement — we
+  could not run llima-compile (not on board, not in core). The deployed artifact contract
+  (devkit/ + elf_files/, exactly one of vlm_config.json/whisper_config.json, VLM vision keys
+  vm_cfg/mm_cfg/vision_model_name) is core-verified and is the load-bearing, testable part.
+- DECIDED: 05-genai-server built entirely on tutorial 021 (Python + C++ + all 3 request scripts) and
+  GenAIServer.h / module.cpp bindings. serve_multi_model.py adapts serve_genai_models.py; defaults to
+  the 3 board models. client_examples.py merges the 3 tutorial request clients behind a --run gate so
+  import/py_compile never fires a request. WHY: real source material; no invented APIs.
+- DECIDED: Taught the two-servers distinction explicitly — `llima benchmark-server` CLI (on-board,
+  one model, benchmarking) vs in-process `pyneat.genai.GenAIServer` (multi-model app server). WHY:
+  brief flagged conflation risk. Concurrency guidance grounded in tutorial 021 "In Practice" (models
+  share one MLA hardware gatekeeper; one process/many served names does not multiply throughput).
+- NOTE for Agent F: llima/README.md folder map currently says 04/05 are "owned by other tracks and
+  not part of this folder's basics". Those sections now exist and could be linked from the README.
