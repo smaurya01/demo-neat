@@ -227,3 +227,163 @@ lifetime; agents poll instead of blocking in the foreground.
   retune without editing code. `vlm_interval_seconds` is wall-clock (noted in README): over a
   fast still-image batch only the first qualifying crop fires — intended for the always-on RTSP
   case.
+
+## T5 phase 1 (Agent C) — completion + learnings — 2026-07-09
+
+- **RESULT: 4/4 compiled, all archives pass strict one-ELF/zero-.so.** yolo11s (MLA:1,EV74:12,
+  A65:0), yolo11s-seg (MLA:1,EV74:16,A65:0), yolo26s-pose (MLA:1,EV74:21,A65:0), yolox_s
+  (MLA:1,EV74:9,A65:0). A65:0 on every model = nothing fell back to the host CPU. Compile times
+  ~6-8 min each. Zero blockers (yolox_s genuinely-new surgery landed).
+- **Gotcha (fixed in reporting, not a code bug): `pgrep -f "15_compile_t5_int8.py --model-id X"`
+  self-matches the polling loop's own command line**, because the loop's cmdline literally
+  contains that pattern string. It made every wait loop falsely report "STILL RUNNING". The
+  reliable completion signal was the wrapper's `RELEASED slot ... rc=0` line and the
+  fully-written compile log ("Compilation complete"). For future waiters, grep the wrap log for
+  RELEASED, or use `pgrep -f quantize_compile.py` (the actual child), not the launcher pattern.
+- **12_compile_yolo_int8.py buffers all child stdout and writes the log only at process exit**
+  (subprocess.run(..., stdout=PIPE) then write). So mid-compile progress is invisible in the log
+  file; watch the wrapper's stderr wrap-log instead for the acquire/release bracket.
+
+## T7 (Agent G) — transformer / difficult models — 2026-07-09
+
+- **05_validate_archive.py extended (SANCTIONED).** Added `--min-elf`/`--max-elf`
+  (default 1/1) and `--allow-so`. Defaults reproduce the original strict
+  "exactly one ELF, zero .so" behaviour byte-for-byte, so all T1/T5 callers are
+  unaffected (verified: strict run on yolo11n archive still `status: pass`). T7
+  invokes with `--max-elf 3 --allow-so`; a `.so` then yields
+  `status: pass_requires_justification` (not an auto-fail) and the model's surgery
+  report must carry the written justification. Reverse: revert the file; the extra
+  flags are additive.
+- **Calibration set = /workspace/calibration_images (20 real COCO images)** for the
+  T7 INT8 quantization, not assets/calibration (only 8 synthetic gradients). We are
+  re-quantizing from scratch anyway (see maxvit note), and the brief lists
+  /workspace/calibration_images as a sanctioned standard set. Better calibration →
+  better INT8 top-k. Reverse: pass `--calib-dir assets/calibration` to script 18.
+- **maxvit_t "resume" = full re-run of quantize+compile.** quantize_compile.py has no
+  load-a-saved-.sima-and-only-compile path; `quant_model` must be produced in-process
+  before `.compile()`. So the cheapest correct "resume" is re-running the whole
+  command through the compile slot. The interrupted run's leftover .sima under
+  work/maxvit_t/compile/ is untouched; the fresh build lands in work/maxvit_t/compile_int8/.
+- **ViT / DINOv2 attention rewrite (scripts/19_vit_attention_surgery.py).** Rewrote the
+  two per-block rank-4 batched attention MatMuls (Q·Kᵀ and A·V, both operands
+  activations) to `Einsum "bhmk,bhkn->bhmn"` — the same MLA-friendly rewrite the YOLO
+  walkthrough uses, generalized to token-sequence attention. Equation is
+  layout-agnostic for any 4D batched matmul and is validated by onnx.checker before any
+  compile slot is spent. Linear q/k/v/proj/mlp MatMuls (one weight operand) are left as
+  ordinary supported GEMMs. 24 rewrites each (12 blocks x 2). Alternative considered:
+  trust the compiler's native batched-MatMul support and skip the rewrite; rejected as
+  the higher-risk first attempt given only ~1 compile slot per model.
+- **DINOv2 masks/Where removal.** torch.hub DINOv2 exports an unused rank-0 `masks`
+  input feeding masks→Unsqueeze→Where(cond, mask_token, patch_embed)→Concat. At
+  inference masks is all-false so Where is the identity on the patch-embed tensor; we
+  rewire Concat to the patch-embed output and delete masks/Unsqueeze/Where, leaving a
+  single `input`. Without this the compiler importer (bound to only `input`) would
+  choke on the second graph input. Reverse: re-run 03_surgery.py to regenerate
+  surgery.onnx with masks intact.
+- **DETR attention left as-is.** detr_resnet50's generic surgery (03_surgery.py) already
+  produced a static compile-ready graph (pred_logits[1,100,92], pred_boxes[1,100,4], 0
+  unsupported ops); its attention is rank-3 (nn.MultiheadAttention folds heads into
+  batch: [8,625,32]x[8,32,625]), which the audit lists as a supported batched MatMul, so
+  the rank-4 Einsum rewrite deliberately does not touch it. No Hungarian matching exists
+  at inference (training-only loss); DETR postprocess is pure CPU softmax+threshold+box-decode.
+
+## T5 phases 2-3 — quad-stream-quad-model app (Agent C2, 2026-07-09)
+
+- **Decided:** one independent 3-graph shuttle (RTSP source / model / video sink)
+  PER stream, four different compiled archives, single-process single-thread
+  round-robin. Alternative was `graphs.combine(ByFrame)` (tutorial 015) — rejected
+  because the 4 streams run 4 different models + 4 different UDP sinks with nothing
+  to join, and per-stream stats must stay separable. Reversible: swap the loop for
+  a combine graph if a future variant shares one model.
+- **Decided:** detection (yolo11s) uses on-device `BoxDecodeType.YoloV26` +
+  `pyneat.decode_bbox`; seg/pose/YOLOX leave `decode_type=Unspecified` and decode
+  the RAW heads on the host in NumPy (`src/decoders.py`). Confirmed on board that
+  the raw-head route delivers ALL model outputs (10 seg / 9 pose / 3 yolox tensors)
+  through a single named `"heads"` endpoint, and that the MLA emits them **NHWC**
+  `(1,H,W,C)` (not NCHW) — decoders transpose HWC→CHW in `_squeeze_batch`.
+- **Finding (contradicts the T5 "no built-in seg/pose decode" note, worth
+  recording):** `core/include/pipeline/BoxDecodeType.h` DOES define
+  `YoloV26Seg(19)`, `YoloV26Pose(18)`, `YoloX(21)`, and `DetectionTypes.h` exposes
+  `decode_pose`/`decode_segmentation`. BUT those host helpers parse a BoxDecode
+  *wire payload*, which our raw-head archives (decode tail surgically removed) do
+  NOT produce. So on THESE archives host NumPy decode is still required — the paid
+  knowledge holds for the archives as built. A future variant could instead set
+  `decode_type=YoloV26Seg/Pose` and let Neat attach the fused stage; untested here.
+- **Measured (DevKit, 20 frames/stream, round-robin):** per-stream service FPS
+  detection ~15.7, yolox ~12.7, seg ~3.6, pose ~0.5; **aggregate ~1.7 FPS across 4
+  streams.** Bottleneck is A65 host decode (pose ~1.9 s/frame), NOT the MLA. Single
+  Python thread ⇒ agg ≈ 1/Σ(per-frame times). 2-stream config ~8 agg FPS. Honest
+  limit documented in README + TEACHING; fix = per-stream threads + on-device decode.
+- **Known gap:** YOLOX host decoder runs end-to-end but emits 0 boxes — decoupled-
+  head channel order needs one more on-board verification (activation auto-adapt
+  already added). Detection/seg/pose validate the raw-head→host-decode design.
+- **Did NOT commit** (orchestrator commits). Referenced compiled archives in place
+  under model-compilation/work/ (NFS, no copy); assets/models/ is override-only.
+
+## Wave 3 integration pass (Agent F) — root README, llima map, training alignment, REVIEW — 2026-07-09
+
+- **Root `README.md` rewritten as the repo front door, preserving what was still true.** Kept the
+  original layout/requirements/build-artifacts/per-app-README spirit; added the 4-day arc table, a
+  navigation table (folder → what you learn → entry point), a prominent **"Verified vs
+  documented-but-unrun"** section (3 honesty tiers: live-validated / not-executed / docs-derived),
+  the SDK+venv+DevKit+RTSP prereqs, and the `dk` (human) vs `ssh+timeout` (automation) rule. WHY: a
+  day-1 trainee needs one honest map; the old README predated `llima/`, `model-compilation/`,
+  `training/`, and the three new apps. ALTERNATIVE: minimal patch of the old README — rejected, it had
+  no notion of the new tracks or the verified/unrun distinction (the single most important thing).
+  REVERSE: `git checkout` the file; prior version is in history.
+- **`llima/README.md` folder map updated (minimal edit, kept Agent B's voice).** The map claimed
+  03/04/05 were "owned by other tracks and not part of this folder's basics"; those sections now
+  exist, so I extended the map to list 03/04/05 with cross-links and carried over Agent E's honesty
+  note about `llima-compile` / no `llima compile` / HTTP 403 flags. Did NOT touch 01/02 content.
+- **`training/` alignment is ADDITIVE, not a rewrite.** Appended an "Alignment With This Repo" section
+  mapping each day/session to the concrete in-repo app/track that now realizes it (with validation
+  status), carried the verified/unrun honesty note, and listed reference paths in the doc that do NOT
+  resolve: `/workspace/apps/examples/model-benchmark` (real dir is `.../benchmarking`) and ~11
+  abbreviated core-tutorial names that don't match the real directory names. WHY: brief says
+  ADD/ALIGN, never delete/rewrite owner content; the fixes are flagged, not silently patched into the
+  body. REVERSE: delete the appended section.
+- **`REVIEW.md` created (owned, new file).** One substantive finding: `sima-cli modelzoo ... get
+  yolo_11n` in `apps/multi-stream-yolo-yolo11/README.md:54-60` (and pre-existing
+  `apps/single-stream-yolo-yolo11/README.md:35`) contradicts the fact that yolo11 is compiled via
+  surgery, not fetched from the 2.1.2 Modalix zoo (which only exposed yolo_v8n/yolo_v8n_seg/open_pose)
+  — medium, reported not fixed (not my file). All other categories clean: no invented APIs, no
+  deprecated boxdecode fields, correct NV12/BGR/RGB colour handling, correct YoloV26 decode, honest
+  verification claims. All relative links (mine + reviewed non-owned docs) tested with `test -e` and
+  resolve.
+- **Did NOT git commit** (orchestrator commits). Did NOT write anything under `model-compilation/`
+  (Agent G active there) — read-only review only.
+
+## T7 (Agent G) — final compile outcomes + corrected understanding — 2026-07-09
+
+All four T7 models are **documented blockers** (fail-forward); none met the relaxed
+1–3 `.elf` policy. Verified outcomes:
+
+- **maxvit_t**: rc=0, **58 `.elf` / 78 `.so`** (136 segments). Cause: windowed/grid
+  attention partition/departition non-4D reshapes + "unsupported einsum equation" on the
+  native MaxViT einsums, no `--any_shape_on_mla`. Fix to try: recompile with
+  `--any-shape-on-mla` (not attempted — out of 60-min compile-start budget).
+- **dinov2_vits14**: rc=0, **99 `.elf` / 195 `.so`** (294 segments) **even with
+  `--any_shape_on_mla`**. Cause (from log, ranked): batch-axis reshapes ("Reshape
+  affecting the batch axis is not supported", ~260 hits) + token-sequence
+  LayerNormalization ("Input is not 4D/5D", "reduction over channel axis, dim<128" — the
+  384-dim channel). The `MatMul→Einsum` rewrite was **accepted** (not a fallback cause).
+- **vit_b_16**: compile **errored in quantization** — TVM conv2d channel mismatch
+  (64 vs 768) on the Einsum-rewritten graph's attention out-projection. Next: compile the
+  plain-MatMul `surgery.onnx`.
+- **detr_resnet50**: not compiled (budget); surgery ONNX + pipeline + decode analysis
+  ready. Verified `BoxDecodeType.Detr=13` has no raw-head decoder (only YoloV26*/YoloV6/
+  YoloX do) → CPU postprocess is correct.
+
+**Corrected understanding (supersedes my earlier optimistic notes):**
+1. The attention `MatMul→Einsum` rewrite (the YOLO house pattern) is **not the lever**
+   for pure ViTs and can hurt (vit quantize error). For a stock ViT the batched MatMul is
+   already a supported op; only rewrite where the compiler actually rejects the matmul.
+2. The real blocker for pure token-sequence transformers on SiMa gen2 / SDK 2.1.0 is
+   **placement, not op legality**: 3-D `[1,N,C]` LayerNorm (channel-axis reduction >128)
+   and batch-axis head reshapes are not MLA-placeable, so the graph fragments regardless
+   of surgery. Conv-hybrid backbones that stay 4-D NCHW (fastvit_t8 → 1 elf/0 so) do not
+   hit this. This corrects my earlier "leave LayerNorm, the compiler lowers it" note.
+3. An rc=0 compile is not a passing artifact — always check the real `.elf`/`.so` count
+   (the fixed `05_validate_archive.py` excludes `.so` from the ELF count; a `.so` also
+   carries ELF magic and was double-counted before the fix — my first maxvit read said
+   "136 elf" when the truth was 58 elf / 78 so).
