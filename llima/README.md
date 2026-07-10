@@ -9,9 +9,8 @@ style as `../tutorial/I-easy`: a markdown concept cell, then a short runnable co
 interpretation.
 
 > Loading an LLM, VLM, or ASR model is hardware-bound: it needs the DevKit, several GB of memory, and
-> a minute or two. Those commands are given as text you copy and run on the board, each paired with an
-> **Expected output** section so you can check your result. The cheap CLI probes
-> (`llima --help`, `llima list`, `llima search`) appear inline as text.
+> a minute or two. Those commands are given as text you copy and run on the board. The cheap CLI
+> probes (`llima --help`, `llima list`, `llima search`) appear inline as text.
 
 ## Folder map
 
@@ -19,10 +18,8 @@ interpretation.
 llima/
   README.md                       # you are here
   01-llima-basics/
-    01_llima_concepts.ipynb       # what LLiMa is, where it sits in the NEAT stack,
-                                   # supported model families, memory/size constraints
-    02_llima_cli.ipynb            # llima search / pull / list / run / rm / benchmark-server
-                                   # each explained, with real captured output + on-disk effect
+    llima-introduction.ipynb      # what LLiMa is, the model families, quantization suffixes,
+                                   # and every llima subcommand with its on-disk effect
   02-run-llm-vlm/
     01_run_llm.ipynb              # pyneat.genai.GenAIModel: load, generate, stream, options
     02_run_vlm.ipynb              # pyneat.genai.VisionLanguageModel: image + prompt -> text
@@ -70,23 +67,23 @@ The five sections build on each other:
 
 | Layer | What it is | Where it runs | Covered in |
 | --- | --- | --- | --- |
-| **`llima` CLI** | Prepares models: search a catalog, pull weights, list/remove local models, and quick-test with `run` / `benchmark-server`. | `/usr/bin/llima` on the DevKit. | `01-llima-basics/02_llima_cli.ipynb` |
+| **`llima` CLI** | Prepares models: search a catalog, pull weights, list/remove local models, and quick-test with `run` / `benchmark-server`. | `/usr/bin/llima` on the DevKit. | `01-llima-basics/llima-introduction.ipynb` |
 | **`pyneat.genai` API** | The application-facing Python API you call from your own code (`GenAIModel`, `VisionLanguageModel`, `ASRModel`, `GenAIServer`). | Your Python process on the DevKit. | `02-run-llm-vlm/*` |
 
 LLiMa **prepares** a model directory; `pyneat.genai` **runs** that directory from an app. The
 notebooks in `02-run-llm-vlm` point at the same model directories the `llima` CLI produced.
 
-## Models used by the happy paths
+## Models
 
-Every happy path in this folder uses a model that is **already pulled**, so no `llima pull` is needed:
+The notebooks use these model IDs as their worked examples. A deployed model lives at
+`/media/nvme/llima/models/<model-id>`. Run `llima list` on the DevKit to see which models are present,
+and `llima pull <model-id>` for any you need.
 
-| Role | Model ID | Deployed directory |
-| --- | --- | --- |
-| LLM (text) | `Qwen3-4B-Instruct-2507-GPTQ-a16w4` | `/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4` |
-| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` | `/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
-| ASR (audio) | `whisper-small-a16w8` | `/media/nvme/llima/models/whisper-small-a16w8` |
-
-Run `llima list` on the DevKit to confirm which models are present before you run one.
+| Role | Example model ID |
+| --- | --- |
+| LLM (text) | `Qwen3-4B-Instruct-2507-GPTQ-a16w4` |
+| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
+| ASR (audio) | `whisper-small-a16w8` |
 
 ## How to run these notebooks and scripts
 
@@ -101,15 +98,6 @@ python /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_llm.py \
 For the notebooks, run Jupyter on the DevKit and open the `.ipynb` files, or lift the code cells into
 a script and run that. The heavy cells keep their model-running commands as printed strings or fenced
 blocks — run those steps yourself when you are ready.
-
-## DevKit disk is small — check before you pull
-
-The DevKit root filesystem is small and GenAI weights are large, so **always run `df -h /` before any
-`llima pull`** to confirm there is room. If free space is tight, `llima rm` an unused model first, or
-pull one of the smallest viable variants in the catalog:
-
-- LLM: `LFM2.5-230M-a16w4`, `Qwen3-0.6B-GPTQ-a16w4`
-- VLM: `LFM2-VL-450M-a16w4`
 
 ## Correctness traps taught throughout
 
