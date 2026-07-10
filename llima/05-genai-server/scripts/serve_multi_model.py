@@ -11,27 +11,22 @@ API surface verified against:
   - /workspace/core/include/genai/GenAIServer.h
   - /workspace/core/python/src/module.cpp  (GenAIServer bindings, ~line 2216)
 
-HEAVY / MANUAL RUN: starting the server loads every registered model onto the
-MLA. Do NOT run this from tooling; the owner runs it on the DevKit. Run with:
+Starting the server loads every registered model onto the MLA, so budget memory
+before you run it. Launch it on the DevKit when you are ready:
 
-  # Human, real terminal (intended UX):
   dk /workspace/demo-neat/llima/05-genai-server/scripts/serve_multi_model.py
 
-  # Automation / CI (no TTY) fallback:
-  timeout 600 ssh -o BatchMode=yes sima@192.168.135.203 \\
-    'source $HOME/pyneat/bin/activate; \\
-     python /workspace/demo-neat/llima/05-genai-server/scripts/serve_multi_model.py'
-
-Before serving fresh models, ALWAYS check board disk first:  df -h /
-The board has only ~5.9 GB free of 14 GB; the three defaults below are already
-pulled, so this happy path needs no ``llima pull``.
+Before serving fresh models, check the DevKit disk first with ``df -h /``. A GenAI
+model directory can be several GB and the DevKit root filesystem is small, so
+confirm free space before any ``llima pull``. The three defaults below are already
+deployed, so this happy path needs no pull.
 """
 import argparse
 import time
 
 import pyneat as neat
 
-# Deployed model directories already on the board (llima list, 2026-07-09).
+# Deployed model directories already on the board (see llima list).
 # llima pull writes to /media/nvme/llima/models/<model-id>.
 DEFAULT_LLM = "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
 DEFAULT_VLM = "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
@@ -71,7 +66,7 @@ def main() -> int:
 
     print("registered models:", ", ".join(server.model_names()))
     print(f"serving on http://{options.host}:{options.port}")
-    print(f"try: curl http://<modalix-ip>:{options.port}/v1/models")
+    print(f"try: curl http://<devkit-host>:{options.port}/v1/models")
 
     # start() is non-blocking (app owns the process lifetime); serve() would
     # block instead. We keep the process alive and stop cleanly on Ctrl-C.

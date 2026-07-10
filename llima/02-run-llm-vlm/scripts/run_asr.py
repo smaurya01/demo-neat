@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
 """Minimal CLI: transcribe audio with pyneat.genai.ASRModel (audio file -> text).
 
-MANUAL RUN - this loads and runs a model. It is NOT executed by the training tooling.
-Run it yourself on the Modalix DevKit.
+Loading and running a model is heavy and hardware-bound. Run this on the Modalix DevKit:
 
-  # Human, real terminal:
   dk /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_asr.py \
     --model /media/nvme/llima/models/whisper-small-a16w8 \
     --audio /workspace/demo-neat/llima/02-run-llm-vlm/assets/speech.wav
-
-  # Automation (ssh + timeout):
-  timeout 300 ssh -o BatchMode=yes sima@192.168.135.203 \
-    'source $HOME/pyneat/bin/activate; python /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_asr.py \
-       --model /media/nvme/llima/models/whisper-small-a16w8 \
-       --audio /workspace/demo-neat/llima/02-run-llm-vlm/assets/speech.wav'
 
 The direct ASRModel path (constructor takes the model directory, request carries audio_file/language)
 is from /workspace/core/include/genai/ASRModel.h + GenAITypes.h and module.cpp. NOTE: the CLI

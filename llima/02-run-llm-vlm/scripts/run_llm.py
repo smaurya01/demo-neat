@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 """Minimal CLI: run an LLM with pyneat.genai.GenAIModel (text).
 
-MANUAL RUN - this loads and runs a model. It is NOT executed by the training tooling.
-Run it yourself on the Modalix DevKit.
+Loading and running a model is heavy and hardware-bound. Run this on the Modalix DevKit:
 
-  # Human, real terminal:
   dk /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_llm.py \
     --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
-
-  # Automation (ssh + timeout):
-  timeout 300 ssh -o BatchMode=yes sima@192.168.135.203 \
-    'source $HOME/pyneat/bin/activate; python /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_llm.py \
-       --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4'
 
 Adapted from /workspace/core/tutorials/019_run_an_llm/run_an_llm.py; API names verified against
 /workspace/core/python/src/module.cpp and /workspace/core/include/genai/.

@@ -13,11 +13,11 @@ Merged and adapted verbatim in shape from the tutorial 021 request clients:
 
 These talk to a server that is ALREADY running; they do not load a model
 themselves. They are still gated behind an explicit --run flag so importing or
-py_compiling this file never sends a request. The owner runs, e.g.:
+py_compiling this file never sends a request. Run them against your server, e.g.:
 
-  python client_examples.py --run text  --server-ip 192.168.135.203 "Explain REST."
-  python client_examples.py --run image --server-ip 192.168.135.203 scene.jpg "What is this?"
-  python client_examples.py --run transcribe --server-ip 192.168.135.203 speech.wav
+  python client_examples.py --run text  --server-ip <devkit-host> "Explain REST."
+  python client_examples.py --run image --server-ip <devkit-host> scene.jpg "What is this?"
+  python client_examples.py --run transcribe --server-ip <devkit-host> speech.wav
 """
 import argparse
 import base64

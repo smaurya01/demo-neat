@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 """Minimal CLI: run a VLM with pyneat.genai.VisionLanguageModel (image + prompt -> text).
 
-MANUAL RUN - this loads and runs a model. It is NOT executed by the training tooling.
-Run it yourself on the Modalix DevKit.
+Loading and running a model is heavy and hardware-bound. Run this on the Modalix DevKit:
 
-  # Human, real terminal:
   dk /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_vlm.py \
     --model /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
     --image /workspace/demo-neat/tutorial/assets/images/image.png \
     --prompt "Describe this image in one sentence."
-
-  # Automation (ssh + timeout):
-  timeout 300 ssh -o BatchMode=yes sima@192.168.135.203 \
-    'source $HOME/pyneat/bin/activate; python /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_vlm.py \
-       --model /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-       --image /workspace/demo-neat/tutorial/assets/images/image.png'
 
 Adapted from /workspace/core/tutorials/020_run_a_vlm/run_a_vlm.py; VLM images must be uint8 HWC RGB
 (GenAITypes.h). OpenCV reads BGR, so we convert to RGB before building the request.
