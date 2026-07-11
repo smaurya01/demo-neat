@@ -26,7 +26,12 @@ depend on the compiler's output ordering. Shapes are unambiguous:
 Grid conventions (Ultralytics / YOLOX):
   * detection & seg (yolo11): anchor point = (i+0.5, j+0.5), stride = 640/H,
     dist2bbox l/t/r/b.
-  * pose (yolo26): same box decode; keypoint xy = (kxy*2 + i) * stride.
+  * pose (yolo26): same box decode; keypoint xy = (kxy + anchor) * stride, where
+    anchor = (i+0.5) — i.e. a plain offset from the box's own anchor point, with
+    **NO 2x scaling**. This deliberately differs from the Ultralytics v8/v11 pose
+    formula `(kxy*2 + i) * stride`: that 2x was measured wrong on-device (it draws
+    skeletons at exactly twice their true size). Verified with
+    `tools/pose_probe.py --kpt-scan`.
   * yolox: integer grid (no +0.5), xy = (reg_xy + i) * stride,
     wh = exp(reg_wh) * stride.
 """
@@ -181,8 +186,14 @@ def _classify(tensors, model_w: int):
             buckets["cls"][h] = a
         elif c == 1:
             buckets["cls"][h] = a
-        elif c == 51:
-            buckets["kpt"][h] = a
+        elif c in (51, 64):
+            # 51 = 17 keypoints x (x, y, visibility).
+            # 64 = the SAME head zero-padded to 64 channels at compile time. An
+            # unpadded 51-ch keypoint head makes the compiled post-MLA tail
+            # pathological: yolo26s-pose ran at 1782 ms/frame (0.6 fps) with C=51
+            # and 8.5 ms/frame (117 fps) with C=64 — a 209x speedup for the same
+            # model. Channels 51..63 are zero padding; slice them off.
+            buckets["kpt"][h] = a[:51]
         elif c == 85:
             buckets["yolox"][h] = a
     return buckets
@@ -284,12 +295,11 @@ def decode_pose(tensors, frame_w, frame_h, model_w=640, model_h=640,
         cls = _sigmoid(b["cls"][h].reshape(-1))     # [N] single person class
         kpt = b["kpt"][h].reshape(51, -1)           # [51,N]
         gx05, gy05 = _anchor_grid(h, w, 0.5)
-        gxi, gyi = _anchor_grid(h, w, 0.0)
         boxes = _dist2bbox(bbox, gx05, gy05, stride)
         all_boxes.append(boxes)
         all_scores.append(cls)
         all_cls.append(np.zeros_like(cls, dtype=np.int64))
-        per_scale.append((kpt, gxi, gyi, stride, boxes.shape[0]))
+        per_scale.append((kpt, gx05, gy05, stride, boxes.shape[0]))
     if not all_boxes:
         return DecodeResult([])
     offsets = np.cumsum([0] + [p[4] for p in per_scale])
@@ -297,10 +307,19 @@ def decode_pose(tensors, frame_w, frame_h, model_w=640, model_h=640,
     def attach(det, global_idx, g):
         # find scale + local index for this anchor
         s = int(np.searchsorted(offsets, global_idx, side="right") - 1)
-        kpt, gxi, gyi, stride, _n = per_scale[s]
+        kpt, gx05, gy05, stride, _n = per_scale[s]
         li = global_idx - offsets[s]
-        kx = (kpt[0::3, li] * 2.0 + gxi[li]) * stride
-        ky = (kpt[1::3, li] * 2.0 + gyi[li]) * stride
+        # YOLO26 keypoints are a plain offset (in cell units) from the SAME anchor
+        # point the box decode uses — anchor = (i + 0.5) — with NO 2x scaling.
+        #
+        # This is NOT the Ultralytics v8/v11 pose formula `(k*2 + i) * stride`.
+        # That 2x was measured wrong on-device: it renders skeletons at exactly
+        # twice their true size (vertical span 1.67x the person box instead of
+        # 0.83x) with only 44% of keypoints landing inside their own person box.
+        # With the formula below: 99.9% inside, span 0.83, head-above-feet 100%.
+        # Reproduce with: tools/pose_probe.py --kpt-scan
+        kx = (kpt[0::3, li] + gx05[li]) * stride
+        ky = (kpt[1::3, li] + gy05[li]) * stride
         kv = _sigmoid(kpt[2::3, li])
         fx, fy = g.to_frame_xy(kx, ky)
         det.keypoints = np.stack([fx, fy, kv], axis=1).astype(np.float32)  # [17,3]

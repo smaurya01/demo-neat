@@ -45,6 +45,13 @@ WORK = "/workspace/demo-neat/model-compilation/work"
 DEFAULT_ARCHIVES = {
     "detection": f"{WORK}/yolo11s/compile_int8/yolo11s.compile_ready/yolo11s.compile_ready_mpk.tar.gz",
     "segmentation": f"{WORK}/yolo11s-seg/compile_int8/yolo11s-seg.compile_ready/yolo11s-seg.compile_ready_mpk.tar.gz",
+    # This archive is compiled with the keypoint head zero-padded 51 -> 64 channels
+    # (`pad_channels_to: 64` in compile/_surgery_ultralytics.py). That padding is a
+    # load-bearing PERFORMANCE fix, not cosmetics: with the natural 51 channels the
+    # same model runs at 1782 ms/frame (0.6 fps), and at 8.5 ms/frame (117 fps) with
+    # 64 — a 209x speedup for identical weights. Unpadded, pose holds the shared MLA
+    # so long that the other three streams back up and fail their model push, and
+    # the quad cannot run at all. src/decoders.py slices channels 51..63 back off.
     "pose": f"{WORK}/yolo26s-pose/compile_int8/yolo26s-pose.compile_ready/yolo26s-pose.compile_ready_mpk.tar.gz",
     "yolox": f"{WORK}/yolox_s/compile_int8/yolox_s.compile_ready/yolox_s.compile_ready_mpk.tar.gz",
 }
@@ -81,6 +88,38 @@ class Config:
     frames: int = 0
     num_streams: int = 4
     print_backend: bool = False
+    # Frames per stream excluded from the reported FPS/stage means (graph build,
+    # model load and RTSP jitter-buffer fill all land on the first few frames).
+    warmup_frames: int = 20
+    # Run every stage of every stream on one thread (the original round-robin).
+    # Slower by design; kept so the pipelined speedup stays reproducible.
+    serial: bool = False
+    # Frames kept in flight inside each model graph before the first pull.
+    # 1 = lock-step push/pull; >1 lets a graph's CVU-preprocess / MLA /
+    # box-decode stages overlap across consecutive frames.
+    pipeline_depth: int = 2
+    # Skip host decode + NV12 annotation, still encode and publish the frame.
+    # This isolates the MODEL rate (RTSP -> preprocess -> MLA -> encode) from the
+    # A65 host-decode and overlay cost, which for segmentation and pose is large.
+    no_overlay: bool = False
+    # Four model graphs share one MLA, so a pull can block far longer than a solo
+    # run suggests. Keep this generous: a too-short timeout reports a scheduling
+    # delay as a model failure.
+    pull_timeout_ms: int = 20000
+    # Execution target for the model's pre (tessellate/quantize) and post
+    # (detessellate/dequantize) CVU stages: AUTO | EV74 | A65.
+    # AUTO lets Neat's planner choose. The planner does not always pick the
+    # accelerator: see README — with AUTO, yolo26s-pose's post stage lands on the
+    # A65 and costs ~1.8 s/frame, while forcing EV74 makes it ~10 ms.
+    cvu_pre_target: str = "AUTO"
+    cvu_post_target: str = "AUTO"
+    # Measure for a fixed wall-clock window instead of a per-stream frame count.
+    # This is the correct design for a SHARED-resource throughput test: with a
+    # frame cap, a fast stream keeps running (and keeps consuming the one MLA)
+    # until the slowest stream also reaches the cap, which starves the slow
+    # streams and reports rates that no steady state ever produced.
+    # 0 = use --frames instead.
+    duration_s: float = 0.0
     # per-slot overrides parsed from config; None => default
     _tasks: dict = field(default_factory=dict)
     _rtsp: dict = field(default_factory=dict)
@@ -141,7 +180,10 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         "score_threshold": ("score_threshold", float), "nms_iou": ("nms_iou", float),
         "top_k": ("top_k", int), "bitrate_kbps": ("bitrate_kbps", int),
         "queue_depth": ("queue_depth", int), "frames": ("frames", int),
-        "num_streams": ("num_streams", int),
+        "num_streams": ("num_streams", int), "warmup_frames": ("warmup_frames", int),
+        "pipeline_depth": ("pipeline_depth", int), "pull_timeout_ms": ("pull_timeout_ms", int),
+        "cvu_pre_target": ("cvu_pre_target", str), "cvu_post_target": ("cvu_post_target", str),
+        "duration_s": ("duration_s", float),
     }
     if key in simple:
         attr, cast = simple[key]
@@ -150,6 +192,10 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.tcp = value.strip().lower() == "tcp"
     elif key == "print_backend":
         cfg.print_backend = parse_bool(value)
+    elif key == "serial":
+        cfg.serial = parse_bool(value)
+    elif key == "no_overlay":
+        cfg.no_overlay = parse_bool(value)
     else:
         raise ValueError(f"unknown config key: {key}")
 
@@ -177,6 +223,12 @@ def parse_args(argv) -> Config:
     ap.add_argument("--config", type=Path, default=APP_DIR / "config" / "default.conf")
     ap.add_argument("--rtsp", help="override RTSP URL for ALL streams")
     ap.add_argument("--num-streams", type=int)
+    ap.add_argument("--task", choices=DEFAULT_TASKS,
+                    help="run ONE stream with this task only, to measure that model's "
+                         "solo rate with the MLA uncontended")
+    ap.add_argument("--tasks",
+                    help="comma-separated task list, one per stream slot, e.g. "
+                         "'detection,segmentation,yolox'. Sets --num-streams to match.")
     ap.add_argument("--udp-host")
     ap.add_argument("--udp-port-base", type=int)
     ap.add_argument("--score", type=float)
@@ -184,6 +236,21 @@ def parse_args(argv) -> Config:
     ap.add_argument("--top-k", type=int)
     ap.add_argument("--queue-depth", type=int)
     ap.add_argument("--frames", type=int, help="frames PER stream; 0 = forever")
+    ap.add_argument("--warmup-frames", type=int,
+                    help="frames per stream excluded from the reported FPS/stage means")
+    ap.add_argument("--pipeline-depth", type=int,
+                    help="frames kept in flight inside each model graph (1 = lock-step)")
+    ap.add_argument("--serial", action="store_true",
+                    help="single-threaded round-robin (the pre-pipelining behaviour)")
+    ap.add_argument("--no-overlay", action="store_true",
+                    help="skip host decode + NV12 annotation; isolates the model rate")
+    ap.add_argument("--duration", type=float,
+                    help="measure for this many seconds after warmup (shared-resource "
+                         "throughput test); overrides --frames as the stop condition")
+    ap.add_argument("--pre-target", choices=["AUTO", "EV74", "A65"],
+                    help="execution target for the model's pre (tessellate/quantize) CVU stage")
+    ap.add_argument("--post-target", choices=["AUTO", "EV74", "A65"],
+                    help="execution target for the model's post (detess/dequant) CVU stage")
     ap.add_argument("--rtsp-udp", action="store_true")
     ap.add_argument("--print-backend", action="store_true")
     a = ap.parse_args(argv)
@@ -193,6 +260,19 @@ def parse_args(argv) -> Config:
     if a.rtsp is not None:
         cfg.rtsp_default = a.rtsp
         cfg._rtsp = {}
+    if a.task is not None:
+        # Solo mode: one stream, one model, MLA uncontended.
+        cfg.num_streams = 1
+        cfg._tasks = {0: a.task}
+        cfg._models = {}
+    if a.tasks is not None:
+        tasks = [t.strip() for t in a.tasks.split(",") if t.strip()]
+        unknown = [t for t in tasks if t not in DEFAULT_ARCHIVES]
+        if unknown:
+            raise ValueError(f"unknown task(s): {unknown}; known: {DEFAULT_TASKS}")
+        cfg._tasks = {i: t for i, t in enumerate(tasks)}
+        cfg._models = {}
+        cfg.num_streams = len(tasks)
     if a.num_streams is not None:
         cfg.num_streams = a.num_streams
     if a.udp_host is not None:
@@ -209,11 +289,73 @@ def parse_args(argv) -> Config:
         cfg.queue_depth = a.queue_depth
     if a.frames is not None:
         cfg.frames = a.frames
+    if a.warmup_frames is not None:
+        cfg.warmup_frames = a.warmup_frames
+    if a.pipeline_depth is not None:
+        cfg.pipeline_depth = a.pipeline_depth
+    if a.serial:
+        cfg.serial = True
+    if a.no_overlay:
+        cfg.no_overlay = True
+    if a.duration is not None:
+        cfg.duration_s = a.duration
+    if a.pre_target is not None:
+        cfg.cvu_pre_target = a.pre_target
+    if a.post_target is not None:
+        cfg.cvu_post_target = a.post_target
     if a.rtsp_udp:
         cfg.tcp = False
     if a.print_backend:
         cfg.print_backend = True
     return cfg
+
+
+# ── time profiling ────────────────────────────────────────────────────────────
+# Each frame is timed stage by stage, so a slow stream can be attributed to a
+# specific stage rather than guessed at. Stage meanings:
+#   rtsp    wait + copy of one decoded NV12 frame out of the RTSP source graph
+#   prep    NV12 -> pyneat.Tensor for the model input
+#   infer   THE MODEL: push + pull (EV74 preprocess, MLA, on-device box decode)
+#   decode  task decode. detection = Neat's fused on-device decode (cheap);
+#           segmentation / pose / yolox = host A65 NumPy decode of the RAW heads
+#   overlay NV12 Y-plane annotation (boxes, labels, masks, skeletons)
+#   send    NV12 -> Tensor + push into the H.264/RTP UDP sender graph
+#
+# `infer` is the number to read for "can this model do 60 fps": it is the model
+# stage alone, with no host decode and no overlay in it.
+STAGES = ("rtsp", "prep", "infer", "decode", "overlay", "send")
+
+
+class StageProfile:
+    """Per-stage wall-clock samples for one stream."""
+
+    def __init__(self) -> None:
+        self.samples: dict = {name: [] for name in STAGES}
+        self.total: list = []
+
+    def add(self, timings: dict, total_ms: float) -> None:
+        for name, value in timings.items():
+            self.samples[name].append(value)
+        self.total.append(total_ms)
+
+    @staticmethod
+    def _percentile(values: list, pct: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        idx = min(len(ordered) - 1, max(0, int(round((pct / 100.0) * (len(ordered) - 1)))))
+        return ordered[idx]
+
+    def mean(self, name: str) -> float:
+        values = self.samples[name] if name != "total" else self.total
+        return sum(values) / len(values) if values else 0.0
+
+    def p95(self, name: str) -> float:
+        values = self.samples[name] if name != "total" else self.total
+        return self._percentile(values, 95)
+
+    def frames(self) -> int:
+        return len(self.total)
 
 
 # ── stream context ────────────────────────────────────────────────────────────
@@ -229,6 +371,15 @@ class StreamContext:
     is_builtin_decode: bool
     processed: int = 0
     last_objs: int = 0
+    dropped: int = 0
+    pull_timeouts: int = 0
+    model_q: object = None   # set by the pipelined engine
+    out_q: object = None     # set by the pipelined engine
+    # Frames already delivered when the steady-state window opened. Streams do
+    # not cross the warmup mark at the same instant, so the window's frame count
+    # must be (processed - steady_base), not (processed - warmup).
+    steady_base: int = 0
+    profile: StageProfile = field(default_factory=StageProfile)
 
 
 # ── graph builders (NV12 shuttle; mirrors multi-stream-yolo-yolo11) ───────────
@@ -281,6 +432,11 @@ def make_model(cfg: Config, spec: StreamSpec):
     opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.NV12
     opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+    # Pin the pre/post CVU stages when asked. Leaving these AUTO lets the planner
+    # drop a raw-head model's detessellate+dequantize onto the A65, which is
+    # ~180x slower than the EV74 for the pose head layout.
+    opt.processcvu.pre_run_target = cfg.cvu_pre_target
+    opt.processcvu.post_run_target = cfg.cvu_post_target
     if spec.task == "detection":
         # compile_ready yolo11s exposes the 6 YoloV26 grouped tensors -> on-device decode.
         opt.decode_type = pyneat.BoxDecodeType.YoloV26
@@ -432,22 +588,9 @@ def decode_for_task(cfg, task, tensors, w, h):
     return dec.decode_detection(tensors, w, h, **kw)
 
 
-def service_stream(cfg, ctx: StreamContext) -> bool:
-    frames = ctx.source_run.pull_tensors(timeout_ms=20000)
-    if not frames:
-        print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout", file=sys.stderr)
-        return False
-    nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
-    if not ctx.model_run.push([make_nv12_tensor(nv12, fw, fh)]):
-        print(f"[warn] stream {ctx.spec.stream_id}: model push failed", file=sys.stderr)
-        return False
-    endpoint = "detections" if ctx.is_builtin_decode else "heads"
-    sample = ctx.model_run.pull(endpoint, 20000)
-    if sample is None:
-        print(f"[warn] stream {ctx.spec.stream_id}: model output timeout", file=sys.stderr)
-        return False
-    tensors = extract_tensors(sample)
-
+def decode_sample(cfg, ctx: StreamContext, tensors, fw: int, fh: int):
+    """Task decode for one model output. Detection uses Neat's fused on-device
+    box decode; segmentation / pose / yolox decode the RAW heads on the host."""
     if ctx.is_builtin_decode:
         result = dec.DecodeResult([])
         decoded = pyneat.decode_bbox(tensors, clamp_to=(fw, fh), top_k=cfg.top_k)
@@ -458,22 +601,127 @@ def service_stream(cfg, ctx: StreamContext) -> bool:
                     continue
                 result.detections.append(dec.Detection(float(x1), float(y1), float(x2),
                                                         float(y2), float(sc), int(cid)))
-    else:
-        if os.environ.get("QSQM_DEBUG") and ctx.processed == 0:
-            shapes = []
-            for t in tensors:
-                a = t.to_numpy(copy=True) if hasattr(t, "to_numpy") else np.asarray(t)
-                shapes.append(tuple(a.shape))
-            print(f"[dbg] stream {ctx.spec.stream_id} {ctx.spec.task}: "
-                  f"{len(tensors)} raw tensors shapes={shapes}", file=sys.stderr, flush=True)
-        result = decode_for_task(cfg, ctx.spec.task, tensors, fw, fh)
+        return result
+    if os.environ.get("QSQM_DEBUG") and ctx.processed == 0:
+        shapes = []
+        for t in tensors:
+            a = t.to_numpy(copy=True) if hasattr(t, "to_numpy") else np.asarray(t)
+            shapes.append(tuple(a.shape))
+        print(f"[dbg] stream {ctx.spec.stream_id} {ctx.spec.task}: "
+              f"{len(tensors)} raw tensors shapes={shapes}", file=sys.stderr, flush=True)
+    return decode_for_task(cfg, ctx.spec.task, tensors, fw, fh)
 
-    banner = f"S{ctx.spec.stream_id} {ctx.spec.task.upper()} :{ctx.spec.port}"
-    ctx.last_objs = annotate(nv12, fw, fh, result, ctx.spec.task, banner)
+
+def service_stream(cfg, ctx: StreamContext) -> bool:
+    """Serial path: one thread runs every stage of this stream, timed per stage."""
+    timings: dict = {}
+    frame_start = time.perf_counter()
+    endpoint = "detections" if ctx.is_builtin_decode else "heads"
+
+    mark = time.perf_counter()
+    frames = ctx.source_run.pull_tensors(timeout_ms=20000)
+    if not frames:
+        print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout", file=sys.stderr)
+        return False
+    nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
+    timings["rtsp"] = (time.perf_counter() - mark) * 1000.0
+
+    mark = time.perf_counter()
+    tensor = make_nv12_tensor(nv12, fw, fh)
+    timings["prep"] = (time.perf_counter() - mark) * 1000.0
+
+    mark = time.perf_counter()
+    if not ctx.model_run.push([tensor]):
+        print(f"[warn] stream {ctx.spec.stream_id}: model push failed", file=sys.stderr)
+        return False
+    try:
+        sample = ctx.model_run.pull(endpoint, cfg.pull_timeout_ms)
+    except Exception as exc:
+        # pyneat raises on pull timeout rather than returning None.
+        ctx.pull_timeouts += 1
+        print(f"[warn] stream {ctx.spec.stream_id} ({ctx.spec.task}): "
+              f"model pull failed: {exc}", file=sys.stderr, flush=True)
+        return False
+    if sample is None:
+        ctx.pull_timeouts += 1
+        return False
+    timings["infer"] = (time.perf_counter() - mark) * 1000.0
+
+    mark = time.perf_counter()
+    result = None if cfg.no_overlay else decode_sample(cfg, ctx, extract_tensors(sample), fw, fh)
+    timings["decode"] = (time.perf_counter() - mark) * 1000.0
+
+    mark = time.perf_counter()
+    if result is not None:
+        banner = f"S{ctx.spec.stream_id} {ctx.spec.task.upper()} :{ctx.spec.port}"
+        ctx.last_objs = annotate(nv12, fw, fh, result, ctx.spec.task, banner)
+    timings["overlay"] = (time.perf_counter() - mark) * 1000.0
+
+    mark = time.perf_counter()
     if not ctx.video_run.push([make_nv12_tensor(nv12, fw, fh)]):
         raise RuntimeError("video push failed")
+    timings["send"] = (time.perf_counter() - mark) * 1000.0
+
+    ctx.profile.add(timings, (time.perf_counter() - frame_start) * 1000.0)
     ctx.processed += 1
     return True
+
+
+def print_profile(contexts: list, wall_s: float, mode: str, no_overlay: bool) -> None:
+    """Per-stream/per-model stage breakdown + delivered FPS.
+
+    Two different FPS numbers are reported and they answer different questions:
+
+      model fps    = 1000 / mean(infer). What the MODEL stage alone sustains for
+                     this stream — MLA time including its share of contention with
+                     the other three models on the one MLA. This is the "60 fps
+                     for the model" number.
+      delivered fps = frames actually published to UDP per second of wall clock.
+                     Includes host decode + overlay + encode, so for segmentation
+                     and pose it is much lower than the model rate.
+    """
+    tag = "no-overlay" if no_overlay else "with-overlay"
+    print(f"\n=== time profile ({mode}, {tag}; ms/frame, mean | p95) ===", flush=True)
+    header = f"{'stream':>6} {'task':>13} {'frames':>6}"
+    for name in STAGES:
+        header += f" {name:>15}"
+    header += f" {'latency':>15}"
+    print(header, flush=True)
+    total = 0
+    for ctx in contexts:
+        prof = ctx.profile
+        base = ctx.steady_base
+        if base and prof.frames() > base:
+            for name in STAGES:
+                prof.samples[name] = prof.samples[name][base:]
+            prof.total = prof.total[base:]
+        window = max(0, ctx.processed - base)
+        total += window
+        row = f"{ctx.spec.stream_id:>6} {ctx.spec.task:>13} {window:>6}"
+        for name in STAGES:
+            row += f" {prof.mean(name):>7.2f}|{prof.p95(name):<7.2f}"
+        row += f" {prof.mean('total'):>7.2f}|{prof.p95('total'):<7.2f}"
+        print(row, flush=True)
+
+    print(f"\n=== per model-stream FPS (steady-state window {wall_s:.1f}s) ===", flush=True)
+    print(f"{'stream':>6} {'task':>13} {'model':>13} {'model fps':>10} "
+          f"{'delivered fps':>14} {'dropped':>8} {'pull t/o':>9}", flush=True)
+    for ctx in contexts:
+        infer = ctx.profile.mean("infer")
+        window = max(0, ctx.processed - ctx.steady_base)
+        model_fps = 1000.0 / infer if infer else 0.0
+        delivered = window / wall_s if wall_s else 0.0
+        print(f"{ctx.spec.stream_id:>6} {ctx.spec.task:>13} "
+              f"{Path(ctx.spec.model_path).name.split('.')[0]:>13} "
+              f"{model_fps:>10.1f} {delivered:>14.2f} {ctx.dropped:>8} "
+              f"{ctx.pull_timeouts:>9}", flush=True)
+    print(f"\naggregate delivered: {total / wall_s if wall_s else 0.0:.2f} fps "
+          f"across {len(contexts)} stream-model pairs", flush=True)
+    if wall_s <= 0.0:
+        print("[warn] steady-state window never opened: at least one stream never "
+              "reached --warmup-frames. FPS columns are meaningless; lower "
+              "--warmup-frames or fix the starving stream.", flush=True)
+    sys.stdout.flush()
 
 
 # ── probing + main loop ───────────────────────────────────────────────────────
@@ -494,6 +742,13 @@ def build_run_options(cfg):
     ro.preset = pyneat.RunPreset.Realtime
     ro.queue_depth = cfg.queue_depth
     ro.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+    # ZeroCopy. OutputMemory.Owned was tried (on the theory that queueing a ZeroCopy
+    # Sample to the output thread was a use-after-free behind the intermittent
+    # teardown abort) and REJECTED on evidence: it did not stop the abort (a run
+    # still segfaulted mid-run under Owned), and it deep-copies every output sample.
+    # That copy is expensive for the raw-head models, whose outputs are large:
+    # segmentation fell 87 -> 22 model fps and yolox 90 -> 62. Keep ZeroCopy.
+    # See README "Known limitations" for the still-open abort.
     ro.output_memory = pyneat.OutputMemory.ZeroCopy
     return ro
 
@@ -522,40 +777,272 @@ def run(cfg: Config) -> int:
               f'caps="application/x-rtp,media=video,encoding-name=H264,payload=96" '
               f"! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false")
 
+    warmup = min(cfg.warmup_frames, cfg.frames - 1) if cfg.frames > 0 else cfg.warmup_frames
+    warmup = max(0, warmup)
+    try:
+        if cfg.serial:
+            return run_serial(cfg, contexts, warmup)
+        return run_pipelined(cfg, contexts, warmup)
+    finally:
+        for c in contexts:
+            c.model_run.close(); c.source_run.close(); c.video_run.close()
+
+
+def run_serial(cfg, contexts: list, warmup: int) -> int:
+    """Original single-threaded round-robin over all stream-model pairs.
+
+    One thread runs every stage of every stream, so the four MLA models never
+    overlap with each other's host decode/overlay work and the per-stream rate is
+    1 / (num_streams * per-frame service time).
+    """
     start = time.perf_counter()
-    per = {c.spec.stream_id: {"t": 0.0, "n": 0} for c in contexts}
+    steady_start = None
     total = 0
     try:
         while cfg.frames <= 0 or min(c.processed for c in contexts) < cfg.frames:
             for ctx in contexts:
                 if cfg.frames > 0 and ctx.processed >= cfg.frames:
                     continue
-                t0 = time.perf_counter()
                 if service_stream(cfg, ctx):
-                    dt = time.perf_counter() - t0
-                    per[ctx.spec.stream_id]["t"] += dt
-                    per[ctx.spec.stream_id]["n"] += 1
                     total += 1
-                    if ctx.processed == 1 or ctx.processed % 20 == 0 or ctx.processed == cfg.frames:
-                        el = time.perf_counter() - start
-                        s_fps = per[ctx.spec.stream_id]["n"] / per[ctx.spec.stream_id]["t"] if per[ctx.spec.stream_id]["t"] else 0
+                    if ctx.processed % 50 == 0:
                         print(f"stream={ctx.spec.stream_id} task={ctx.spec.task} "
-                              f"frame={ctx.processed} objs={ctx.last_objs} "
-                              f"stream_fps={s_fps:.2f} agg_fps={total/el:.2f}", flush=True)
+                              f"frame={ctx.processed} objs={ctx.last_objs}", flush=True)
+            if steady_start is None and min(c.processed for c in contexts) >= warmup:
+                steady_start = time.perf_counter()
+                for ctx in contexts:
+                    ctx.steady_base = ctx.processed
             time.sleep(0)
     finally:
-        el = max(1e-6, time.perf_counter() - start)
-        print("\n=== per-stream summary ===")
-        for c in contexts:
-            p = per[c.spec.stream_id]
-            fps = p["n"] / p["t"] if p["t"] else 0.0
-            print(f"stream {c.spec.stream_id} {c.spec.task:12s} frames={c.processed} "
-                  f"stream_fps={fps:.2f} (service-time based)")
-        print(f"aggregate: {total} frames in {el:.1f}s = {total/el:.2f} agg_fps "
-              f"across {len(contexts)} streams")
-        for c in contexts:
-            c.model_run.close(); c.source_run.close(); c.video_run.close()
+        if steady_start is not None:
+            print_profile(contexts, time.perf_counter() - steady_start,
+                          "serial", cfg.no_overlay)
     return total
+
+
+# ── pipelined (threaded) engine ───────────────────────────────────────────────
+# Unlike multi-stream-yolo-yolo11, every stream here owns its OWN model graph, so
+# there is no shared model stage to serialize on and each stream gets its own
+# model thread. The four model threads still contend for the single MLA — that
+# contention is real and shows up inside `infer` — but their host work (RTSP copy,
+# host head decode, NV12 annotation, encoder push) now overlaps instead of running
+# lock-step behind one another.
+#
+#   source thread (one per stream)  RTSP pull -> NV12 -> Tensor  -> ctx.model_q
+#   model thread  (one per stream)  push/pull that stream's Run -> ctx.out_q
+#   output thread (one per stream)  task decode -> annotate -> UDP encoder push
+
+
+def _drop_oldest_put(q, item) -> int:
+    """Bounded put with drop-oldest. Returns frames dropped (0 or 1).
+
+    A live 60 fps RTSP source does not wait. If a stage falls behind, blocking
+    would grow latency without bound, so the oldest queued frame is discarded and
+    the newest kept — the same intent as OverflowPolicy.KeepLatest.
+    """
+    import queue as queue_mod
+    try:
+        q.put_nowait(item)
+        return 0
+    except queue_mod.Full:
+        try:
+            q.get_nowait()
+        except queue_mod.Empty:
+            pass
+        try:
+            q.put_nowait(item)
+        except queue_mod.Full:
+            return 1
+        return 1
+
+
+def run_pipelined(cfg, contexts: list, warmup: int) -> int:
+    import queue as queue_mod
+    import threading
+
+    stop = threading.Event()
+    errors: list = []
+    steady = {"start": None, "lock": threading.Lock()}
+    for ctx in contexts:
+        ctx.model_q = queue_mod.Queue(maxsize=cfg.queue_depth)
+        ctx.out_q = queue_mod.Queue(maxsize=cfg.queue_depth)
+
+    def note_steady() -> None:
+        with steady["lock"]:
+            if steady["start"] is None and all(c.processed >= warmup for c in contexts):
+                steady["start"] = time.perf_counter()
+                for c in contexts:
+                    c.steady_base = c.processed
+
+    def source_thread(ctx: StreamContext) -> None:
+        try:
+            while not stop.is_set():
+                mark = time.perf_counter()
+                frames = ctx.source_run.pull_tensors(timeout_ms=5000)
+                if not frames:
+                    if stop.is_set():
+                        return
+                    print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout",
+                          file=sys.stderr)
+                    continue
+                nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
+                rtsp_ms = (time.perf_counter() - mark) * 1000.0
+
+                mark = time.perf_counter()
+                tensor = make_nv12_tensor(nv12, fw, fh)
+                prep_ms = (time.perf_counter() - mark) * 1000.0
+
+                ctx.dropped += _drop_oldest_put(
+                    ctx.model_q, (nv12, tensor, fw, fh, rtsp_ms, prep_ms, time.perf_counter()))
+        except Exception as exc:
+            errors.append(f"source {ctx.spec.stream_id}: {exc}")
+            stop.set()
+
+    def model_thread(ctx: StreamContext) -> None:
+        """Sole pusher AND sole puller of THIS stream's model Run, so the graph's
+        FIFO ordering keeps the Nth sample matched to the Nth frame pushed."""
+        endpoint = "detections" if ctx.is_builtin_decode else "heads"
+        pending: list = []
+        try:
+            while True:
+                if stop.is_set() and not pending:
+                    return
+                item = None
+                if not stop.is_set():
+                    try:
+                        item = ctx.model_q.get(timeout=0.2)
+                    except queue_mod.Empty:
+                        item = None
+                if item is not None:
+                    nv12, tensor, fw, fh, rtsp_ms, prep_ms, t_in = item
+                    push_mark = time.perf_counter()
+                    if not ctx.model_run.push([tensor]):
+                        print(f"[warn] stream {ctx.spec.stream_id}: model push failed",
+                              file=sys.stderr)
+                        continue
+                    pending.append((nv12, fw, fh, rtsp_ms, prep_ms, t_in, push_mark))
+
+                if pending and (len(pending) >= cfg.pipeline_depth or item is None):
+                    nv12, fw, fh, rtsp_ms, prep_ms, t_in, push_mark = pending.pop(0)
+                    # Four model graphs share one MLA. Under contention a pull can
+                    # block far longer than a solo run would suggest, and pyneat
+                    # RAISES on pull timeout rather than returning None. Treat that
+                    # as a dropped frame for this stream, not as a fatal error for
+                    # the whole pipeline.
+                    try:
+                        sample = ctx.model_run.pull(endpoint, cfg.pull_timeout_ms)
+                    except Exception as exc:
+                        if stop.is_set():
+                            return
+                        ctx.pull_timeouts += 1
+                        print(f"[warn] stream {ctx.spec.stream_id} ({ctx.spec.task}): "
+                              f"model pull failed: {exc}", file=sys.stderr, flush=True)
+                        continue
+                    if sample is None:
+                        if stop.is_set():
+                            return
+                        ctx.pull_timeouts += 1
+                        continue
+                    infer_ms = (time.perf_counter() - push_mark) * 1000.0
+                    ctx.dropped += _drop_oldest_put(
+                        ctx.out_q, (nv12, sample, fw, fh, rtsp_ms, prep_ms, infer_ms, t_in))
+        except Exception as exc:
+            errors.append(f"model {ctx.spec.stream_id}: {exc}")
+            stop.set()
+
+    def output_thread(ctx: StreamContext) -> None:
+        try:
+            while not stop.is_set():
+                try:
+                    nv12, sample, fw, fh, rtsp_ms, prep_ms, infer_ms, t_in = \
+                        ctx.out_q.get(timeout=0.2)
+                except queue_mod.Empty:
+                    continue
+
+                mark = time.perf_counter()
+                result = (None if cfg.no_overlay
+                          else decode_sample(cfg, ctx, extract_tensors(sample), fw, fh))
+                decode_ms = (time.perf_counter() - mark) * 1000.0
+
+                mark = time.perf_counter()
+                if result is not None:
+                    banner = f"S{ctx.spec.stream_id} {ctx.spec.task.upper()} :{ctx.spec.port}"
+                    ctx.last_objs = annotate(nv12, fw, fh, result, ctx.spec.task, banner)
+                overlay_ms = (time.perf_counter() - mark) * 1000.0
+
+                mark = time.perf_counter()
+                if not ctx.video_run.push([make_nv12_tensor(nv12, fw, fh)]):
+                    raise RuntimeError("video push failed")
+                send_ms = (time.perf_counter() - mark) * 1000.0
+
+                ctx.profile.add(
+                    {"rtsp": rtsp_ms, "prep": prep_ms, "infer": infer_ms,
+                     "decode": decode_ms, "overlay": overlay_ms, "send": send_ms},
+                    (time.perf_counter() - t_in) * 1000.0,
+                )
+                ctx.processed += 1
+                note_steady()
+                if ctx.processed % 60 == 0:
+                    print(f"stream={ctx.spec.stream_id} task={ctx.spec.task} "
+                          f"frame={ctx.processed} objs={ctx.last_objs} "
+                          f"dropped={ctx.dropped}", flush=True)
+                if (cfg.duration_s <= 0 and cfg.frames > 0
+                        and all(c.processed >= cfg.frames for c in contexts)):
+                    stop.set()
+        except Exception as exc:
+            errors.append(f"output {ctx.spec.stream_id}: {exc}")
+            stop.set()
+
+    threads = []
+    for ctx in contexts:
+        threads.append(threading.Thread(target=source_thread, args=(ctx,),
+                                        name=f"src{ctx.spec.stream_id}", daemon=True))
+        threads.append(threading.Thread(target=model_thread, args=(ctx,),
+                                        name=f"mdl{ctx.spec.stream_id}", daemon=True))
+        threads.append(threading.Thread(target=output_thread, args=(ctx,),
+                                        name=f"out{ctx.spec.stream_id}", daemon=True))
+    print(f"\npipelined: {len(contexts)} x (source + model + output) threads, "
+          f"pipeline_depth={cfg.pipeline_depth}, overlay="
+          f"{'off' if cfg.no_overlay else 'on'}", flush=True)
+    for t in threads:
+        t.start()
+    try:
+        while not stop.is_set():
+            if cfg.duration_s > 0:
+                with steady["lock"]:
+                    started = steady["start"]
+                if started is not None and (time.perf_counter() - started) >= cfg.duration_s:
+                    stop.set()
+                    break
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        stop.set()
+    finally:
+        stop.set()
+        # Snapshot the window BEFORE joining: the drain in model/output threads
+        # would otherwise keep incrementing processed after the clock stopped.
+        wall = (time.perf_counter() - steady["start"]) if steady["start"] else 0.0
+        final = {c.spec.stream_id: c.processed for c in contexts}
+        for t in threads:
+            t.join(timeout=5.0)
+        for c in contexts:
+            c.processed = final[c.spec.stream_id]
+        print_profile(contexts, wall, "pipelined", cfg.no_overlay)
+        for err in errors:
+            print(f"[ERR] {err}", file=sys.stderr, flush=True)
+        # Model Runs are built with OutputMemory.ZeroCopy, so a pulled Sample
+        # points into runtime-owned memory. Drop every queued Sample while the
+        # Runs are still alive, before run()'s finally closes them.
+        import gc
+        for ctx in contexts:
+            for q in (ctx.model_q, ctx.out_q):
+                while True:
+                    try:
+                        q.get_nowait()
+                    except queue_mod.Empty:
+                        break
+        gc.collect()
+    return sum(max(0, c.processed - c.steady_base) for c in contexts)
 
 
 def main(argv=None) -> int:
