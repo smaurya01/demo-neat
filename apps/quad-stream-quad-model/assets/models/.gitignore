@@ -1,0 +1,6 @@
+# Compiled model archives are large and built locally; do not commit them.
+# This app references the archives under model-compilation/work/ in place, so
+# this directory is only a convenient override drop point (set stream<i>_model).
+*
+!.gitignore
+!.gitkeep

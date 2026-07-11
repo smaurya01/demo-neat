@@ -29,6 +29,16 @@ http://<devkit-ip>:8888/tree
 5. YOLO CPU Decode - `I-easy/05_yolo_cpu_decode.ipynb`
 6. YOLOv8 Image Detection Pipeline - `I-easy/06_yolov8_image_detection_pipeline.ipynb`
 
+## II - Medium
+
+1. Model Options - `II-medium/01_model_options.ipynb`
+2. RTSP Input And Decode Options - `II-medium/02_rtsp_input_and_decode_options.ipynb`
+
+## III - Advanced
+
+9. Single RTSP YOLO11 Basic Pipeline - `III-advanced/09_single_rtsp_yolo11_basic_pipeline.ipynb`
+10. Optimized RTSP YOLO11 Single And Multi Stream - `III-advanced/10_optimized_rtsp_yolo11_single_and_multi_stream.ipynb`
+
 ## Assets
 
 - Images: `assets/images/`
@@ -76,6 +86,27 @@ Expected model path:
 
 ```text
 assets/models/yolo_v8s_mpk.tar.gz
+```
+
+If your DevKit uses a different platform version, replace `2.1.2` with that release version.
+
+### Download YOLO11n For RTSP Notebooks
+
+Notebooks `III-advanced/09_single_rtsp_yolo11_basic_pipeline.ipynb` and `III-advanced/10_optimized_rtsp_yolo11_single_and_multi_stream.ipynb` use the Model Zoo detection model `yolo_11n`.
+
+Run this once from the `tutorial` folder on the DevKit:
+
+```bash
+mkdir -p assets/models
+cd assets/models
+sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+cd ../..
+```
+
+Expected model path:
+
+```text
+assets/models/yolo_11n_mpk.tar.gz
 ```
 
 If your DevKit uses a different platform version, replace `2.1.2` with that release version.
