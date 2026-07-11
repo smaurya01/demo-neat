@@ -1,109 +1,97 @@
-# demo-neat — NEAT Training Material
+# demo-neat — NEAT enablement material for the SiMa Modalix DevKit
 
-The front door for the **NEAT 4-day enablement course** on the SiMa **Modalix DevKit**. If you are a
-trainee opening this repo cold, start here, then follow the day-by-day map below.
+Runnable demo apps, concept notebooks, a model-compilation reference, and a GenAI (LLM/VLM/ASR)
+track — all for SiMa **NEAT** on the **Modalix DevKit**.
 
-This repository bundles four things:
+If you are opening this repo cold, do [`installation/`](installation/README.md) first, then pick a
+track below.
 
-- **Runnable demo apps** (`apps/`) — single- and multi-stream YOLO detection, a detection→VLM
-  assistant, and a 4-stream/4-model pipeline.
-- **A GenAI (LLM/VLM/ASR) track** (`llima/`) — concepts, the `llima` CLI, running models from
-  `pyneat.genai`, bring-your-own compilation, and the GenAI server.
-- **A model-compilation reference** (`model-compilation/`) — ONNX graph surgery, INT8 quantization,
-  and compile for YOLO and harder transformer models.
-- **The course itself** (`training/`) plus concept notebooks (`tutorial/`) and setup notes
-  (`installation/`).
+## What is in here
 
-> **Read this before running anything: [Verified vs documented-but-unrun](#verified-vs-documented-but-unrun).**
-> Some of this material is live-validated on the DevKit; a large part (all LLM/VLM/ASR execution and
-> all GenAI compilation) is written for you to run manually and has **not** been executed by the
-> people who wrote it. Knowing which is which will save you hours.
+| Folder | What you get |
+| --- | --- |
+| [`installation/`](installation/README.md) | Set up the SDK container, pair the DevKit, install Neat Insight. **Start here.** |
+| [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, Run, model options, RTSP, video/metadata senders. |
+| [`apps/`](#apps) | Complete, runnable applications: RTSP in → inference → annotated H.264/RTP UDP out. |
+| [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
+| [`llima/`](llima/README.md) | LLM / VLM / ASR: the `llima` CLI, the `pyneat.genai` API, compilation, and the GenAI server. |
 
 ---
 
-## The 4-day training arc
+## Setup
 
-The full syllabus is [`training/NEAT_4_DAY_TRAINING_PROGRAM.md`](training/NEAT_4_DAY_TRAINING_PROGRAM.md).
-At a glance:
+Read these in order:
 
-| Day | Theme | Primary material in this repo |
-| --- | --- | --- |
-| **Day 1** | NEAT foundations + first YOLO app | `tutorial/`, `apps/single-stream-yolo-*` |
-| **Day 2** | Two-camera pipelines, runtime tuning, detection + VLM | `apps/multi-stream-yolo-yolo11`, `model-compilation/` (surgery walkthrough), `apps/detection-vlm-assistant`, `llima/03-yolo-plus-vlm` |
-| **Day 3** | Model prep, unknown-model triage, PCIe | `model-compilation/`, `llima/04-llm-vlm-compilation` |
-| **Day 4** | Production apps, GenAI/LLiMa, diagnostics, capstone | `llima/`, `apps/quad-stream-quad-model` |
+1. **[`installation/README.md`](installation/README.md)** — SDK container, DevKit pairing, VS Code,
+   the `dk` runner. The platform-neutral guide.
+2. **[`installation/neat_on_windows.md`](installation/neat_on_windows.md)** — the same stack on
+   Windows, via WSL2.
+3. **[`installation/neat_insight.md`](installation/neat_insight.md)** — Neat Insight: browser-based
+   RTSP sources, video viewer, runtime metrics.
 
-Days 1–2 are tuned for the Korea team profile (Ubuntu host, Modalix DevKit, YOLOv11, VLM, two
-cameras). Days 3–4 broaden to model triage, GenAI, and production support.
-
----
-
-## Navigation table
-
-| Folder | What you learn there | Entry point |
-| --- | --- | --- |
-| [`tutorial/`](tutorial/README.md) | Core Neat concepts as notebooks (Model, Graph, Run, Tensor, Sample) | `tutorial/README.md` |
-| [`installation/`](installation/README.md) | SDK container, DevKit, Neat Insight, Windows setup | `installation/README.md` |
-| [`apps/single-stream-yolo-yolo11/`](apps/single-stream-yolo-yolo11/README.md) | The baseline single-stream YOLO11 detection app | `apps/single-stream-yolo-yolo11/README.md` |
-| [`apps/multi-stream-yolo-yolo11/`](apps/multi-stream-yolo-yolo11/README.md) | 2× RTSP → one shared YOLO11 stage → per-stream UDP out | `apps/multi-stream-yolo-yolo11/README.md` |
-| [`apps/detection-vlm-assistant/`](apps/detection-vlm-assistant/README.md) | YOLO detection → trigger-gated crops → VLM captions | `apps/detection-vlm-assistant/README.md` |
-| [`apps/quad-stream-quad-model/`](apps/quad-stream-quad-model/README.md) | 4 streams × 4 models (det/seg/pose/YOLOX) + teaching doc | `apps/quad-stream-quad-model/README.md` → [`TEACHING.md`](apps/quad-stream-quad-model/TEACHING.md) |
-| [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → archive; YOLO + transformer models | `model-compilation/README.md` |
-| [`llima/`](llima/README.md) | LLM/VLM/ASR: concepts, CLI, running, compiling, serving | `llima/README.md` |
-| [`training/`](training/NEAT_4_DAY_TRAINING_PROGRAM.md) | The 4-day course syllabus | `training/NEAT_4_DAY_TRAINING_PROGRAM.md` |
-
-The pre-existing single-model apps (`apps/single-stream-yolo-yolov8n`, `-yolov8m`, `-yolo26n`,
-`-open-pose`, `apps/single-stream-yolov8n-seg`, `apps/pcb-defect-detection-yolo26n`,
-`apps/multi-model-load-probe`, `apps/benchmark`) each keep their own README; open the folder you want.
+`/workspace` is **NFS-mounted on the DevKit at the same path**, so you edit files host-side and run
+them board-side with **no copying**.
 
 ---
 
-## Verified vs documented-but-unrun
+## Apps
 
-**This is the single most important section of this README.** The training material was built under a
-hard rule: **no agent runs any LLM/VLM/ASR model and no agent runs a GenAI compile.** So the material
-divides cleanly into three honesty tiers.
+Every app is self-contained — its own `README.md`, `config/default.conf`, and `assets/models/`. Each
+reads RTSP, runs a model, and publishes an annotated H.264/RTP UDP stream you can watch with
+GStreamer.
 
-### ✅ Live-validated on the DevKit (192.168.135.203)
+| App | What it demonstrates |
+| --- | --- |
+| [`single-stream-yolo-yolo11`](apps/single-stream-yolo-yolo11/README.md) | The baseline: one RTSP stream → YOLO11 → one UDP output. **Read this first.** |
+| [`multi-stream-yolo-yolo11`](apps/multi-stream-yolo-yolo11/README.md) | 2× RTSP → **one shared** YOLO11 model stage → per-stream UDP out. Sustains the full 60 fps source rate on both streams. |
+| [`quad-stream-quad-model`](apps/quad-stream-quad-model/README.md) | 4 streams × 4 **different** models (detection / segmentation / pose / YOLOX). Deep dive: [`TEACHING.md`](apps/quad-stream-quad-model/TEACHING.md). |
+| [`detection-vlm-assistant`](apps/detection-vlm-assistant/README.md) | YOLO detection → trigger-gated crops → VLM captions. |
+| [`pcb-defect-detection-yolo26n`](apps/pcb-defect-detection-yolo26n/README.md) | A custom-trained YOLO26n on a non-COCO domain, compiled end to end. |
+| [`single-stream-yolo-yolov8n`](apps/single-stream-yolo-yolov8n/README.md) · [`-yolov8m`](apps/single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](apps/single-stream-yolo26n/README.md) | The same single-stream shape with other detectors. |
+| [`single-stream-yolov8n-seg`](apps/single-stream-yolov8n-seg/README.md) | Segmentation masks instead of boxes. |
+| [`single-stream-open-pose`](apps/single-stream-open-pose/README.md) | Pose keypoints and skeletons. |
+| [`multi-model-load-probe`](apps/multi-model-load-probe/README.md) | How many models can the MLA hold and run at once? |
+| [`benchmark`](apps/benchmark/README.md) | Throughput / latency measurement harness. |
 
-These were actually executed on the board and observed to work:
+### Running an app
 
-- **The YOLO compile chain** — `yolo11n` fresh `.pt` → ONNX → `compile_ready` surgery → INT8 →
-  archive validation (one `.elf`, zero `.so`) → still-image smoke test. Re-verified this wave; log in
-  [`model-compilation/results/t1_yolo11n_verification.md`](model-compilation/results/t1_yolo11n_verification.md).
-- **The 2× RTSP app** (`apps/multi-stream-yolo-yolo11`) — ran live, **~37 fps aggregate** across two
-  streams sharing one YOLO11 archive.
-- **The detection leg of the VLM assistant** (`apps/detection-vlm-assistant`) — RTSP/image in → boxes
-  out, validated live. (The VLM leg is *not* validated — see below.)
-- **The quad-stream pipeline** (`apps/quad-stream-quad-model`) — ran live at **~1.7 fps aggregate**
-  (4 streams × 4 models). The bottleneck is **A65 host decode, not the MLA**. Detection, segmentation,
-  and pose decode correctly.
-- **T5 model compiles** — `yolo11s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` all compiled INT8 to one
-  `.elf` / zero `.so` (`A65:0`). See [`model-compilation/work/T5_MODEL_STATUS.md`](model-compilation/work/T5_MODEL_STATUS.md).
+1. Open the app's README.
+2. Point `config/default.conf` at your RTSP URL, UDP receiver IP, ports and thresholds.
+3. Put the compiled archive in the app's `assets/models/` (git-ignored — see
+   [`model-compilation/`](model-compilation/README.md) to build it).
+4. Run it on the board:
 
-### 📝 NOT executed — documented for manual runs
+   ```bash
+   cd apps/<app>
+   dk ./main.py --config ./config/default.conf
+   ```
 
-Written with exact, copy-paste-ready commands and an "expected output" section, but **the authors did
-not run them** (hard rule: LLM/VLM/ASR execution is left to you):
+5. Watch the output on the host (match the app's `udp_port`):
 
-- **All LLM/VLM/ASR execution:** `llima pull`, `llima run`, `llima benchmark-server`, and every
-  `pyneat.genai` inference call — i.e. all of `llima/02-run-llm-vlm/` and `llima/05-genai-server/`,
-  and the **VLM leg** of `apps/detection-vlm-assistant` (run it with `--no-vlm` to exercise the
-  detector without touching the VLM).
-- **All GenAI compilation** — `llima/04-llm-vlm-compilation/`.
+   ```bash
+   gst-launch-1.0 -v udpsrc port=5206 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+   ```
 
-Three models are already pulled on the board, so no `llima pull` is needed in any happy path: LLM
-`Qwen3-4B-Instruct-2507-GPTQ-a16w4`, VLM `Qwen3-VL-4B-Instruct-GPTQ-a16w4`, ASR `whisper-small-a16w8`.
+---
 
-### ⚠️ Docs-derived, not source-verified
+## Model compilation
 
-- **The compilation notebooks (`llima/04-*`) are derived from official docs, not from working code.**
-  The real mechanism is a separate **host-side `llima-compile`** (Model Compiler) tool. There is **no
-  `llima compile` subcommand** — the on-board CLI is runtime + model-manager only (`run, search, pull,
-  list, rm, benchmark-server`). `llima-compile` is not on the board or in `/workspace/core`, and two
-  official doc pages returned **HTTP 403**, so the exact flags are unconfirmed. What *is* verified (in
-  `core/src/genai/GenAIInternal.cpp`) is the deployed model-directory contract, which is the testable
-  part. The notebooks label each fact `[docs]` vs `[core]`.
+**[`model-compilation/README.md`](model-compilation/README.md)** — the reference. Why graph surgery
+is needed, what a good archive looks like (**one `.elf`, zero `.so`**), and how INT8 calibration will
+silently ruin a model if you get it wrong.
+
+**[`model-compilation/REPLICATION.md`](model-compilation/REPLICATION.md)** — a copy-paste block for
+each of the ten models: the exact four commands and the exact expected result.
+
+No weights, ONNX graphs or compiled archives are committed — you regenerate them from the recipe.
+
+---
+
+## GenAI (LLM / VLM / ASR)
+
+**[`llima/README.md`](llima/README.md)** — the `llima` CLI (which *prepares* models) versus the
+`pyneat.genai` API (which *runs* them from your app), bring-your-own compilation, and an
+OpenAI-compatible GenAI server.
 
 ---
 
@@ -111,16 +99,13 @@ Three models are already pulled on the board, so no `llima pull` is needed in an
 
 | Prereq | Notes |
 | --- | --- |
-| **SDK container** | The SiMa Modalix SDK/eLxr container. C++ sysroot at `/opt/toolchain/aarch64/modalix`. |
-| **Model-compiler venv** | `source /sdk-extensions/model-compiler/bin/activate` → `afe`, `onnx` 1.17.0, `ultralytics` 8.4.90. One env for export + surgery + quantize + compile. |
-| **DevKit access** | Board `192.168.135.203`, user `sima`. `pyneat 0.3.0+develop`, Python 3.11.2, `aarch64`. |
-| **RTSP source** | `rtsp://192.168.132.129:8555/stream` (H.264 1280×720). Sanity-check first: `ffprobe -hide_banner -rtsp_transport tcp rtsp://192.168.132.129:8555/stream`. |
-| **Host viewer** | GStreamer on the host to view UDP/RTP output (see below). |
+| **SDK container** | The SiMa Modalix SDK / eLxr container. C++ sysroot at `/opt/toolchain/aarch64/modalix`. |
+| **DevKit** | A paired Modalix DevKit with `pyneat` importable (Python 3.11, `aarch64`). |
+| **Model compiler** | `source /sdk-extensions/model-compiler/bin/activate` → `afe`, `onnx`, `ultralytics`. Only needed for [`model-compilation/`](model-compilation/README.md). |
+| **RTSP source** | An H.264 stream for the apps. **Check its frame rate first** — it is the hard ceiling on any FPS you can claim:<br>`ffprobe -hide_banner -rtsp_transport tcp rtsp://<host>:8555/stream` |
+| **Host viewer** | GStreamer, to watch the UDP/RTP output. |
 
-`/workspace` is **NFS-mounted on the board at the identical path**, so you write files host-side and
-run them board-side with **no copying**.
-
-Install host viewer tools:
+Install the host viewer tools:
 
 ```bash
 sudo apt-get update
@@ -128,51 +113,55 @@ sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
 
-### Running on the board: `dk` vs `ssh`
+---
 
-There are two ways to run something on the DevKit, and picking the wrong one wastes time:
+## What has been run, and what has not
 
-- **`dk` — for a human at a real terminal.** This is the intended UX. Source the helper once
-  (`source /usr/local/bin/devkit.sh 192.168.135.203 sima 22`), then `dk /workspace/.../main.py ...`.
-- **`ssh` — for automation / CI / agents.** `dk` needs a TTY and **hangs** in scripted contexts. Use
-  passwordless ssh instead, and always wrap it in `timeout` so a hang cannot stall you:
+Not everything here has been executed on hardware. Knowing which is which will save you time.
 
-  ```bash
-  timeout 180 ssh -o BatchMode=yes sima@192.168.135.203 \
-    'source $HOME/pyneat/bin/activate; python /workspace/demo-neat/apps/<app>/main.py --frames 30'
-  ```
+**Validated on the DevKit**
 
-The board root filesystem has only **~5.9 GB free of 14 GB** — always `df -h /` before any
-`llima pull`.
+- **The YOLO compile chain** — `.pt` → ONNX → surgery → INT8 → archive (one `.elf`, zero `.so`) →
+  inference on real images, for all ten models in `models.yaml`.
+  See [`model-compilation/REPLICATION.md`](model-compilation/REPLICATION.md).
+- **[`multi-stream-yolo-yolo11`](apps/multi-stream-yolo-yolo11/README.md)** — sustains the **full
+  source rate on both streams** (~59 fps each against a 59.94 fps camera, zero dropped frames).
+- **[`quad-stream-quad-model`](apps/quad-stream-quad-model/README.md)** — all four models exceed
+  **60 fps model rate**. Its *overlay* path is gated by host-side (A65) decode, and it has known
+  run-to-run variance; both are documented in its README.
+- **The detection leg of [`detection-vlm-assistant`](apps/detection-vlm-assistant/README.md)** —
+  RTSP/image in, boxes out.
+
+**Written but NOT executed** — copy-paste ready with expected output, but run them yourself:
+
+- **All LLM / VLM / ASR execution** — `llima pull`, `llima run`, and every `pyneat.genai` inference
+  call. That is all of `llima/02-run-llm-vlm/` and `llima/05-genai-server/`, plus the **VLM leg** of
+  `detection-vlm-assistant` (pass `--no-vlm` to exercise just the detector).
+- **All GenAI compilation** — `llima/04-llm-vlm-compilation/`.
+
+**Docs-derived, not source-verified**
+
+- The GenAI compilation notebooks are written from official documentation, not from working code.
+  There is **no `llima compile` subcommand** — the on-board CLI is runtime + model-manager only
+  (`run, search, pull, list, rm, benchmark-server`). Compilation is a separate **host-side
+  `llima-compile`** tool; confirm its flags against the official SiMa docs. The part that *is*
+  verified against `core/` is the deployed model-directory contract.
 
 ---
 
-## Typical workflow
+## What is committed
 
-1. Open the folder README for the app or track you want.
-2. For an app: point `config/default.conf` at your RTSP URL, UDP receiver IP, ports, and thresholds,
-   and place/point at the compiled model archive (`assets/models/` is git-ignored).
-3. Run on the board with `dk` (human) or `ssh` (automation), per the app README.
-4. View UDP output on the host with the README's `gst-launch-1.0` command.
-
-For model preparation, follow [`model-compilation/README.md`](model-compilation/README.md): it walks
-the `.pt` → ONNX → surgery → INT8 → archive chain and the output contract, then generalizes it to any
-YOLO11/26 variant and to the transformer models in `model-compilation/work/`.
-
----
-
-## Build artifacts and models
-
-`.gitignore` excludes generated build files and large downloaded model artifacts:
+The repo holds only what you cannot regenerate. `.gitignore` excludes build output and model
+artifacts:
 
 ```text
 build/  CMakeFiles/  CMakeCache.txt  Makefile
-*.o  *.tar.gz  *.mpk  *.onnx  *.log  *.pid
+*.o  *.tar.gz  *.mpk  *.onnx  *.pt  *.elf  *.so  *.log
 ```
 
-After cloning, create/download models by following each app or `model-compilation/` README. Do not
-expect model archives or `build/` directories to come from Git. Apps that reference a compiled archive
-default to it in place under `model-compilation/work/...` (same NFS path on host and board), or you
-drop your own copy in the app's `assets/models/`.
+So after cloning: **no model archives and no `build/` directories exist.** Build them by following
+[`model-compilation/README.md`](model-compilation/README.md), then drop the archive into the app's
+`assets/models/`.
 
----
+The one deliberate exception is `model-compilation/assets/` — the calibration images are an *input*,
+not an artifact. Quantization is not reproducible without them, so they are tracked.

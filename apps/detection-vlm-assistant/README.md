@@ -124,7 +124,7 @@ Every value is overridable on the command line; run `python main.py --help`.
 ## How To Run (human UX)
 
 On the DevKit, from a real terminal, use the `dk` helper (source it once:
-`source /usr/local/bin/devkit.sh 192.168.135.203 sima 22`).
+`source /usr/local/bin/devkit.sh <devkit-ip> sima 22`).
 
 Detection leg, dry-run VLM (validate live without a VLM):
 
@@ -151,7 +151,7 @@ dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir pr
 on-disk file:
 
 ```bash
-timeout 200 ssh -o BatchMode=yes sima@192.168.135.203 \
+timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
   'source $HOME/pyneat/bin/activate; \
    cd /workspace/demo-neat/apps/detection-vlm-assistant; \
    python main.py --no-vlm --frames 40'
@@ -163,7 +163,7 @@ Detection (live) — per-frame log lines and, when a person clears the gate, a d
 
 ```text
 detector=yolo_11n_mpk.tar.gz decode=yolo11 vlm=DRY-RUN (crop+prompt logged, VLM not called)
-rtsp=rtsp://192.168.132.129:8555/stream stream=1280x720@60
+rtsp=rtsp://<rtsp-server-ip>:8555/stream stream=1280x720@60
 frame=1 detections=13 fps=14.57
 vlm[dry-run] WOULD send crop -> VLM
   class   : PERSON score=0.81
@@ -200,11 +200,11 @@ browser UI or a separate service that should not link the Neat runtime. The upst
 
 ## Verified
 
-- **Detection leg, live on the DevKit (192.168.135.203)** via ssh, `--no-vlm`:
+- **Detection leg, live on the DevKit (<devkit-ip>)** via ssh, `--no-vlm`:
   - Still-image mode over `model-compilation/assets/yolo_calibration`: real detections,
     e.g. `000000000885.jpg detections=4 [PERSON:0.92, PERSON:0.85, PERSON:0.66, TENNIS RACKET:0.81]`;
     the dry-run trigger logged the PERSON crop + exact prompt.
-  - RTSP mode `rtsp://192.168.132.129:8555/stream` (1280x720@60): `frame=1 detections=13`,
+  - RTSP mode `rtsp://<rtsp-server-ip>:8555/stream` (1280x720@60): `frame=1 detections=13`,
     `frame=30 detections=12 fps=53.65`; dry-run trigger fired on `PERSON:0.81`.
 - **VLM leg: code-complete, API-checked, NOT executed.** Owner runs it manually after
   confirming the VLM directory.
