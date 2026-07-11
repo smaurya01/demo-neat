@@ -78,6 +78,14 @@ class Config:
     udp_port_stride: int = 2
     bitrate_kbps: int = 4000
     tcp: bool = True
+    # Frames the shared model Run keeps in flight. With OverflowPolicy.Block this is
+    # what pipelines the MLA (the C++ 4-stream demo uses 4).
+    model_queue_depth: int = 4
+    # Bounded hand-off depth per stream (input queue and result queue).
+    stream_queue_depth: int = 4
+    # Frames per stream excluded from the reported FPS (graph build, model load,
+    # RTSP jitter-buffer fill all land on the first few frames).
+    warmup_frames: int = 20
     print_backend: bool = False
 
     def rtsp_urls(self) -> list[str]:
@@ -98,6 +106,9 @@ class StreamContext:
     processed: int = 0
     last_detections: int = 0
     last_visible: int = 0
+    dropped: int = 0
+    steady_base: int = 0
+    result_q: object = None
 
 
 def load_runtime_dependencies() -> None:
@@ -189,6 +200,12 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.tcp = value.strip().lower() == "tcp"
     elif key == "print_backend":
         cfg.print_backend = parse_bool(value)
+    elif key == "model_queue_depth":
+        cfg.model_queue_depth = int(value)
+    elif key == "stream_queue_depth":
+        cfg.stream_queue_depth = int(value)
+    elif key == "warmup_frames":
+        cfg.warmup_frames = int(value)
     elif key in {"only", "allow_missing", "load_only"}:
         return
     else:
@@ -234,6 +251,10 @@ def parse_args(argv: list[str] | None) -> Config:
     parser.add_argument("--bitrate", type=int)
     parser.add_argument("--rtsp-udp", action="store_true")
     parser.add_argument("--print-backend", action="store_true")
+    parser.add_argument("--warmup-frames", type=int,
+                        help="frames per stream excluded from the reported FPS")
+    parser.add_argument("--model-queue-depth", type=int,
+                        help="frames kept in flight inside the shared model Run")
     args = parser.parse_args(argv)
 
     cfg = Config()
@@ -280,6 +301,10 @@ def parse_args(argv: list[str] | None) -> Config:
         cfg.tcp = False
     if args.print_backend:
         cfg.print_backend = True
+    if args.warmup_frames is not None:
+        cfg.warmup_frames = args.warmup_frames
+    if args.model_queue_depth is not None:
+        cfg.model_queue_depth = args.model_queue_depth
     return cfg
 
 
@@ -552,38 +577,132 @@ def push_nv12_video(video_run, nv12, width: int, height: int) -> None:
         raise RuntimeError("video push failed")
 
 
-def service_stream(cfg: Config, ctx: StreamContext, model_run) -> bool:
-    """Pull one frame for this stream, run the SHARED model, annotate, publish.
+# ── the engine ───────────────────────────────────────────────────────────────
+# Thread topology, ported from the proven C++ 4-stream demo
+# (/workspace/neat_demo_elxr/demo-yolo-4-stream/main.cpp), which sustains 4x60 fps:
+#
+#   stream i  RTSP -> source thread i -> input queue [cap 4]
+#                                            |
+#                          +--- pusher thread (ROUND-ROBIN) ---+
+#                          |      shared YOLO Run              |
+#                          |      queue_depth=4, Block         |
+#                          |      (MLA keeps 4 in flight)      |
+#                          +--- puller thread -----------------+
+#                                            |
+#                                   result queue i [cap 4]
+#                                            |
+#                              output worker i (overlay + UDP)
+#
+# The two non-obvious pieces, both taken from that demo rather than invented here:
+#
+#   1. PUSHER AND PULLER ARE SEPARATE THREADS, and the shared model Run uses
+#      OverflowPolicy.Block (NOT KeepLatest). Block keeps push/pull strictly paired,
+#      so a plain FIFO `pending` deque carrying (stream, frame) is enough to route
+#      each result home — and because the pusher never waits for the puller, the MLA
+#      stays pipelined with queue_depth frames in flight. Doing push+pull on ONE
+#      thread serialises the MLA against the host; KeepLatest silently drops results
+#      and breaks the FIFO pairing.
+#
+#   2. The pusher is ROUND-ROBIN over the per-stream input queues. That is where
+#      fairness comes from: no stream can monopolise the shared model.
 
-    Returns True if a frame was produced. Stream identity is preserved because
-    the frame just pulled from ctx.source_run is the exact frame pushed into the
-    shared model_run and then annotated/published on ctx.video_run.
-    """
-    frame_tensors = ctx.source_run.pull_tensors(timeout_ms=20000)
-    if not frame_tensors:
-        print(f"[warn] stream {ctx.stream_id}: timed out waiting for RTSP frame", file=sys.stderr)
-        return False
-    nv12, frame_width, frame_height = tensor_nv12_from_decoded(frame_tensors[0])
-    model_tensor = make_nv12_tensor(nv12, frame_width, frame_height)
 
-    if not model_run.push([model_tensor]):
-        print(f"[warn] stream {ctx.stream_id}: failed to push frame to shared model", file=sys.stderr)
-        return False
-    model_sample = model_run.pull("detections", 20000)
-    if model_sample is None:
-        print(f"[warn] stream {ctx.stream_id}: timed out waiting for model output", file=sys.stderr)
-        return False
+def source_worker(cfg, ctx, in_q, stop) -> None:
+    """One per stream: RTSP frame -> NV12 -> model input tensor -> input queue."""
+    import queue as queue_mod
+    while not stop.is_set():
+        tensors = ctx.source_run.pull_tensors(timeout_ms=1000)
+        if not tensors:
+            continue
+        nv12, w, h = tensor_nv12_from_decoded(tensors[0])
+        item = (ctx, nv12, make_nv12_tensor(nv12, w, h), w, h)
+        # Live source: keep the newest frame rather than block the camera.
+        try:
+            in_q.put_nowait(item)
+        except queue_mod.Full:
+            try:
+                in_q.get_nowait()
+                ctx.dropped += 1
+            except queue_mod.Empty:
+                pass
+            try:
+                in_q.put_nowait(item)
+            except queue_mod.Full:
+                ctx.dropped += 1
 
-    tensors = extract_tensors(model_sample)
-    detections = decode_boxes(tensors, frame_width, frame_height, cfg.top_k)
-    banner = f"STREAM {ctx.stream_id} :{ctx.video_port}"
-    visible = draw_boxes_on_nv12(nv12, frame_width, frame_height, detections, cfg.score_threshold, banner)
-    push_nv12_video(ctx.video_run, nv12, frame_width, frame_height)
 
-    ctx.processed += 1
-    ctx.last_detections = len(detections)
-    ctx.last_visible = visible
-    return True
+def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) -> None:
+    """Round-robin the per-stream input queues into the ONE shared model Run."""
+    import queue as queue_mod
+    rr = 0
+    try:
+        while not stop.is_set():
+            item = None
+            for _ in range(len(in_queues)):          # round-robin => fairness
+                q = in_queues[rr]
+                rr = (rr + 1) % len(in_queues)
+                try:
+                    item = q.get_nowait()
+                    break
+                except queue_mod.Empty:
+                    continue
+            if item is None:
+                time.sleep(0.001)
+                continue
+            ctx, nv12, tensor, w, h = item
+            # Block overflow: this push waits if the MLA queue is full, which is the
+            # backpressure that keeps push/pull paired.
+            if not model_run.push([tensor]):
+                continue
+            with pending_cv:
+                pending.append((ctx, nv12, w, h))
+                pending_cv.notify()
+    except Exception as exc:
+        errors.append(f"pusher: {exc}")
+        stop.set()
+    finally:
+        with pending_cv:
+            pending_cv.notify_all()
+
+
+def puller_worker(cfg, model_run, pending, pending_cv, stop, errors) -> None:
+    """Drain the shared Run and route each result to its stream via the FIFO."""
+    try:
+        while not stop.is_set():
+            sample = model_run.pull("detections", 1000)
+            if sample is None:
+                continue
+            with pending_cv:
+                while not pending and not stop.is_set():
+                    pending_cv.wait(timeout=0.2)
+                if not pending:
+                    continue
+                ctx, nv12, w, h = pending.popleft()   # Block overflow => FIFO holds
+            ctx.result_q.put((nv12, sample, w, h))
+    except Exception as exc:
+        errors.append(f"puller: {exc}")
+        stop.set()
+
+
+def output_worker(cfg, ctx, stop, errors, on_frame) -> None:
+    """One per stream: decode boxes, draw the overlay, push to this stream's UDP Run."""
+    import queue as queue_mod
+    try:
+        while not stop.is_set():
+            try:
+                nv12, sample, w, h = ctx.result_q.get(timeout=0.2)
+            except queue_mod.Empty:
+                continue
+            boxes = decode_boxes(extract_tensors(sample), w, h, cfg.top_k)
+            banner = f"STREAM {ctx.stream_id} :{ctx.video_port}"
+            ctx.last_visible = draw_boxes_on_nv12(nv12, w, h, boxes, cfg.score_threshold, banner)
+            ctx.last_detections = len(boxes)
+            push_nv12_video(ctx.video_run, nv12, w, h)
+            ctx.processed += 1
+            on_frame(ctx)
+    except Exception as exc:
+        errors.append(f"output {ctx.stream_id}: {exc}")
+        stop.set()
 
 
 def run(cfg: Config) -> int:
@@ -604,11 +723,17 @@ def run(cfg: Config) -> int:
             )
 
     # ONE shared model graph/Run for all streams.
+    #
+    # Reliable + Block + queue_depth: taken verbatim from the proven C++ 4-stream demo.
+    # Block (NOT KeepLatest) is the load-bearing choice — it keeps push and pull
+    # strictly paired so the FIFO `pending` deque can route each result back to its
+    # stream, and it lets `queue_depth` frames sit in flight so the MLA stays
+    # pipelined instead of running lock-step with the host.
     model_graph = build_model_graph(cfg, model_w, model_h, model_fps)
     run_options = pyneat.RunOptions()
-    run_options.preset = pyneat.RunPreset.Realtime
-    run_options.queue_depth = 3
-    run_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+    run_options.preset = pyneat.RunPreset.Reliable
+    run_options.queue_depth = cfg.model_queue_depth
+    run_options.overflow_policy = pyneat.OverflowPolicy.Block
     run_options.output_memory = pyneat.OutputMemory.ZeroCopy
     model_run = model_graph.build(run_options)
 
@@ -642,33 +767,99 @@ def run(cfg: Config) -> int:
             f"! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false"
         )
 
-    run_start = time.perf_counter()
-    total_processed = 0
+    import collections
+    import queue as queue_mod
+    import threading
+
+    stop = threading.Event()
+    errors: list[str] = []
+    pending = collections.deque()          # FIFO: (ctx, nv12, w, h) per in-flight push
+    pending_cv = threading.Condition()
+    in_queues = [queue_mod.Queue(maxsize=cfg.stream_queue_depth) for _ in contexts]
+    for ctx in contexts:
+        ctx.result_q = queue_mod.Queue(maxsize=cfg.stream_queue_depth)
+
+    # Steady-state window: exclude warmup (graph build, model load, RTSP fill).
+    steady = {"start": None, "lock": threading.Lock()}
+    warmup = max(0, min(cfg.warmup_frames, cfg.frames - 1) if cfg.frames > 0 else cfg.warmup_frames)
+
+    def on_frame(ctx: StreamContext) -> None:
+        with steady["lock"]:
+            if steady["start"] is None and all(c.processed >= warmup for c in contexts):
+                steady["start"] = time.perf_counter()
+                for c in contexts:
+                    c.steady_base = c.processed
+        if ctx.processed % 60 == 0:
+            print(f"stream={ctx.stream_id} port={ctx.video_port} frame={ctx.processed} "
+                  f"detections={ctx.last_detections} visible={ctx.last_visible} "
+                  f"dropped={ctx.dropped}", flush=True)
+        if cfg.frames > 0 and all(c.processed >= cfg.frames for c in contexts):
+            stop.set()
+
+    threads = [
+        threading.Thread(target=pusher_worker,
+                         args=(cfg, model_run, in_queues, pending, pending_cv, stop, errors),
+                         name="pusher", daemon=True),
+        threading.Thread(target=puller_worker,
+                         args=(cfg, model_run, pending, pending_cv, stop, errors),
+                         name="puller", daemon=True),
+    ]
+    for i, ctx in enumerate(contexts):
+        threads.append(threading.Thread(target=source_worker, args=(cfg, ctx, in_queues[i], stop),
+                                        name=f"src{ctx.stream_id}", daemon=True))
+        threads.append(threading.Thread(target=output_worker,
+                                        args=(cfg, ctx, stop, errors, on_frame),
+                                        name=f"out{ctx.stream_id}", daemon=True))
+
+    print(f"\n{len(contexts)} source threads -> 1 round-robin pusher -> shared model "
+          f"(queue_depth={cfg.model_queue_depth}, Block) -> 1 puller -> "
+          f"{len(contexts)} output workers", flush=True)
+    for t in threads:
+        t.start()
     try:
-        # Round-robin: each stream is serviced once per outer iteration so both
-        # UDP outputs advance together and every result stays with its stream.
-        while cfg.frames <= 0 or min(c.processed for c in contexts) < cfg.frames:
-            for ctx in contexts:
-                if cfg.frames > 0 and ctx.processed >= cfg.frames:
-                    continue
-                if service_stream(cfg, ctx, model_run):
-                    total_processed += 1
-                    if ctx.processed == 1 or ctx.processed % 30 == 0 or ctx.processed == cfg.frames:
-                        elapsed = time.perf_counter() - run_start
-                        fps_now = total_processed / elapsed if elapsed > 0 else 0.0
-                        print(
-                            f"stream={ctx.stream_id} port={ctx.video_port} "
-                            f"frame={ctx.processed} detections={ctx.last_detections} "
-                            f"visible={ctx.last_visible} agg_fps={fps_now:.2f}",
-                            flush=True,
-                        )
-            time.sleep(0)
+        while not stop.is_set():
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        stop.set()
     finally:
+        stop.set()
+        with pending_cv:
+            pending_cv.notify_all()
+        wall = (time.perf_counter() - steady["start"]) if steady["start"] else 0.0
+        snapshot = {c.stream_id: c.processed for c in contexts}
+        for t in threads:
+            t.join(timeout=3.0)
+        for c in contexts:
+            c.processed = snapshot[c.stream_id]
+        print_summary(contexts, wall)
+        for err in errors:
+            print(f"[ERR] {err}", file=sys.stderr, flush=True)
         model_run.close()
         for ctx in contexts:
             ctx.source_run.close()
             ctx.video_run.close()
-    return total_processed
+    return sum(c.processed for c in contexts)
+
+
+def print_summary(contexts: list[StreamContext], wall_s: float) -> None:
+    """Delivered FPS over the steady-state window.
+
+    Counted from each stream's steady_base (its frame count when the window OPENED),
+    not `processed - warmup`: streams do not cross the warmup mark at the same
+    instant, so subtracting a constant credits a fast stream with frames it delivered
+    before the clock started — which once reported 67 fps from a 59.94 fps source.
+    """
+    print("\n=== steady-state ===", flush=True)
+    total = 0
+    for c in contexts:
+        window = max(0, c.processed - c.steady_base)
+        total += window
+        fps = window / wall_s if wall_s else 0.0
+        print(f"  stream {c.stream_id}: delivered {fps:6.2f} fps  "
+              f"({window} frames, {c.dropped} dropped)", flush=True)
+    print(f"aggregate: {total / wall_s if wall_s else 0.0:.2f} fps "
+          f"across {len(contexts)} streams in {wall_s:.1f}s", flush=True)
+    sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
