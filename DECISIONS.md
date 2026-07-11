@@ -418,3 +418,27 @@ processes", and a cmdline match is not authorization. I did not work around it.
 **Action for the owner:** `ssh sima@192.168.135.203 'kill 171567 171717'` if they block the board.
 **Also:** `/tmp/rpmsg_lock_rpmsg{0,2}.owner` name pid 170601 (Agent C2's finished quad-stream run),
 which is DEAD — the locks are stale. Verified with `ps -p 170601`. Not deleted.
+
+## D8 — Transformers ARE supported; T7's conclusion was wrong (2026-07-11)
+
+**Found:** the owner pointed at `apps/examples/object-detection/detr-object-detector`, which
+downloads a **pre-compiled** DETR. Investigating that overturned T7's headline finding.
+- SiMa's DETR archive: **1 `.elf` / 0 `.so`** (passes even the strict policy).
+- SiMa's `vits14` (DINOv2 ViT-S/14) archive: **1 `.elf` / 0 `.so`** — the *same model* our T7
+  compiled to 99 `.elf` / 195 `.so`.
+**Decided:** use the **official SiMa archives** for DETR and ViT rather than our from-scratch
+surgery, and correct the record.
+**Why:** T7 generalised a limitation of *our model preparation* into a false claim about the
+hardware ("transformers fragment on SiMa gen2"). The actual lever is a **source-prepared model**
+(`detr_..._modified_class_embed_bbox_embed.onnx`, `image_classification_vits14.onnx`); SiMa's own
+compile script uses the plain `afe` API with `default_quantization` and **no** special flags.
+ONNX surgery / `MatMul→Einsum` / `--any_shape_on_mla` do not rescue a stock export.
+**Verified on the DevKit:** `pipelines/detr_detect.py` → 63 detections across 3 COCO images with
+correct classes; `pipelines/vit_classify.py` → correct ImageNet top-5.
+**Also retried:** `maxvit_t` with `--any-shape-on-mla` → **OOM-killed (rc=-9)** at stage 25/113,
+still fragmenting. Remains a genuine blocker.
+**Corrections applied:** banner + superseded markers in `model-compilation/results/summary.md`;
+`results/T7_CORRECTION_transformers_are_supported.md`; the wrong section in
+`/workspace/overall-learning.md` is now flagged and superseded.
+**Reverse:** the from-scratch surgery artifacts and reports are untouched under
+`work/<model>/`; prior fragmented archives preserved at `work/<model>/compile_int8.prev/`.

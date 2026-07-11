@@ -1,18 +1,30 @@
 # Model Compilation Status
 
+> ## ⚠️ CORRECTION (2026-07-11): transformers ARE supported
+>
+> The T7 headline below ("pure token-sequence transformers fragment on SiMa gen2") is **WRONG**.
+> SiMa ships **validated 1-`.elf` / 0-`.so`** archives for both **DETR** and **ViT/DINOv2
+> (`vits14`)**, and both now run end-to-end on the DevKit from `pipelines/`.
+> The real lever is a **source-prepared model** (SiMa's `detr_..._modified_class_embed_bbox_embed`
+> and `image_classification_vits14.onnx`) — **not** ONNX surgery, `MatMul→Einsum`, or
+> `--any_shape_on_mla`. Our from-scratch exports fragmented because of how *we* prepared them.
+> **Check the model zoo before compiling any transformer.**
+> Full write-up: [`T7_CORRECTION_transformers_are_supported.md`](T7_CORRECTION_transformers_are_supported.md)
+
+
 | Model | ONNX | Unsupported | Unknown | MPK | Archive | Notes |
 | --- | --- | ---: | ---: | --- | --- | --- |
 | `resnet50` | pass | 0 | 3 | pass | pass |  |
 | `densenet169` | pass | 0 | 4 | pass | pass |  |
 | `convnext_tiny` | pass | 0 | 5 | pass | pass |  |
 | `efficientnet_v2_s` | pass | 0 | 3 | pass | pass |  |
-| `vit_b_16` | pass | 0 | 4 | fail | fail | T7: static-shape + attention Einsum surgery done (compile_ready.onnx, 0 unsupported); INT8 compile **errors during quantization** with a conv2d channel mismatch (64 vs 768). See T7 detail + `work/vit_b_16/reports/surgery.md`. Diagnosed, not compiled. |
-| `maxvit_t` | pass | 0 | 5 | rc0_fragmented | fail | T7: compiled rc=0 but **58 `.elf` + 78 `.so`** (136 segments) — windowed-attention partition/departition reshapes are non-4D and fell to A65 without `--any_shape_on_mla`. POLICY FAILURE; fix = recompile with `--any-shape-on-mla`. See `work/maxvit_t/reports/surgery.md`. |
+| `vit_b_16` | pass | 0 | 4 | fail | **SUPERSEDED** | Use official `vits14` (1 elf/0 so). T7: static-shape + attention Einsum surgery done (compile_ready.onnx, 0 unsupported); INT8 compile **errors during quantization** with a conv2d channel mismatch (64 vs 768). See T7 detail + `work/vit_b_16/reports/surgery.md`. Diagnosed, not compiled. |
+| `maxvit_t` | pass | 0 | 5 | rc0_fragmented | fail | Retry 2026-07-11 with --any-shape-on-mla: OOM-killed (rc=-9) at stage 25/113, still fragments. BLOCKER. T7: compiled rc=0 but **58 `.elf` + 78 `.so`** (136 segments) — windowed-attention partition/departition reshapes are non-4D and fell to A65 without `--any_shape_on_mla`. POLICY FAILURE; fix = recompile with `--any-shape-on-mla`. See `work/maxvit_t/reports/surgery.md`. |
 | `fastvit_t8` | pass | 0 | 6 | pass | pass |  |
-| `dinov2_vits14` | pass | 0 | 2 | rc0_fragmented | fail | T7: masks/Where removed + attention Einsum surgery; INT8 compiled rc=0 but **99 `.elf` + 195 `.so`** (MLA 99/EV74 844/A65 195). Root cause = token-sequence LayerNorm (channel-dim reduction over 384, not MLA-placeable) + batch-axis head reshapes. Blocker. See `work/dinov2_vits14/reports/surgery.md`. |
+| `dinov2_vits14` | pass | 0 | 2 | rc0_fragmented | **SUPERSEDED** | Use official `vits14` (1 elf/0 so). T7: masks/Where removed + attention Einsum surgery; INT8 compiled rc=0 but **99 `.elf` + 195 `.so`** (MLA 99/EV74 844/A65 195). Root cause = token-sequence LayerNorm (channel-dim reduction over 384, not MLA-placeable) + batch-axis head reshapes. Blocker. See `work/dinov2_vits14/reports/surgery.md`. |
 | `yolo11n` | pass | 0 | 0 | pass | pass | compile_ready_int8; one ELF, no `.so` |
 | `yolo26n` | pass | 0 | 0 | pass | pass | compile_ready_int8; one ELF, no `.so` |
-| `detr_resnet50` | pass | 0 | 5 | not_started |  | T7: generic surgery already yields a static compile-ready graph (`pred_logits[1,100,92]`, `pred_boxes[1,100,4]`, 0 unsupported); attention is rank-3 supported batched MatMul. Not compiled (out of T7 compile-start budget). Ready to compile; pipeline + decode analysis done. See `work/detr_resnet50/reports/surgery.md`. |
+| `detr_resnet50` | pass | 0 | 5 | **OFFICIAL** | **pass (1 elf/0 so)** | Official SiMa archive downloaded + running on DevKit. T7: generic surgery already yields a static compile-ready graph (`pred_logits[1,100,92]`, `pred_boxes[1,100,4]`, 0 unsupported); attention is rank-3 supported batched MatMul. Not compiled (out of T7 compile-start budget). Ready to compile; pipeline + decode analysis done. See `work/detr_resnet50/reports/surgery.md`. |
 
 Archive `pass` (strict, T1/T5 CNN/YOLO) means exactly one ELF and no `.so`. For T7
 transformer models the relaxed contract is 1–3 `.elf` with any `.so` justified in the
