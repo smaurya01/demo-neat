@@ -176,10 +176,3 @@ default to it in place under `model-compilation/work/...` (same NFS path on host
 drop your own copy in the app's `assets/models/`.
 
 ---
-
-## Autonomy / provenance notes
-
-This material was produced across parallel agent waves. Every non-obvious decision is logged in
-[`DECISIONS.md`](DECISIONS.md); the plan that drove the work is
-[`priority-task-and-implementation-plan.md`](priority-task-and-implementation-plan.md). Cross-project
-engineering lessons live in `/workspace/overall-learning.md`.
