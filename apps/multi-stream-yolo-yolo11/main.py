@@ -109,6 +109,7 @@ class StreamContext:
     dropped: int = 0
     steady_base: int = 0
     result_q: object = None
+    profile: StageProfile = field(default_factory=lambda: StageProfile())
 
 
 def load_runtime_dependencies() -> None:
@@ -577,6 +578,76 @@ def push_nv12_video(video_run, nv12, width: int, height: int) -> None:
         raise RuntimeError("video push failed")
 
 
+# ── time profile ─────────────────────────────────────────────────────────────
+# Each frame is timed stage by stage, so a slow pipeline can be ATTRIBUTED rather
+# than guessed at. The stages run on four different threads, so the timings are
+# carried along with the frame through the queue hand-offs and are all recorded by
+# the one thread that finishes the frame (the output worker) — that keeps a single
+# writer per stream and needs no locking.
+#
+#   rtsp     source thread: wait for + copy one decoded NV12 frame out of the RTSP graph
+#   prep     source thread: NV12 -> pyneat.Tensor for the model input
+#   qwait    time the frame sat in this stream's input queue waiting for the pusher
+#   push     pusher thread: model_run.push(). Under OverflowPolicy.Block this BLOCKS
+#            when the MLA already holds queue_depth frames — so a large `push` means
+#            the model is the bottleneck and backpressure is doing its job
+#   infer    push returns -> this frame's result is pulled. Model-graph LATENCY
+#            (EV74 preprocess + MLA + box decode), and it INCLUDES queueing behind
+#            the other frames in flight — it is NOT the model's service time
+#   decode   output thread: pyneat.decode_bbox on the BBOX tensor
+#   overlay  output thread: NV12 Y/UV annotation
+#   send     output thread: NV12 -> Tensor + push into the H.264/RTP UDP sender
+#   latency  end to end: RTSP pull started -> annotated frame handed to the encoder
+#
+# The stages OVERLAP across threads, so they do not sum to the frame period. Read
+# `delivered fps` as the throughput number and the stage columns as cost attribution.
+STAGES = ("rtsp", "prep", "qwait", "push", "infer", "decode", "overlay", "send")
+
+
+class StageProfile:
+    """Per-stage wall-clock samples for one stream. Single writer (its output worker)."""
+
+    def __init__(self) -> None:
+        self.samples: dict = {name: [] for name in STAGES}
+        self.latency: list = []
+
+    def add(self, timings: dict, latency_ms: float) -> None:
+        for name, value in timings.items():
+            self.samples[name].append(value)
+        self.latency.append(latency_ms)
+
+    @staticmethod
+    def _pct(values: list, pct: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        idx = min(len(ordered) - 1, max(0, int(round(pct / 100.0 * (len(ordered) - 1)))))
+        return ordered[idx]
+
+    def _series(self, name: str) -> list:
+        return self.latency if name == "latency" else self.samples[name]
+
+    def mean(self, name: str) -> float:
+        values = self._series(name)
+        return sum(values) / len(values) if values else 0.0
+
+    def p95(self, name: str) -> float:
+        return self._pct(self._series(name), 95)
+
+    def trim(self, base: int) -> None:
+        """Drop the warmup frames so the means reflect steady state only."""
+        if base <= 0:
+            return
+        for name in STAGES:
+            if len(self.samples[name]) > base:
+                self.samples[name] = self.samples[name][base:]
+        if len(self.latency) > base:
+            self.latency = self.latency[base:]
+
+    def frames(self) -> int:
+        return len(self.latency)
+
+
 # ── the engine ───────────────────────────────────────────────────────────────
 # Thread topology, ported from the proven C++ 4-stream demo
 # (/workspace/neat_demo_elxr/demo-yolo-4-stream/main.cpp), which sustains 4x60 fps:
@@ -611,11 +682,20 @@ def source_worker(cfg, ctx, in_q, stop) -> None:
     """One per stream: RTSP frame -> NV12 -> model input tensor -> input queue."""
     import queue as queue_mod
     while not stop.is_set():
+        t_frame = time.perf_counter()
         tensors = ctx.source_run.pull_tensors(timeout_ms=1000)
         if not tensors:
             continue
         nv12, w, h = tensor_nv12_from_decoded(tensors[0])
-        item = (ctx, nv12, make_nv12_tensor(nv12, w, h), w, h)
+        rtsp_ms = (time.perf_counter() - t_frame) * 1000.0
+
+        mark = time.perf_counter()
+        tensor = make_nv12_tensor(nv12, w, h)
+        prep_ms = (time.perf_counter() - mark) * 1000.0
+
+        # t_frame and t_enq travel WITH the frame so the output worker can close out
+        # end-to-end latency and the input-queue wait.
+        item = (ctx, nv12, tensor, w, h, t_frame, time.perf_counter(), rtsp_ms, prep_ms)
         # Live source: keep the newest frame rather than block the camera.
         try:
             in_q.put_nowait(item)
@@ -649,13 +729,21 @@ def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) 
             if item is None:
                 time.sleep(0.001)
                 continue
-            ctx, nv12, tensor, w, h = item
-            # Block overflow: this push waits if the MLA queue is full, which is the
-            # backpressure that keeps push/pull paired.
+            ctx, nv12, tensor, w, h, t_frame, t_enq, rtsp_ms, prep_ms = item
+            qwait_ms = (time.perf_counter() - t_enq) * 1000.0
+
+            # Block overflow: this push BLOCKS while the MLA already holds
+            # queue_depth frames. A large `push` time therefore means the model is
+            # the bottleneck and backpressure is working as intended.
+            mark = time.perf_counter()
             if not model_run.push([tensor]):
                 continue
+            t_pushed = time.perf_counter()
+            push_ms = (t_pushed - mark) * 1000.0
+
             with pending_cv:
-                pending.append((ctx, nv12, w, h))
+                pending.append((ctx, nv12, w, h, t_frame, t_pushed,
+                                rtsp_ms, prep_ms, qwait_ms, push_ms))
                 pending_cv.notify()
     except Exception as exc:
         errors.append(f"pusher: {exc}")
@@ -665,20 +753,32 @@ def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) 
             pending_cv.notify_all()
 
 
-def puller_worker(cfg, model_run, pending, pending_cv, stop, errors) -> None:
+def puller_worker(cfg, model_run, pending, pending_cv, stop, errors, model_rate) -> None:
     """Drain the shared Run and route each result to its stream via the FIFO."""
     try:
         while not stop.is_set():
             sample = model_run.pull("detections", 1000)
             if sample is None:
                 continue
+            t_pulled = time.perf_counter()
+            # Inter-pull interval across ALL streams = the shared model stage's actual
+            # throughput. Unlike `infer` (a per-frame latency), this is a service rate.
+            if model_rate["last"] is not None:
+                model_rate["gaps"].append((t_pulled - model_rate["last"]) * 1000.0)
+            model_rate["last"] = t_pulled
+
             with pending_cv:
                 while not pending and not stop.is_set():
                     pending_cv.wait(timeout=0.2)
                 if not pending:
                     continue
-                ctx, nv12, w, h = pending.popleft()   # Block overflow => FIFO holds
-            ctx.result_q.put((nv12, sample, w, h))
+                # Block overflow keeps push/pull paired, so FIFO order holds and the
+                # front of `pending` is the owner of this result.
+                (ctx, nv12, w, h, t_frame, t_pushed,
+                 rtsp_ms, prep_ms, qwait_ms, push_ms) = pending.popleft()
+            infer_ms = (t_pulled - t_pushed) * 1000.0
+            ctx.result_q.put((nv12, sample, w, h, t_frame,
+                              rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms))
     except Exception as exc:
         errors.append(f"puller: {exc}")
         stop.set()
@@ -690,14 +790,30 @@ def output_worker(cfg, ctx, stop, errors, on_frame) -> None:
     try:
         while not stop.is_set():
             try:
-                nv12, sample, w, h = ctx.result_q.get(timeout=0.2)
+                (nv12, sample, w, h, t_frame,
+                 rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms) = ctx.result_q.get(timeout=0.2)
             except queue_mod.Empty:
                 continue
+
+            mark = time.perf_counter()
             boxes = decode_boxes(extract_tensors(sample), w, h, cfg.top_k)
+            decode_ms = (time.perf_counter() - mark) * 1000.0
+
+            mark = time.perf_counter()
             banner = f"STREAM {ctx.stream_id} :{ctx.video_port}"
             ctx.last_visible = draw_boxes_on_nv12(nv12, w, h, boxes, cfg.score_threshold, banner)
-            ctx.last_detections = len(boxes)
+            overlay_ms = (time.perf_counter() - mark) * 1000.0
+
+            mark = time.perf_counter()
             push_nv12_video(ctx.video_run, nv12, w, h)
+            send_ms = (time.perf_counter() - mark) * 1000.0
+
+            ctx.last_detections = len(boxes)
+            ctx.profile.add(
+                {"rtsp": rtsp_ms, "prep": prep_ms, "qwait": qwait_ms, "push": push_ms,
+                 "infer": infer_ms, "decode": decode_ms, "overlay": overlay_ms, "send": send_ms},
+                (time.perf_counter() - t_frame) * 1000.0,
+            )
             ctx.processed += 1
             on_frame(ctx)
     except Exception as exc:
@@ -773,8 +889,10 @@ def run(cfg: Config) -> int:
 
     stop = threading.Event()
     errors: list[str] = []
-    pending = collections.deque()          # FIFO: (ctx, nv12, w, h) per in-flight push
+    pending = collections.deque()          # FIFO: one entry per in-flight push
     pending_cv = threading.Condition()
+    # Written only by the single puller thread; read at the end.
+    model_rate = {"last": None, "gaps": []}
     in_queues = [queue_mod.Queue(maxsize=cfg.stream_queue_depth) for _ in contexts]
     for ctx in contexts:
         ctx.result_q = queue_mod.Queue(maxsize=cfg.stream_queue_depth)
@@ -801,7 +919,7 @@ def run(cfg: Config) -> int:
                          args=(cfg, model_run, in_queues, pending, pending_cv, stop, errors),
                          name="pusher", daemon=True),
         threading.Thread(target=puller_worker,
-                         args=(cfg, model_run, pending, pending_cv, stop, errors),
+                         args=(cfg, model_run, pending, pending_cv, stop, errors, model_rate),
                          name="puller", daemon=True),
     ]
     for i, ctx in enumerate(contexts):
@@ -831,7 +949,7 @@ def run(cfg: Config) -> int:
             t.join(timeout=3.0)
         for c in contexts:
             c.processed = snapshot[c.stream_id]
-        print_summary(contexts, wall)
+        print_summary(contexts, wall, model_rate)
         for err in errors:
             print(f"[ERR] {err}", file=sys.stderr, flush=True)
         model_run.close()
@@ -841,15 +959,39 @@ def run(cfg: Config) -> int:
     return sum(c.processed for c in contexts)
 
 
-def print_summary(contexts: list[StreamContext], wall_s: float) -> None:
-    """Delivered FPS over the steady-state window.
+def print_summary(contexts: list[StreamContext], wall_s: float, model_rate: dict) -> None:
+    """Per-stage time profile (ms) + delivered FPS per stream.
 
-    Counted from each stream's steady_base (its frame count when the window OPENED),
-    not `processed - warmup`: streams do not cross the warmup mark at the same
-    instant, so subtracting a constant credits a fast stream with frames it delivered
-    before the clock started — which once reported 67 fps from a 59.94 fps source.
+    Frame counts come from each stream's steady_base (its count when the window
+    OPENED), not `processed - warmup`: streams do not cross the warmup mark at the
+    same instant, so subtracting a constant credits a fast stream with frames it
+    delivered before the clock started — which once reported 67 fps from a 59.94 fps
+    source. An impossible FPS is the tell that this accounting is wrong.
     """
-    print("\n=== steady-state ===", flush=True)
+    for c in contexts:
+        c.profile.trim(c.steady_base)
+
+    print("\n=== time profile (ms/frame, mean | p95) ===", flush=True)
+    header = f"{'stream':>6} {'frames':>6}"
+    for name in STAGES:
+        header += f" {name:>14}"
+    header += f" {'latency':>14}"
+    print(header, flush=True)
+    for c in contexts:
+        row = f"{c.stream_id:>6} {c.profile.frames():>6}"
+        for name in STAGES:
+            row += f" {c.profile.mean(name):>6.2f}|{c.profile.p95(name):<7.2f}"
+        row += f" {c.profile.mean('latency'):>6.2f}|{c.profile.p95('latency'):<7.2f}"
+        print(row, flush=True)
+
+    print("\n  The stages run on 4 different threads and OVERLAP, so they do NOT sum to the")
+    print("  frame period. Read `delivered fps` below as throughput; the columns are cost")
+    print("  attribution. `push` is blocking time under OverflowPolicy.Block (large = the")
+    print("  model is the bottleneck). `infer` is model-graph LATENCY and includes queueing")
+    print("  behind the other in-flight frames — it is not the model's service time.",
+          flush=True)
+
+    print("\n=== fps ===", flush=True)
     total = 0
     for c in contexts:
         window = max(0, c.processed - c.steady_base)
@@ -857,8 +999,36 @@ def print_summary(contexts: list[StreamContext], wall_s: float) -> None:
         fps = window / wall_s if wall_s else 0.0
         print(f"  stream {c.stream_id}: delivered {fps:6.2f} fps  "
               f"({window} frames, {c.dropped} dropped)", flush=True)
-    print(f"aggregate: {total / wall_s if wall_s else 0.0:.2f} fps "
+    print(f"  aggregate:          {total / wall_s if wall_s else 0.0:6.2f} fps "
           f"across {len(contexts)} streams in {wall_s:.1f}s", flush=True)
+
+    # Interval between results out of the shared model stage, across all streams.
+    #
+    # CAREFUL: this is the OBSERVED OUTPUT RATE, not the model's capacity. When the
+    # model is not saturated it simply mirrors the arrival rate, so it will always
+    # roughly equal `aggregate delivered fps` and tells you nothing about headroom.
+    #
+    # The saturation tell is `push`, not this number. Under OverflowPolicy.Block a
+    # push only blocks once the MLA already holds queue_depth frames:
+    #   push ~= 0      -> the model always had room; it is NOT the bottleneck, and
+    #                     there is headroom for more streams.
+    #   push grows     -> the model is saturated and back-pressuring the pushers;
+    #                     THEN this interval is the real ceiling.
+    gaps = model_rate["gaps"][10:]  # drop warmup pulls
+    if gaps:
+        mean_gap = sum(gaps) / len(gaps)
+        push_mean = sum(c.profile.mean("push") for c in contexts) / max(1, len(contexts))
+        saturated = push_mean > 1.0
+        print(f"\n  shared model stage: one result every {mean_gap:.2f} ms "
+              f"=> {1000.0 / mean_gap if mean_gap else 0.0:.1f} inferences/s "
+              f"(all streams combined)", flush=True)
+        if saturated:
+            print(f"  push blocks ({push_mean:.2f} ms mean) => the MODEL is the bottleneck; "
+                  f"the rate above IS the ceiling.", flush=True)
+        else:
+            print(f"  push does not block ({push_mean:.2f} ms mean) => the model is NOT "
+                  f"saturated. The rate above just mirrors the arrival rate, so it is NOT "
+                  f"a ceiling — there is headroom for more streams.", flush=True)
     sys.stdout.flush()
 
 
