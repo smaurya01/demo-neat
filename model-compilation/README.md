@@ -93,90 +93,19 @@ python compile/test_model.py      --all --validate-only
 
 ## 4. Per-model replication
 
-**Weights download automatically** in step 1 — you never fetch anything by hand. `torchvision` pulls
-from its model hub, `ultralytics` pulls the `.pt`, and YOLOX downloads Megvii's official
-pre-exported ONNX (so no `yolox` package needed).
+**→ [`REPLICATION.md`](REPLICATION.md)** — a copy-paste block for every model: activate, the four
+commands, and the exact expected result. Start there if you want to build them one by one.
 
-Compile times are **measured on this host** (step 3 only; step 1 adds ~10–60 s of download+export).
+Compile times (measured on this host, step 3 only):
 
-### Classification — CNNs (`surgery: none`, no step 2 work)
-
-| Model | Weights source | ONNX | Input | Compile time |
+| Model | Time | | Model | Time |
 | --- | --- | --- | --- | --- |
-| `resnet50` | torchvision `ResNet50_Weights.DEFAULT` | 98 MB | 224×224 | **2 min** |
-| `convnext_tiny` | torchvision `ConvNeXt_Tiny_Weights.DEFAULT` | 110 MB | 224×224 | **4 min** |
-| `densenet169` | torchvision `DenseNet169_Weights.DEFAULT` | 55 MB | 224×224 | **10 min** |
-| `efficientnet_v2_s` | torchvision `EfficientNet_V2_S_Weights.DEFAULT` | 82 MB | 384×384 | **10 min** |
+| `resnet50` | 2 min | | `yolo11s` | 5 min |
+| `convnext_tiny` | 4 min | | `yolo11n`, `yolo11s-seg` | 6 min |
+| `densenet169` | 10 min | | `yolo26n`, `yolox_s` | 7 min |
+| `efficientnet_v2_s` | 10 min | | `yolo26s-pose` | 17 min |
 
-```bash
-python compile/convert_to_onnx.py --model-id resnet50
-python compile/graph_surgery.py   --model-id resnet50     # prints "kind=none ... skipping"
-python compile/compiler.py        --model-id resnet50
-python compile/test_model.py      --model-id resnet50 --validate-only
-```
-
-Expected step-4 output on the DevKit (real ImageNet top-k):
-
-```text
-[PASS] resnet50   elf=1 so=0
-   000000000885.jpg   racket 0.59, tennis ball 0.02
-```
-
-### Detection / segmentation / pose — YOLO (`surgery: yolo_ultralytics`)
-
-| Model | Weights | ONNX | Compile time | Raw heads after surgery |
-| --- | --- | --- | --- | --- |
-| `yolo11s` | ultralytics `yolo11s.pt` | 37 MB | **5 min** | 6 |
-| `yolo11s-seg` | ultralytics `yolo11s-seg.pt` | 39 MB | **6 min** | 10 (+ mask coeff, proto) |
-| `yolo11n` | ultralytics `yolo11n.pt` | 11 MB | **6 min** | 6 |
-| `yolo26n` | ultralytics `yolo26n.pt` | 9.5 MB | **7 min** | 6 |
-| `yolo26s-pose` | ultralytics `yolo26s-pose.pt` | 40 MB | **17 min** ⟵ slowest | 9 (+ keypoints, **padded 51→64**) |
-
-```bash
-python compile/convert_to_onnx.py --model-id yolo11n     # downloads yolo11n.pt, exports ONNX
-python compile/graph_surgery.py   --model-id yolo11n     # cuts the decode tail, exposes raw heads
-python compile/compiler.py        --model-id yolo11n
-python compile/test_model.py      --model-id yolo11n --validate-only
-```
-
-Expected step-4 output on the DevKit — the **surgery contract**, not decoded boxes:
-
-```text
-[PASS] yolo11n   elf=1 so=0
-   000000000139.jpg   6 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
-                                        (1,80,80,80) (1,40,40,80) (1,20,20,80)
-```
-
-bbox = 4 channels × 3 scales; class = 80 channels × 3 scales. Tensors come back **NHWC** — a host
-decoder must transpose to CHW.
-
-> **The pose model carries a load-bearing fix — do not remove it.** `yolo26s-pose`'s keypoint head is
-> zero-padded from **51 → 64 channels** (`pad_channels_to: 64` in the surgery spec). Its natural
-> `{4, 1, 51}` channel mix defeats the compiler's output fusion, so each of the 9 outputs gets its own
-> `slice_transform` stage in the post-MLA tail: **1782 ms/frame (0.6 fps)**. Padding the keypoint head
-> to a tile-aligned 64 lets the outputs fuse again: **8.5 ms/frame (117 fps) — a 209× speedup**, same
-> weights, same information (the host decoder slices channels 51..63 back off).
->
-> It is the channel **mix**, not any single head: dropping *either* the class heads or the keypoint
-> heads makes it fast, so "C=51 is the culprit" is wrong. And the MLA was never the problem — pose is
-> only 1.21× yolo11s in MLA cycles. The cost was entirely in the compiled tail.
-
-### Detection — YOLOX (`surgery: yolox`, a different head entirely)
-
-| Model | Weights | ONNX | Compile time | Raw heads |
-| --- | --- | --- | --- | --- |
-| `yolox_s` | Megvii's **pre-exported ONNX** (no torch, no `yolox` pkg) | 35 MB | **7 min** | 3 × `(1,H,W,85)` |
-
-```bash
-python compile/convert_to_onnx.py --model-id yolox_s   # downloads the official ONNX directly
-python compile/graph_surgery.py   --model-id yolox_s
-python compile/compiler.py        --model-id yolox_s
-python compile/test_model.py      --model-id yolox_s --validate-only
-```
-
-### Total
-
-All 10 enabled models: **≈ 80 minutes of compile** (serial), plus a few minutes of downloads.
+**All 10 models ≈ 80 min**, serial. One compile at a time — concurrent compiles OOM.
 
 ---
 
