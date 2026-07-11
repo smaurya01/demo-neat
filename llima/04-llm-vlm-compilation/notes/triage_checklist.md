@@ -39,12 +39,12 @@ Accepted input formats:
 - **Hugging Face safetensors** (full-precision) → pipeline: DEVKIT → ONNX → QUANTIZE → COMPILE
 - **GGUF** → pipeline: direct → COMPILE
 - **Pre-quantized compressed-tensors (GPTQ / AWQ)** → pipeline: SOURCE_TO_QUANT → COMPILE
-  - **must use symmetric quantization** — asymmetric pre-quant is not accepted
+  - a symmetry requirement may apply to the pre-quant — confirm against the current docs before relying on it
 
 | Answer | Verdict |
 | --- | --- |
-| HF safetensors, GGUF, or symmetric GPTQ/AWQ | **YES** |
-| Pre-quantized but asymmetric, or an unlisted format (e.g. raw PyTorch `.pt` only) | **NO / convert first** |
+| HF safetensors, GGUF, or GPTQ/AWQ | **YES** |
+| An unlisted format (e.g. raw PyTorch `.pt` only) | **NO / convert first** |
 
 ## Step 3 — Required companion files (HF path)  → **hard gate**
 
@@ -90,7 +90,7 @@ Rules of thumb:
 ## Step 5 — Output must satisfy the runtime contract  → **verify after compile**
 
 A model directory only loads if it matches what the Neat GenAI runtime inspects
-(`inspect_model_directory` in `/workspace/core/src/genai/GenAIInternal.cpp`).
+(`inspect_model_directory` in [`GenAIInternal.cpp`](https://github.com/sima-neat/core/blob/main/src/genai/GenAIInternal.cpp)).
 The deployed `<model-id>/` directory **must** contain:
 
 - `devkit/` — Python runtime + config files. **Missing → runtime throws**
