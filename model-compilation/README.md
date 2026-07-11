@@ -130,7 +130,7 @@ Expected step-4 output on the DevKit (real ImageNet top-k):
 | `yolo11s-seg` | ultralytics `yolo11s-seg.pt` | 39 MB | **6 min** | 10 (+ mask coeff, proto) |
 | `yolo11n` | ultralytics `yolo11n.pt` | 11 MB | **6 min** | 6 |
 | `yolo26n` | ultralytics `yolo26n.pt` | 9.5 MB | **7 min** | 6 |
-| `yolo26s-pose` | ultralytics `yolo26s-pose.pt` | 40 MB | **17 min** ⟵ slowest | 9 (+ 51-ch keypoints) |
+| `yolo26s-pose` | ultralytics `yolo26s-pose.pt` | 40 MB | **17 min** ⟵ slowest | 9 (+ keypoints, **padded 51→64**) |
 
 ```bash
 python compile/convert_to_onnx.py --model-id yolo11n     # downloads yolo11n.pt, exports ONNX
@@ -149,6 +149,17 @@ Expected step-4 output on the DevKit — the **surgery contract**, not decoded b
 
 bbox = 4 channels × 3 scales; class = 80 channels × 3 scales. Tensors come back **NHWC** — a host
 decoder must transpose to CHW.
+
+> **The pose model carries a load-bearing fix — do not remove it.** `yolo26s-pose`'s keypoint head is
+> zero-padded from **51 → 64 channels** (`pad_channels_to: 64` in the surgery spec). Its natural
+> `{4, 1, 51}` channel mix defeats the compiler's output fusion, so each of the 9 outputs gets its own
+> `slice_transform` stage in the post-MLA tail: **1782 ms/frame (0.6 fps)**. Padding the keypoint head
+> to a tile-aligned 64 lets the outputs fuse again: **8.5 ms/frame (117 fps) — a 209× speedup**, same
+> weights, same information (the host decoder slices channels 51..63 back off).
+>
+> It is the channel **mix**, not any single head: dropping *either* the class heads or the keypoint
+> heads makes it fast, so "C=51 is the culprit" is wrong. And the MLA was never the problem — pose is
+> only 1.21× yolo11s in MLA cycles. The cost was entirely in the compiled tail.
 
 ### Detection — YOLOX (`surgery: yolox`, a different head entirely)
 
@@ -285,8 +296,3 @@ Verify before committing — this must print nothing:
 git add -A model-compilation/
 git diff --cached --name-only | grep -E '\.tar\.gz$|\.elf$|\.so$|\.pt$|\.onnx$|\.sima$'
 ```
-
-## 9. Diagnostic variants (disabled)
-
-`yolo26s-pose-nokpt`, `-kpt64`, `-nocls` are cut-down pose graphs used to attribute where
-`yolo26s-pose`'s runtime cost sits. They are `enabled: false` and are not part of the standard flow.
