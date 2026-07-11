@@ -24,10 +24,7 @@ llima/
     01_run_llm.ipynb              # pyneat.genai.GenAIModel: load, generate, stream, options
     02_run_vlm.ipynb              # pyneat.genai.VisionLanguageModel: image + prompt -> text
     03_audio_input_asr.ipynb      # pyneat.genai.ASRModel: audio file -> transcription
-    scripts/
-      run_llm.py                  # minimal CLI version of 01_run_llm
-      run_vlm.py                  # minimal CLI version of 02_run_vlm
-      run_asr.py                  # minimal CLI version of 03_audio_input_asr
+    assets/audio.wav              # sample audio for the ASR notebook
   03-yolo-plus-vlm/
     01_detection_to_vlm.ipynb     # detection -> trigger-gated VLM captions (pairs with
                                    # apps/detection-vlm-assistant)
@@ -37,25 +34,22 @@ llima/
     02_vlm_compilation.ipynb      # VLM specifics: vision encoder + LM, common failures
     notes/triage_checklist.md     # "is this model LLiMa-able?" decision checklist
   05-genai-server/
-    01_genai_server.ipynb         # pyneat.genai.GenAIServer, OpenAI-compatible endpoints
-    02_multi_model_server.ipynb   # serving multiple models: memory budgeting, concurrency
-    scripts/
-      serve_multi_model.py        # in-process multi-model GenAIServer
-      client_examples.py          # text / image / transcription request clients
+    01_genai_server.ipynb         # pyneat.genai.GenAIServer: one HTTP server for LLM/VLM/ASR,
+                                   # OpenAI-compatible endpoints, memory budgeting + concurrency
 ```
 
 The five sections build on each other:
 
 - **`01-llima-basics/`** — what LLiMa is and the `llima` CLI, subcommand by subcommand.
-- **`02-run-llm-vlm/`** — run LLMs, VLMs, and ASR from Python via `pyneat.genai`, plus matching
-  standalone scripts. See [`02-run-llm-vlm/01_run_llm.ipynb`](02-run-llm-vlm/01_run_llm.ipynb).
+- **`02-run-llm-vlm/`** — run LLMs, VLMs, and ASR from Python via `pyneat.genai`.
+  See [`02-run-llm-vlm/01_run_llm.ipynb`](02-run-llm-vlm/01_run_llm.ipynb).
 - **[`03-yolo-plus-vlm/`](03-yolo-plus-vlm/01_detection_to_vlm.ipynb)** — trigger-based
   detection → VLM captioning (pairs with `../apps/detection-vlm-assistant`).
 - **[`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb)** — bring-your-own
   LLM/VLM compilation via the host-side `llima-compile` tool, plus a
   [triage checklist](04-llm-vlm-compilation/notes/triage_checklist.md).
-- **[`05-genai-server/`](05-genai-server/01_genai_server.ipynb)** — `pyneat.genai.GenAIServer`,
-  OpenAI-compatible endpoints, and multi-model serving.
+- **[`05-genai-server/`](05-genai-server/01_genai_server.ipynb)** — `pyneat.genai.GenAIServer`:
+  one OpenAI-compatible HTTP server hosting an LLM/VLM + ASR, with a runnable start/client/stop walkthrough.
 
 > **On `04-llm-vlm-compilation/`:** there is **no `llima compile` subcommand** — the on-board `llima`
 > CLI is runtime + model-manager only (`run, search, pull, list, rm, benchmark-server`). GenAI
@@ -85,15 +79,13 @@ and `llima pull <model-id>` for any you need.
 | VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
 | ASR (audio) | `whisper-small-a16w8` |
 
-## How to run these notebooks and scripts
+## How to run these notebooks
 
-`pyneat` and `llima` live **on the DevKit**, not in the SDK container. Edit the notebooks and scripts
-on your host, and run them on the DevKit where the runtime and models live. A script runs like:
-
-```bash
-python /workspace/demo-neat/llima/02-run-llm-vlm/scripts/run_llm.py \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
-```
+`pyneat` and `llima` live **on the DevKit**, not in the SDK container. Edit the notebooks on your host
+(`/workspace` is NFS-mounted on the board at the same path), and run them **on the DevKit** where the
+runtime and models live — start Jupyter on the board and open the `.ipynb` files, or lift the code
+cells into a script and run that in the `pyneat` environment. The heavy cells load a model, so run
+them on the DevKit when you are ready.
 
 For the notebooks, run Jupyter on the DevKit and open the `.ipynb` files, or lift the code cells into
 a script and run that. The heavy cells keep their model-running commands as printed strings or fenced
@@ -109,9 +101,11 @@ blocks — run those steps yourself when you are ready.
 
 ## Sources of truth
 
-- GenAI C++ headers: `/workspace/core/include/genai/`
-- `pyneat` bindings: `/workspace/core/python/src/module.cpp`
-- Core tutorials: `/workspace/core/tutorials/019_run_an_llm`, `020_run_a_vlm`, `021_serve_genai_models`
-- Concept doc: `/workspace/core/docs/develop-apps/development-workflow/genai-model.mdx`
+- GenAI C++ headers: [`include/genai/`](https://github.com/sima-neat/core/tree/main/include/genai)
+- `pyneat` bindings: [`module.cpp`](https://github.com/sima-neat/core/blob/main/python/src/module.cpp)
+- Core tutorials: [`019_run_an_llm`](https://github.com/sima-neat/core/tree/main/tutorials/019_run_an_llm),
+  [`020_run_a_vlm`](https://github.com/sima-neat/core/tree/main/tutorials/020_run_a_vlm),
+  [`021_serve_genai_models`](https://github.com/sima-neat/core/tree/main/tutorials/021_serve_genai_models)
+- Concept doc: [`genai-model.mdx`](https://github.com/sima-neat/core/blob/main/docs/develop-apps/development-workflow/genai-model.mdx)
 - Official docs: developer.sima.ai — `/software/getting-started/`,
   `/software/develop-apps/development-workflow/genai-model`, `/software/genai-llima/runtime`
