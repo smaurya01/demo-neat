@@ -35,7 +35,7 @@ Windows 11 (host)
 
 ## Component overview
 
-What you are installing and how the pieces fit together — the same NEAT software stack as the platform-neutral guide ([neat_installation_setup-.md](neat_installation_setup-.md)), with the **Host** running inside WSL2 on Windows:
+What you are installing and how the pieces fit together — the same NEAT software stack as the platform-neutral guide ([README.md](README.md)), with the **Host** running inside WSL2 on Windows:
 
 - **Host:** Your Windows 11 laptop — runs WSL2 (Ubuntu) with `sima-cli`, the container runtime, and your local workspace.
 - **Modalix DevKit (Board):** Target hardware running Modalix firmware where applications execute.
@@ -561,5 +561,5 @@ Tips:
 - https://developer.sima.ai/software/tools/sima-cli/
 - https://developer.sima.ai/software/getting-started/dev-environment/
 - https://developer.sima.ai/software/getting-started/compatibility/
-- Platform-neutral setup: [neat_installation_setup-.md](neat_installation_setup-.md)
+- Platform-neutral setup: [README.md](README.md)
 - NEAT Insight guide: [neat_insight.md](neat_insight.md)

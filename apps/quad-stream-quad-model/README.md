@@ -13,11 +13,21 @@ published on stream *i*'s own UDP port.
 | 2 | pose | `yolo26s-pose` | no — raw heads → host decode |
 | 3 | detection (YOLOX) | `yolox_s` | no — raw heads → host decode |
 
-The archives are large and are **not committed**. The app references them in
-place under `model-compilation/work/<model>/compile_int8/...` by default (both
-the host and the DevKit see `/workspace` at the same NFS path, so nothing is
-copied). To use your own copies, drop archives into `assets/models/` and set
-`stream<i>_model=...` in `config/default.conf`.
+The archives are large and are **not committed**. `config/default.conf` points each
+stream at a local copy under `assets/models/` (git-ignored), which keeps the app
+self-contained:
+
+```text
+stream0_model=./assets/models/yolo11s.compile_ready_mpk.tar.gz
+stream1_model=./assets/models/yolo11s-seg.compile_ready_mpk.tar.gz
+stream2_model=./assets/models/yolo26s-pose.compile_ready_mpk.tar.gz
+stream3_model=./assets/models/yolox_s.compile_ready_mpk.tar.gz
+```
+
+Build them with the graph-surgery flow in
+[`model-compilation/`](../../model-compilation/README.md) — see
+[`REPLICATION.md`](../../model-compilation/REPLICATION.md) for the exact commands per
+model — then copy the four archives into `assets/models/`.
 
 ## Why three of the four models decode on the host (the core lesson)
 
@@ -40,7 +50,7 @@ See `TEACHING.md` for the full design discussion and `src/decoders.py` for the m
 
 ```bash
 # from the SDK container host, with the DevKit helper sourced:
-source /usr/local/bin/devkit.sh 192.168.135.203 sima 22
+source /usr/local/bin/devkit.sh <devkit-ip> sima 22
 dk /workspace/demo-neat/apps/quad-stream-quad-model/main.py --frames 100
 ```
 
@@ -52,7 +62,7 @@ dk /workspace/demo-neat/apps/quad-stream-quad-model/main.py --frames 100
 command in `timeout`:
 
 ```bash
-timeout 300 ssh -o BatchMode=yes sima@192.168.135.203 \
+timeout 300 ssh -o BatchMode=yes sima@<devkit-ip> \
   'source /media/nvme/pyneat/bin/activate; \
    cd /workspace/demo-neat/apps/quad-stream-quad-model; \
    python main.py --num-streams 4 --frames 100 --score 0.25'
@@ -83,7 +93,7 @@ four windows apart at a glance.
 ## Sanity-check the RTSP source first
 
 ```bash
-ffprobe -hide_banner -rtsp_transport tcp rtsp://192.168.132.129:8555/stream
+ffprobe -hide_banner -rtsp_transport tcp rtsp://<rtsp-server-ip>:8555/stream
 ```
 
 ## Time profile
@@ -114,7 +124,7 @@ Useful flags:
 > produced (we saw detection run 7934 frames against a 250-frame cap while its peers were starved to
 > ~0.1 fps).
 
-## Measured behaviour (DevKit 192.168.2.103, RTSP 1280x720 H.264 @ 59.94 fps)
+## Measured behaviour (Modalix DevKit; RTSP 1280x720 H.264 @ 59.94 fps)
 
 ### Model rate, each model solo (`--task <t> --no-overlay --pipeline-depth 1`)
 

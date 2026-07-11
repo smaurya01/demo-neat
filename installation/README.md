@@ -2,7 +2,19 @@
 
 Scope: concise, practical steps to install, pair, and run Palette Neat (Host + Modalix DevKit).
 
+← Back to the [repo README](../README.md)
+
 Primary reference: https://developer.sima.ai/software/getting-started/
+
+**Also in this folder**
+
+- **[`neat_on_windows.md`](neat_on_windows.md)** — the same stack on Windows, via WSL2. Follow that
+  guide instead of this one if you are on Windows.
+- **[`neat_insight.md`](neat_insight.md)** — Neat Insight: browser-based RTSP sources, video viewer,
+  and runtime metrics.
+
+Once setup is done, go to the [tutorial notebooks](../tutorial/README.md) or straight to an
+[app](../README.md#apps).
 
 ---
 

@@ -4,6 +4,12 @@ This folder teaches **LLiMa** — the toolchain that prepares and runs generativ
 ASR) on a Modalix DevKit — and the **`pyneat.genai`** Python API you use to call those models from an
 application.
 
+← Back to the [repo README](../README.md) · Setup first: [`installation/`](../installation/README.md)
+
+> **Nothing in this folder has been executed by the authors.** Every LLM/VLM/ASR run and every GenAI
+> compile is written copy-paste ready with expected output, for **you** to run on the DevKit. See
+> [What has been run, and what has not](../README.md#what-has-been-run-and-what-has-not).
+
 Everything here is written to run on the **Modalix DevKit**. The notebooks follow the same house
 style as `../tutorial/I-easy`: a markdown concept cell, then a short runnable code cell, then a brief
 interpretation.
