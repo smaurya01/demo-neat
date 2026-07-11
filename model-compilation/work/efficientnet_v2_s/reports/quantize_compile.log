@@ -1,0 +1,77 @@
+[INFO] ------------------------------------------------------------
+[INFO] Model Compiler Version: 2.1.0
+[INFO] Python Version: 3.12.3
+[INFO] Output Directory: /workspace/demo-neat/model-compilation/work/efficientnet_v2_s/compile/efficientnet_v2_s.surgery
+[INFO] ------------------------------------------------------------
+[INFO] Preparing ONNX model: /workspace/demo-neat/model-compilation/work/efficientnet_v2_s/surgery/efficientnet_v2_s.surgery.onnx
+[INFO] Simplifying with fixed shapes: {'input': [1, 3, 384, 384]}
+[INFO] Prepared model saved to: /workspace/demo-neat/model-compilation/work/efficientnet_v2_s/surgery/efficientnet_v2_s.surgery_prepared.onnx
+[INFO] Model successfully loaded for modalix
+[INFO] Initializing quantization...
+[INFO] Loading real calibration data from: /workspace/demo-neat/model-compilation/assets/calibration
+2026-07-07 14:11:54,877 - afe.apis.loaded_net - INFO - Quantize loaded net, layout = NCHW, arm_only = False
+2026-07-07 14:11:54,877 - afe.apis.loaded_net - INFO - Calibration method = mse
+2026-07-07 14:14:05,552 - afe.backends.mla.mla_checkers - INFO - Cannot assign node nn.batch_flatten_399, source_name(['Not available']) to MLA.
+	['Some tensors are not 4D. Support for tensors that are not 4D is disabled in the compilation settings.']
+2026-07-07 14:14:10,589 - afe.ir.transform.calibration_transforms - INFO - Running Calibration ...
+2026-07-07 14:14:28,198 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 1 samples
+2026-07-07 14:14:45,281 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 2 samples
+2026-07-07 14:15:03,398 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 3 samples
+2026-07-07 14:15:23,784 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 4 samples
+2026-07-07 14:15:44,288 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 5 samples
+2026-07-07 14:16:04,795 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 6 samples
+2026-07-07 14:16:22,275 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 7 samples
+2026-07-07 14:16:39,247 - afe.ir.transform.calibration_transforms - INFO - Calibration progress: completed 8 samples
+2026-07-07 14:16:42,131 - afe.ir.defines - WARNING - In node MLA_0/conv2d_add_223, source_name ['/features/features.6/features.6.0/block/block.2/fc2/Conv'], Precision of weights was reduced to avoid numeric saturation. Saturation was detected in the zero point.
+Running Calibration ...
+Running Calibration ...DONE
+Running quantization ...
+Running quantization ...DONE
+[INFO] Quantized model saved.
+[INFO] ------------------------------------------------------------
+[INFO] Internal graph structure (for tessellate parameters):
+[INFO]   Input node names: ['input']
+[INFO]   Output node name: dequantize_1
+[INFO]   All nodes:
+[INFO]     PLACEHOLDER: input
+[INFO] ------------------------------------------------------------
+[INFO] Compiling for modalix with batch size 1...
+2026-07-07 14:16:48,002 - afe.apis.model - INFO - Compiling quantized net "efficientnet_v2_s.surgery"
+2026-07-07 14:16:48,092 - afe.core.compile_networks - INFO - The model is split into 1 segments for MLA and APU
+2026-07-07 14:16:48,092 - afe.backends.mla.afe_to_n2a_compiler.n2a_compiler_operations - INFO - Stage 1 of 1: compiling for MLA
+2026-07-07 14:16:48,146 - mlc.compiler.model_graph.l1_based - INFO - Get model compilation properties
+2026-07-07 14:16:48,157 - mlc.compiler.model_graph.l1_based - INFO - Checking if layers fit into memory without splitting
+2026-07-07 14:16:48,157 - mlc.compiler.model_graph.l1_based - INFO - Generating the list of feasible layouts
+2026-07-07 14:16:48,157 - mlc.compiler.model_graph.l1_based - INFO - Setting layer parameters
+2026-07-07 14:17:31,472 - mlc.compiler.model_graph.l1_based - INFO - Setting tile layouts
+2026-07-07 14:18:00,289 - mlc.compiler.model_graph.l1_based - INFO - Allocating memory for IFM/OFM tensors
+2026-07-07 14:18:00,878 - mlc.compiler.model_graph.l1_based - INFO - Get model compilation properties done
+2026-07-07 14:18:01,281 - afe.backends.mla.afe_to_n2a_compiler.n2a_backend_runner - INFO - Start evaluate process to generate check file
+2026-07-07 14:18:01,282 - mlc.kernel.layout - INFO - L2 caching mode: L2CachingMode.NONE
+2026-07-07 14:18:01,385 - mlc.compiler.model_graph.l1_based - INFO - Generating model code
+2026-07-07 14:18:34,536 - mlc.compiler.model_graph.l1_based - INFO - Generating model code done
+2026-07-07 14:18:34,921 - mlc.test_util.test_context - INFO - Scheduling instructions
+2026-07-07 14:18:59,737 - mlc.test_util.test_context - INFO - Performing DRAM/L2 synchronization
+2026-07-07 14:19:08,907 - mlc.test_util.test_context - INFO - Inserting and merging NOPs
+2026-07-07 14:19:10,075 - mlc.test_util.test_context - INFO - Setting IQ sync bits
+2026-07-07 14:19:10,192 - mlc.test_util.test_context - INFO - Run compression
+2026-07-07 14:19:14,095 - mlc.test_util.test_context - INFO - Compression done in 3s. Compression ratio: 0.89
+2026-07-07 14:19:14,095 - mlc.test_util.test_context - INFO - Re-allocate dram memory
+2026-07-07 14:19:14,335 - mlc.test_util.test_context - INFO - Generating metrics
+2026-07-07 14:19:14,756 - mlc.test_util.test_context - INFO - Writing report to MLC file
+2026-07-07 14:19:14,756 - mlc.test_util.test_context - INFO - Writing instructions to MLC file
+2026-07-07 14:19:32,620 - mlc.test_util.test_context - INFO - Code generation done
+2026-07-07 14:19:32,620 - afe.backends.mla.afe_to_n2a_compiler.n2a_compiler_operations - INFO -   Evaluate model and writing chk file done in 18s.
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - ==============================
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - Compilation summary:
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - Desired batch size: 1
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - Achieved batch size: 1
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - 	MLA : 1
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - 	EV74: 5
+2026-07-07 14:19:45,534 - afe.backends.mpk.interface - INFO - 	A65 : 0
+2026-07-07 14:19:45,535 - afe.backends.mpk.interface - INFO - ------------------------------
+2026-07-07 14:19:45,535 - afe.backends.mpk.interface - INFO - Generated files: 0_process_mla.json, 0_preproc.json, efficientnet_v2_s.surgery_stage1_mla_stats.yaml, efficientnet_v2_s.surgery_stage1_mla.elf, pipeline_sequence.json, 0_quanttess.json, 0_postproc.json, 0_boxdecoder.json, efficientnet_v2_s.surgery_mpk.json, quantize_compile.py
+[INFO] Compilation complete.

@@ -1,0 +1,24 @@
+{
+  "archive": "work/fastvit_t8/compile/fastvit_t8.surgery/fastvit_t8.surgery_mpk.tar.gz",
+  "exists": true,
+  "is_tar_gz": true,
+  "members": [
+    "fastvit_t8.surgery_mpk.json",
+    "0_process_mla.json",
+    "0_preproc.json",
+    "fastvit_t8.surgery_stage1_mla.elf",
+    "pipeline_sequence.json",
+    "0_quanttess.json",
+    "0_postproc.json",
+    "0_boxdecoder.json",
+    "fastvit_t8.surgery_stage1_mla_stats.yaml",
+    "archived_compile_script.quantize_compile.py"
+  ],
+  "elf_members": [
+    "fastvit_t8.surgery_stage1_mla.elf"
+  ],
+  "so_members": [],
+  "status": "pass",
+  "single_elf": true,
+  "no_so": true
+}

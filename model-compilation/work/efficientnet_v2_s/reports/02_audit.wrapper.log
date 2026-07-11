@@ -1,0 +1,78 @@
+{
+  "release": "2.1",
+  "dtype": "int8",
+  "model_operator_total": 502,
+  "unique_operator_total": 7,
+  "supported_count": 4,
+  "unsupported_count": 0,
+  "unknown_count": 3,
+  "supported": [
+    {
+      "operator": "Add",
+      "count": 35,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": "Can be fused with conv or matmul."
+    },
+    {
+      "operator": "Conv",
+      "count": 170,
+      "onnx-opset-version": "11",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "dilation = [1, 63] (HW)\nstrides = [1, 31] (HW)",
+      "notes": "fused with bias and activation.  ONNX does not have 1D convolution, though we support it for other frontends."
+    },
+    {
+      "operator": "Mul",
+      "count": 132,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Sigmoid",
+      "count": 132,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    }
+  ],
+  "unsupported": [],
+  "unknown": [
+    {
+      "operator": "Flatten",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Gemm",
+      "count": 1,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "GlobalAveragePool",
+      "count": 31,
+      "onnx-opset-version": null,
+      "int8": null,
+      "bfloat16": null,
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    }
+  ]
+}
+

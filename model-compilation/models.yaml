@@ -1,19 +1,38 @@
+# Single registry for the whole compile flow.
+#
+# Every step (convert_to_onnx -> graph_surgery -> compiler -> test_model) reads THIS file, so a
+# model's input name, shape, normalization and output contract can never drift between steps.
+#
+# Key fields
+#   surgery      : none | yolo_ultralytics | yolox   (which rewrite graph_surgery.py applies)
+#   output_names : the EXACT tensors the compiled archive exposes (surgery models expose raw heads)
+#   decode       : how test_model.py interprets the outputs
+#
+# Calibration is ALWAYS real images (assets/calibration). Synthetic calibration produces a
+# valid-looking archive with meaningless activation ranges -- see README.
+
 project:
   default_device: modalix
   default_opset: 17
-  default_num_calib_samples: 50
   default_calib_method: mse
   default_requant_mode: sima
   default_layout: NCHW
+  default_num_calib_samples: 20
+  calib_dir: assets/calibration      # REAL images. never synthetic.
+  infer_dir: assets/inference        # REAL images for the smoke test.
 
 models:
+  # ----------------------------------------------------------------- classification (CNN)
+  # Plain CNNs: no surgery needed, they compile straight from the export.
   - id: resnet50
     task: classification
     family: torchvision
     arch: resnet50
     weights: ResNet50_Weights.DEFAULT
     source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.resnet50.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
+    license_note: TorchVision weights; review upstream license before redistribution.
+    surgery: none
+    decode: imagenet_topk
     input_name: input
     output_names: [logits]
     input_shape: [1, 3, 224, 224]
@@ -27,7 +46,9 @@ models:
     arch: densenet169
     weights: DenseNet169_Weights.DEFAULT
     source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.densenet169.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
+    license_note: TorchVision weights; review upstream license before redistribution.
+    surgery: none
+    decode: imagenet_topk
     input_name: input
     output_names: [logits]
     input_shape: [1, 3, 224, 224]
@@ -41,7 +62,9 @@ models:
     arch: convnext_tiny
     weights: ConvNeXt_Tiny_Weights.DEFAULT
     source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.convnext_tiny.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
+    license_note: TorchVision weights; review upstream license before redistribution.
+    surgery: none
+    decode: imagenet_topk
     input_name: input
     output_names: [logits]
     input_shape: [1, 3, 224, 224]
@@ -55,7 +78,9 @@ models:
     arch: efficientnet_v2_s
     weights: EfficientNet_V2_S_Weights.DEFAULT
     source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.efficientnet_v2_s.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
+    license_note: TorchVision weights; review upstream license before redistribution.
+    surgery: none
+    decode: imagenet_topk
     input_name: input
     output_names: [logits]
     input_shape: [1, 3, 384, 384]
@@ -63,68 +88,58 @@ models:
     std: [0.229, 0.224, 0.225]
     enabled: true
 
-  - id: vit_b_16
-    task: classification
-    family: torchvision
-    arch: vit_b_16
-    weights: ViT_B_16_Weights.DEFAULT
-    source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.vit_b_16.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
-    input_name: input
-    output_names: [logits]
-    input_shape: [1, 3, 224, 224]
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
-    enabled: true
-
-  - id: maxvit_t
-    task: classification
-    family: torchvision
-    arch: maxvit_t
-    weights: MaxVit_T_Weights.DEFAULT
-    source: https://docs.pytorch.org/vision/main/models/generated/torchvision.models.maxvit_t.html
-    license_note: TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.
-    input_name: input
-    output_names: [logits]
-    input_shape: [1, 3, 224, 224]
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
-    enabled: true
-
+  # DISABLED -- see results/summary.md "Known issue".
+  # Compiles PERFECTLY (1 .elf / 0 .so, A65:0) but INT8 quantization DESTROYS it: the FP32 ONNX is
+  # correct (tennis frame -> `racket 0.83`) while the INT8 archive predicts an unrelated class.
+  # Three calibration strategies all failed (mse/20, mse/100, min_max/64). FastViT's reparameterized
+  # blocks do not survive 8-bit quantization. This is a model-side sensitivity, not a toolchain bug.
+  # Kept in the registry as the folder's cautionary example: a passing archive contract proves the
+  # graph is on the MLA -- it proves NOTHING about accuracy.
   - id: fastvit_t8
     task: classification
     family: timm
     arch: fastvit_t8.apple_in1k
     source: https://github.com/apple/ml-fastvit
-    license_note: Apple FastViT model; install timm or upstream package and review license before redistribution.
+    license_note: Apple FastViT; review license before redistribution.
+    surgery: none
+    decode: imagenet_topk
     input_name: input
     output_names: [logits]
     input_shape: [1, 3, 256, 256]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
-    enabled: true
+    enabled: false          # INT8-broken; see the note above
+    known_issue: "compiles clean (1 elf/0 so) but INT8 quantization destroys accuracy"
 
-  - id: dinov2_vits14
-    task: feature
-    family: torchhub
-    arch: dinov2_vits14
-    source: https://github.com/facebookresearch/dinov2
-    license_note: DINOv2 weights/source require license review before redistribution.
-    input_name: input
-    output_names: [features]
-    input_shape: [1, 3, 224, 224]
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
-    enabled: true
-
+  # ----------------------------------------------------------------- detection (YOLO)
+  # These need surgery: the CPU decode/NMS tail is cut and the raw per-scale heads are exposed,
+  # which is what lets the whole graph stay on the MLA (one ELF, no .so).
+  # Preprocess is handled by Neat (COCO_YOLO preset), so mean=0 / std=1 here.
   - id: yolo11n
     task: detection
     family: ultralytics
     arch: yolo11n.pt
     source: https://docs.ultralytics.com/models/yolo11/
-    license_note: Ultralytics model/license must be reviewed before redistribution.
+    license_note: Ultralytics license must be reviewed before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
     input_name: images
-    output_names: []
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    enabled: true
+
+  - id: yolo11s
+    task: detection
+    family: ultralytics
+    arch: yolo11s.pt
+    source: https://docs.ultralytics.com/models/yolo11/
+    license_note: Ultralytics license must be reviewed before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
@@ -135,25 +150,71 @@ models:
     family: ultralytics
     arch: yolo26n.pt
     source: https://docs.ultralytics.com/
-    license_note: Confirm public upstream and license for the exact YOLO26 variant before redistribution.
+    license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
     input_name: images
-    output_names: []
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
     enabled: true
-    blocked_reason: exact public upstream/weight name still needs confirmation if export fails.
 
-  - id: detr_resnet50
+  - id: yolo11s-seg
+    task: segmentation
+    family: ultralytics
+    arch: yolo11s-seg.pt
+    source: https://docs.ultralytics.com/tasks/segment/
+    license_note: Ultralytics license must be reviewed before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2,
+                   mask_coeff_0, mask_coeff_1, mask_coeff_2, proto]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    enabled: true
+
+  - id: yolo26s-pose
+    task: pose
+    family: ultralytics
+    arch: yolo26s-pose.pt
+    source: https://docs.ultralytics.com/tasks/pose/
+    license_note: Ultralytics license must be reviewed before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2,
+                   kpt_0, kpt_1, kpt_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    enabled: true
+
+  # Non-Ultralytics head (decoupled, anchor-free, numeric node names) -> its own surgery path.
+  - id: yolox_s
     task: detection
-    family: torchhub
-    arch: detr_resnet50
-    source: https://github.com/facebookresearch/detr
-    license_note: DETR source/weights require license review before redistribution.
-    input_name: input
-    output_names: [pred_logits, pred_boxes]
-    input_shape: [1, 3, 800, 800]
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
-    enabled: false
-    blocked_reason: DETR export and postprocess should be attempted after CNN and YOLO baselines.
+    family: megvii
+    arch: yolox_s
+    source: https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.onnx
+    license_note: Megvii YOLOX (Apache-2.0); review before redistribution.
+    surgery: yolox
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [yolox_head_0, yolox_head_1, yolox_head_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    enabled: true
+
+# ---------------------------------------------------------------------------------------
+# REMOVED (cannot compile from source yet -- see results/T7_CORRECTION_...md):
+#   vit_b_16, maxvit_t, dinov2_vits14, detr_resnet50
+#
+# DETR and ViT/DINOv2 ARE supported on this hardware, but only via SiMa's SOURCE-PREPARED models
+# (`detr_resnet50_modified_class_embed_bbox_embed.onnx`, `image_classification_vits14.onnx`), which
+# are not public. Our stock exports + ONNX surgery fragment badly. maxvit_t fragments and OOMs even
+# with --any-shape-on-mla. These will be re-added when we can actually build them.
+# To USE them today, download SiMa's archives with `sima-cli download` (see README).
+# ---------------------------------------------------------------------------------------

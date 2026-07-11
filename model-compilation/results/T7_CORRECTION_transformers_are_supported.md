@@ -75,3 +75,31 @@ sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/model_zoo/gen2/ima
 - `detr_resnet50` (our export) — never compiled. **Superseded**: use the official DETR archive.
 
 These remain useful only as a documented example of what *not* to do.
+
+---
+
+## How to restore DETR / ViT (they were removed from this folder on 2026-07-11)
+
+Per the folder's cleanup, the models we **cannot compile from source** were removed
+(`vit_b_16`, `maxvit_t`, `dinov2_vits14`, `detr_resnet50`) along with their pipelines. Nothing is
+lost — everything needed to bring them back:
+
+**1. Re-download the working archives** (both compile to 1 `.elf` / 0 `.so`):
+
+```bash
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/detr_resnet50_modified_class_embed_bbox_embed_mpk.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/model_zoo/gen2/image_classification/vits14/vits14_mpk.tar.gz
+```
+
+**2. Restore the working pipelines from git** — both ran on the DevKit and are proven:
+
+```bash
+git show 04b9439:model-compilation/pipelines/detr_detect.py  > detr_detect.py
+git show 04b9439:model-compilation/pipelines/vit_classify.py > vit_classify.py
+```
+
+`detr_detect.py` produced 63 detections across 3 COCO images (correct classes);
+`vit_classify.py` produced correct ImageNet top-5.
+
+They are out of the folder only because **we cannot yet build these models ourselves** — which is
+what this folder is meant to teach. They come back the moment we can.

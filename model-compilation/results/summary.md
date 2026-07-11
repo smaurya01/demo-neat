@@ -1,80 +1,62 @@
-# Model Compilation Status
+# Model Compilation — status
 
-> ## ⚠️ CORRECTION (2026-07-11): transformers ARE supported
->
-> The T7 headline below ("pure token-sequence transformers fragment on SiMa gen2") is **WRONG**.
-> SiMa ships **validated 1-`.elf` / 0-`.so`** archives for both **DETR** and **ViT/DINOv2
-> (`vits14`)**, and both now run end-to-end on the DevKit from `pipelines/`.
-> The real lever is a **source-prepared model** (SiMa's `detr_..._modified_class_embed_bbox_embed`
-> and `image_classification_vits14.onnx`) — **not** ONNX surgery, `MatMul→Einsum`, or
-> `--any_shape_on_mla`. Our from-scratch exports fragmented because of how *we* prepared them.
-> **Check the model zoo before compiling any transformer.**
-> Full write-up: [`T7_CORRECTION_transformers_are_supported.md`](T7_CORRECTION_transformers_are_supported.md)
+Every model here is built by the same four steps (`compile/`), driven by one registry
+(`models.yaml`), calibrated on **real** COCO images (`assets/calibration`) and smoke-tested on
+**real** images (`assets/inference`). See [`../README.md`](../README.md).
 
+Target contract: **one `.tar.gz`, one `.elf`, zero `.so`** (`A65: 0` in the compile log).
 
-| Model | ONNX | Unsupported | Unknown | MPK | Archive | Notes |
-| --- | --- | ---: | ---: | --- | --- | --- |
-| `resnet50` | pass | 0 | 3 | pass | pass |  |
-| `densenet169` | pass | 0 | 4 | pass | pass |  |
-| `convnext_tiny` | pass | 0 | 5 | pass | pass |  |
-| `efficientnet_v2_s` | pass | 0 | 3 | pass | pass |  |
-| `vit_b_16` | pass | 0 | 4 | fail | **SUPERSEDED** | Use official `vits14` (1 elf/0 so). T7: static-shape + attention Einsum surgery done (compile_ready.onnx, 0 unsupported); INT8 compile **errors during quantization** with a conv2d channel mismatch (64 vs 768). See T7 detail + `work/vit_b_16/reports/surgery.md`. Diagnosed, not compiled. |
-| `maxvit_t` | pass | 0 | 5 | rc0_fragmented | fail | Retry 2026-07-11 with --any-shape-on-mla: OOM-killed (rc=-9) at stage 25/113, still fragments. BLOCKER. T7: compiled rc=0 but **58 `.elf` + 78 `.so`** (136 segments) — windowed-attention partition/departition reshapes are non-4D and fell to A65 without `--any_shape_on_mla`. POLICY FAILURE; fix = recompile with `--any-shape-on-mla`. See `work/maxvit_t/reports/surgery.md`. |
-| `fastvit_t8` | pass | 0 | 6 | pass | pass |  |
-| `dinov2_vits14` | pass | 0 | 2 | rc0_fragmented | **SUPERSEDED** | Use official `vits14` (1 elf/0 so). T7: masks/Where removed + attention Einsum surgery; INT8 compiled rc=0 but **99 `.elf` + 195 `.so`** (MLA 99/EV74 844/A65 195). Root cause = token-sequence LayerNorm (channel-dim reduction over 384, not MLA-placeable) + batch-axis head reshapes. Blocker. See `work/dinov2_vits14/reports/surgery.md`. |
-| `yolo11n` | pass | 0 | 0 | pass | pass | compile_ready_int8; one ELF, no `.so` |
-| `yolo26n` | pass | 0 | 0 | pass | pass | compile_ready_int8; one ELF, no `.so` |
-| `detr_resnet50` | pass | 0 | 5 | **OFFICIAL** | **pass (1 elf/0 so)** | Official SiMa archive downloaded + running on DevKit. T7: generic surgery already yields a static compile-ready graph (`pred_logits[1,100,92]`, `pred_boxes[1,100,4]`, 0 unsupported); attention is rank-3 supported batched MatMul. Not compiled (out of T7 compile-start budget). Ready to compile; pipeline + decode analysis done. See `work/detr_resnet50/reports/surgery.md`. |
+## Working models
 
-Archive `pass` (strict, T1/T5 CNN/YOLO) means exactly one ELF and no `.so`. For T7
-transformer models the relaxed contract is 1–3 `.elf` with any `.so` justified in the
-model's surgery report; validate with
-`scripts/05_validate_archive.py --max-elf 3 --allow-so`.
+Archive contract verified with `test_model.py --all --validate-only`; behaviour verified by running
+each model on the DevKit against real images.
 
-## T7 transformer / difficult-model status (Agent G, 2026-07-09)
+| Model | Task | Surgery | Archive | On-device behaviour |
+| --- | --- | --- | --- | --- |
+| `resnet50` | classification | none | 1 elf / 0 so | tennis frame → `racket 0.59` |
+| `densenet169` | classification | none | 1 elf / 0 so | tennis frame → `racket 0.99` |
+| `convnext_tiny` | classification | none | 1 elf / 0 so | living room → `home theater 0.29`, `television 0.16` |
+| `efficientnet_v2_s` | classification | none | 1 elf / 0 so | tennis frame → `racket 0.75` |
+| `yolo11n` | detection | `yolo_ultralytics` | 1 elf / 0 so | 6 heads: bbox(4)×3 + class(80)×3 |
+| `yolo11s` | detection | `yolo_ultralytics` | 1 elf / 0 so | 6 heads (same contract — node names are scale-invariant) |
+| `yolo26n` | detection | `yolo_ultralytics` | 1 elf / 0 so | 6 heads (no DFL rebuild — heads already 4-ch) |
+| `yolo11s-seg` | segmentation | `yolo_ultralytics` | 1 elf / 0 so | 10 heads: + mask_coeff(32)×3 + proto 160×160×32 |
+| `yolo26s-pose` | pose | `yolo_ultralytics` | 1 elf / 0 so | 9 heads: + kpt(51)×3 |
+| `yolox_s` | detection | `yolox` | 1 elf / 0 so | 3 heads: 85ch × 3 scales |
 
-Worked strictly one compile at a time through the global slot, easiest first. Honest
-outcomes (no fabricated passes):
+Raw-head tensors come back **NHWC** `(1, H, W, C)` — a host decoder must transpose to CHW.
 
-| Model | Surgery | Compile outcome | Deliverable |
-| --- | --- | --- | --- |
-| `maxvit_t` | generic static-shape (attention already `Einsum`, no rewrite needed) | **FAIL (fragmented)**: rc=0 but **58 `.elf` / 78 `.so`** (136 segments); windowed-attention partition/departition non-4D reshapes → A65 (compiled without `--any_shape_on_mla`) | diagnosed blocker + fix to try |
-| `dinov2_vits14` | masks/Where removal + 24 attention `MatMul→Einsum` | **FAIL (fragmented)**: rc=0 but **99 `.elf` / 195 `.so`** (294 segments) **even with `--any_shape_on_mla`**; root cause = token-sequence LayerNorm (channel reduction over 384) + batch-axis head reshapes | diagnosed blocker + surgery report + pipeline |
-| `vit_b_16` | static-shape (37 Gather→Slice) + 24 attention `MatMul→Einsum` | **FAIL (quantize error)**: TVM conv2d channel mismatch 64 vs 768 during quantization type-inference (importer layout on the Einsum'd graph) | diagnosed blocker + next step |
-| `detr_resnet50` | generic static-shape collapsed the dynamic NestedTensor mask; rank-3 attention left as supported MatMul | **not compiled** (out of 60-min compile-start budget) | ready-to-compile ONNX + pipeline + verified decode analysis |
+## Known issue: `fastvit_t8` — compiles clean, but INT8 breaks it
 
-**Bottom line (honest):** none of the four met the relaxed 1–3 `.elf` policy. Two
-compiled but fragmented into a blocker-level number of host `.so` stages, one errored in
-quantization, one was not reached in budget. Per the T7 fail-forward policy these are
-**documented blockers** — each with a verified root cause, which is the real teaching
-value. The single most important, verified finding:
+**The folder's cautionary case study**, and exactly what the README's "clean archive, quietly wrong"
+warning is about.
 
-> **Pure token-sequence transformers (ViT, DINOv2) fragment on SiMa gen2 / SDK 2.1.0**
-> because their per-block LayerNorm reduces over a large channel dim of a **3-D**
-> `[1,N,C]` tensor (rejected: reduction over channel axis, dim > 128, non-4-D) and their
-> attention reshapes fold heads into the **batch axis** (rejected: "reshape affecting the
-> batch axis"). These are unsupported *placements*, not unsupported *ops*, so no ONNX
-> surgery removes them. The **conv-hybrid** models in this folder that keep a 4-D NCHW
-> spatial layout — `fastvit_t8` (**1 `.elf` / 0 `.so`**), and the CNNs — do not hit this.
-> On this toolchain, "does a ViT compile cleanly?" is decided by 4-D-spatial layout, not
-> by the attention op. The attention `MatMul→Einsum` rewrite (which fixed YOLO) is not
-> the lever here.
+| Stage | Result |
+| --- | --- |
+| Archive contract | **PASS** — 1 `.elf`, 0 `.so`, `A65: 0`, `rc=0` |
+| FP32 ONNX (onnxruntime, host) | **CORRECT** — tennis frame → `racket 0.83` |
+| INT8 compiled archive (DevKit) | **WRONG** — predicts an unrelated class |
 
-**Key next actions (priority order):**
+The export is fine; **INT8 quantization destroys this model.** More calibration did not rescue it:
 
-1. **maxvit_t**: recompile with `--any-shape-on-mla` — its fragmentation is windowed
-   partition/departition reshapes; the flag may re-place them. Lower confidence than for
-   a conv model (windowed attention still produces non-4-D tensors), but cheap to try and
-   fully diagnosed.
-2. **vit_b_16**: recompile from the **plain-MatMul** `surgery/vit_b_16.surgery.onnx`
-   (`--onnx …surgery.onnx`) — dinov2 shows the Einsum is accepted elsewhere, so vit's
-   quantize error is likely the Einsum interacting with vit's separate-q/k/v export.
-   NOTE: even if it then compiles, expect the same LayerNorm fragmentation as dinov2.
-3. **detr_resnet50**: `scripts/18_compile_transformer_int8.py --model-id detr_resnet50
-   --output-names pred_logits pred_boxes --any-shape-on-mla`. `BoxDecodeType.Detr=13` is
-   only an enum token (no raw-head decoder implemented); DETR postprocess stays on CPU
-   (`pipelines/detr_detect.py`).
-4. **Strategic**: for a clean transformer archive on this SDK, prefer a **conv-hybrid**
-   backbone (FastViT / conv-only MaxViT) over a pure ViT, or a newer SDK that lists 3-D
-   LayerNorm + batch-axis reshape as MLA placements. Always verify with the real
-   `.elf`/`.so` count — an rc=0 compile with dozens of `.so` is a failure.
+- 20 real COCO images (`mse`) → `coil 0.98` on *every* image (degenerate).
+- 100 real images (`mse`) → low-confidence garbage (`lampshade 0.08` on a tennis photo).
+- 64 real images (`min_max`) → `lampshade 0.53` on a tennis photo.
+
+FastViT uses reparameterized blocks whose activation ranges evidently do not survive 8-bit
+quantization. This is a **model-side sensitivity**, not a toolchain or calibration bug.
+
+**Takeaway:** a passing archive contract proves the graph is placed on the MLA. It proves **nothing**
+about accuracy. Always run step 4's behavioural test on real images — that is what caught this.
+
+## Removed: ViT, DINOv2, MaxViT, DETR
+
+We cannot compile these **from source** yet. They **are** supported on the hardware — SiMa publishes
+archives for DETR and DINOv2 ViT-S/14 that are a clean **1 `.elf` / 0 `.so`** and run fine on the
+board — but only because SiMa ships **source-prepared** models. Our stock exports + ONNX surgery
+fragment badly (DINOv2: 99 `.elf` / 195 `.so`); `maxvit_t` fragments into 113 stages and OOM-kills
+the compiler even with `--any-shape-on-mla`.
+
+**The lever is a source-level model rewrite, not ONNX surgery.** Full write-up, and the commands to
+download and run the working DETR/ViT archives today:
+[`T7_CORRECTION_transformers_are_supported.md`](T7_CORRECTION_transformers_are_supported.md).

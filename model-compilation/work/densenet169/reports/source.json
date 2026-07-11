@@ -1,0 +1,32 @@
+{
+  "model_id": "densenet169",
+  "source": "https://docs.pytorch.org/vision/main/models/generated/torchvision.models.densenet169.html",
+  "license_note": "TorchVision/PyTorch model weights; review upstream weight metadata before redistribution.",
+  "family": "torchvision",
+  "arch": "densenet169",
+  "input_shape": [
+    1,
+    3,
+    224,
+    224
+  ],
+  "input_name": "input",
+  "output_names": [
+    "logits"
+  ],
+  "status": "exported",
+  "onnx_path": "/workspace/demo-neat/model-compilation/work/densenet169/onnx/densenet169.onnx",
+  "onnx": {
+    "ir_version": 8,
+    "opsets": {
+      "ai.onnx": 17
+    },
+    "inputs": [
+      "input"
+    ],
+    "outputs": [
+      "logits"
+    ],
+    "nodes": 516
+  }
+}

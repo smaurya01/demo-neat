@@ -1,0 +1,121 @@
+{
+  "release": "2.1",
+  "dtype": "int8",
+  "model_operator_total": 349,
+  "unique_operator_total": 12,
+  "supported_count": 12,
+  "unsupported_count": 0,
+  "unknown_count": 0,
+  "supported": [
+    {
+      "operator": "Add",
+      "count": 20,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": "Can be fused with conv or matmul."
+    },
+    {
+      "operator": "Concat",
+      "count": 19,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Conv",
+      "count": 102,
+      "onnx-opset-version": "11",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "dilation = [1, 63] (HW)\nstrides = [1, 31] (HW)",
+      "notes": "fused with bias and activation.  ONNX does not have 1D convolution, though we support it for other frontends."
+    },
+    {
+      "operator": "Einsum",
+      "count": 4,
+      "onnx-opset-version": "12",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "Must have two input tensors. (SW)\nSupports any equation where each variable is used in at least two tensors and at most once in each tensor.  An example violating the first condition is jk,k->k (j is not used in at least two tensors).  An example violating the second condition is jk,kk->j (k is used twice in one tensor). (SW)",
+      "notes": "Converted to batch matmul.\nThe kernel supports equations \"nhwc,nhqc->nhwq\" and \"nhwc,nhcq->nhwq\".  Other equations are handled by layout conversion."
+    },
+    {
+      "operator": "MaxPool",
+      "count": 3,
+      "onnx-opset-version": "12",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "dilations = 1 (HW)\nkernel_shape: If global pool, no size limit; otherwise size < 128. (HW)\n\nstorage_order: No optional indices tensor output (SW)",
+      "notes": "1. If global pool, any shape.\n2. The 128 is from the HW instruction limit in gen1 and gen2. Possible to impove in compiler.\n3. Possible to improve compiler to support any shape.\n4.  ceil_mode=True is handled by the rewrite rule SetCeilModeToFalseForNDPooling.\n5. dilation>1 is not supported by HW."
+    },
+    {
+      "operator": "Mul",
+      "count": 89,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Reshape",
+      "count": 6,
+      "onnx-opset-version": "14",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "allowzero = 0 (SW)\nShape cannot be empty. (SW)",
+      "notes": "batch_flatten, expand_dims, and squeeze are converted to reshape, and they are supported if the reshape operator is supported"
+    },
+    {
+      "operator": "Resize",
+      "count": 2,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": "mode = [nearest, linear] (HW/SW)\ncoordinate_transformation_mode= 'tf_crop_and_resize' not supported. (SW)\nIf method is 'linear', any scaling factor is supported. However,\nfor 8-bit integers any scaling more than 63 may lead to loss in accuracy. (HW)\nIf the method is 'nearest', then the scaling factor must be a power of two (HW), or the scaling factor must be an even integer (using the same factor in both dimensions) and the coordinate transformation mode must be half_pixel and the rounding mode must be floor. (SW)\nAny other method or scaling factor is not supported.\n\nSingle input only. (SW)",
+      "notes": "Some cases are converted to pool2d by DownscaleResizeToPooling."
+    },
+    {
+      "operator": "Sigmoid",
+      "count": 87,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Softmax",
+      "count": 2,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    },
+    {
+      "operator": "Split",
+      "count": 11,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": "Converted to multiple slice operators."
+    },
+    {
+      "operator": "Transpose",
+      "count": 4,
+      "onnx-opset-version": "13",
+      "int8": "Y",
+      "bfloat16": "Y",
+      "sima_hw_sw_constraints": null,
+      "notes": null
+    }
+  ],
+  "unsupported": [],
+  "unknown": []
+}

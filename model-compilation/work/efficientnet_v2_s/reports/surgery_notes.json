@@ -1,0 +1,10 @@
+{
+  "model_id": "efficientnet_v2_s",
+  "source": "/workspace/demo-neat/model-compilation/work/efficientnet_v2_s/onnx/efficientnet_v2_s.onnx",
+  "output": "/workspace/demo-neat/model-compilation/work/efficientnet_v2_s/surgery/efficientnet_v2_s.surgery.onnx",
+  "surgery_applied": false,
+  "notes": [
+    "No model-specific surgery rule has been applied yet.",
+    "This pass validates the ONNX and copies it as the surgery-stage candidate."
+  ]
+}
