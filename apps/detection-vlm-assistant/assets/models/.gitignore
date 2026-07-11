@@ -1,0 +1,4 @@
+# Model archives are downloaded/compiled locally; do not commit them.
+*
+!.gitignore
+!.gitkeep

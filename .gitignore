@@ -22,6 +22,7 @@ Makefile
 *.tflite
 *.bin
 *.weights
+*.pptx
 
 # Runtime logs and process files
 *.log
@@ -45,3 +46,6 @@ __pycache__/
 !**/assets/
 !**/assets/models/
 !**/assets/models/.gitkeep
+
+# Debug screenshots emitted by apps/*/tools probes
+apps/*/tools/*.jpg
