@@ -27,17 +27,62 @@ RTSP stream 0 ──> source graph 0 ─┐
 RTSP stream 1 ──> source graph 1 ─┘   (one compiled archive, one Run handle)        └─> annotate ─> video sender 1 ─> udp:PORT+stride
 ```
 
-- Each stream is serviced round-robin: pull one decoded frame, push it into the
-  **shared** model `Run`, pull that stream's result, annotate, and publish. The
-  bbox result always belongs to the frame just pushed, so identity is preserved.
 - The shared model stage needs one input geometry, so both streams must decode at
   the same resolution. Since both default to the same source this holds; if you
   point the two inputs at cameras of different resolutions, run two model stages
   instead (see "Different-resolution inputs" below).
 
-References: `apps/single-stream-yolo-yolo11/main.py` (app conventions),
-`core/tutorials/018_consume_rtsp_stream` (RTSP source fragment),
-`core/tutorials/015_run_multiple_streams` (multi-stream graph / `combine` join).
+### Threading: why this app sustains the full 60 fps source rate
+
+Both streams sustain the **full source rate with zero dropped frames**. The thread topology is
+ported from the proven C++ demo `neat_demo_elxr/demo-yolo-4-stream` (4 streams x 60 fps) — it is not
+a design invented here:
+
+```
+source thread per stream -> input queue [4]
+   -> ONE round-robin PUSHER thread -> shared model Run -> ONE PULLER thread
+   -> result queue [4] -> output worker per stream (box decode + overlay + UDP push)
+```
+
+Two settings do all the work, and both are counter-intuitive:
+
+**1. The shared model Run uses `RunPreset.Reliable` + `OverflowPolicy.Block` + `queue_depth=4`** —
+NOT `Realtime` + `KeepLatest`, which looks like the obvious choice for a live camera and is wrong
+here.
+
+* `Block` keeps push and pull **strictly paired**, so a plain FIFO deque of `(stream, frame)` is
+  enough to route each result back to its own stream. `KeepLatest` silently drops results and
+  destroys that pairing.
+* `Block` + `queue_depth` is also what **pipelines the MLA**: 4 frames stay in flight instead of the
+  accelerator waiting on the host every frame.
+* Frames are dropped at the **source queue** instead (drop-oldest, since a live camera does not
+  wait). Drop at the source, never at the model.
+
+**2. The pusher is ROUND-ROBIN over the per-stream input queues.** That is the only thing providing
+fairness — without it one stream can monopolise the shared model.
+
+Measured against a 1280x720 H.264 @ 59.94 fps source:
+
+| | fps/stream | aggregate | dropped |
+| --- | --- | --- | --- |
+| before (single-threaded round-robin) | 32.5 | 65 | 0 |
+| **now** | **58.6 - 61.2** (3 runs) | **118 - 122** | **0** |
+
+The old loop ran every stage of every stream on one thread and left the MLA idle ~60% of the time
+(only 6.1 of 14.8 ms/frame was the model; the rest was host marshalling, overlay and encode push).
+
+> **Do not "modernise" this into an in-graph `graphs.branch` / `combine` pipeline.** That was tried
+> and rejected on measurement. The official example
+> `apps/examples/object-detection/multi-stream-object-detector` is fast **because it never pulls
+> frames to the host** — it pulls only a small BBOX payload and sends clean video in-graph, letting
+> Insight draw the overlay from `MetadataSender` JSON. The moment you need the overlay **burned into
+> the stream**, you must bring the frame back to the CPU; adding a full-frame `Output` node to the
+> branch (a 1.4 MB NV12 copy per frame) collapsed throughput to **1-3 fps**. Neat's proper answer for
+> in-graph burned-in overlay is `nodes.sima_render()`, which is not wired here yet.
+
+References: `neat_demo_elxr/demo-yolo-4-stream/main.cpp` (the thread topology this app copies),
+`apps/single-stream-yolo-yolo11/main.py` (app conventions),
+`core/tutorials/018_consume_rtsp_stream` (RTSP source fragment).
 
 ## Requirements
 
@@ -112,7 +157,7 @@ Every value is also overridable on the command line (`--rtsp0`, `--rtsp1`,
 ## How To Run (human UX)
 
 On the DevKit, from a real terminal, use the `dk` helper (source the helper once:
-`source /usr/local/bin/devkit.sh 192.168.135.203 sima 22`):
+`source /usr/local/bin/devkit.sh 192.168.2.103 sima 22`):
 
 ```bash
 dk ./main.py --config ./config/default.conf
@@ -127,25 +172,61 @@ dk ./main.py --config ./config/default.conf --frames 30
 ## How To Run (CI / automation fallback)
 
 `dk` needs a TTY and hangs in non-interactive/agent contexts. For CI use
-passwordless ssh (the sima-neat skill's documented fallback). `/workspace` is
-NFS-mounted, so run the same on-disk file:
+passwordless ssh. `/workspace` is NFS-mounted on the DevKit, so ssh runs the very
+same on-disk file — no copying.
+
+Put the timeout on the **board side**: `timeout ... ssh` only kills the local ssh
+client and leaves the remote python running, holding `/dev/rpmsg*` channels, which
+makes the *next* run fail with `neatdecoder ... Input buffer allocation failed`.
 
 ```bash
-timeout 180 ssh -o BatchMode=yes sima@192.168.135.203 \
-  'source $HOME/pyneat/bin/activate; \
-   python /workspace/demo-neat/apps/multi-stream-yolo-yolo11/main.py \
-     --config /workspace/demo-neat/apps/multi-stream-yolo-yolo11/config/default.conf \
-     --frames 30'
+APP=/workspace/demo-neat/apps/multi-stream-yolo-yolo11
+
+ssh sima@192.168.2.103 "cd $APP && timeout -s INT 120 /home/sima/pyneat/bin/python -u main.py \
+    --rtsp0 rtsp://192.168.2.105:8555/stream \
+    --rtsp1 rtsp://192.168.2.105:8555/stream \
+    --udp-host 192.168.2.105 --udp-port-base 5206 \
+    --frames 500 --warmup-frames 80"
 ```
 
-Per-frame log lines look like:
+## Verify It Hits 60 FPS
+
+Progress lines (every 60 frames) prove identity is preserved per output — `stream=`
+and `port=` always travel together:
 
 ```text
-stream=0 port=5206 frame=1 detections=12 visible=7 agg_fps=8.30
-stream=1 port=5208 frame=1 detections=12 visible=7 agg_fps=9.10
+stream=0 port=5206 frame=420 detections=11 visible=11 dropped=0
+stream=1 port=5208 frame=420 detections=10 visible=10 dropped=0
 ```
 
-`stream=` and `port=` prove identity is preserved per output.
+At exit it prints the steady-state summary — this is the number to read:
+
+```text
+=== steady-state ===
+  stream 0: delivered  59.31 fps  (499 frames, 0 dropped)
+  stream 1: delivered  59.91 fps  (504 frames, 0 dropped)
+aggregate: 119.22 fps across 2 streams in 8.4s
+```
+
+**How to read it.** The source is 1280x720 H.264 @ **59.94 fps**, so ~59-60 fps per
+stream with `dropped=0` means the pipeline is keeping up with the camera exactly —
+it is **source-limited, not compute-limited**, which is the goal state. You cannot
+exceed the source rate; if you see a number above it, the measurement window was too
+short (queue drain at the boundary), not real throughput.
+
+Check the source rate first, so you know what you are aiming at:
+
+```bash
+ffprobe -hide_banner -rtsp_transport tcp rtsp://192.168.2.105:8555/stream
+```
+
+`--warmup-frames N` excludes the first N frames per stream (graph build, model load,
+RTSP jitter-buffer fill) from the reported FPS. `--model-queue-depth` sets how many
+frames the shared model Run keeps in flight (default 4).
+
+> Known: the process can abort at **exit** with `malloc(): mismatching next->prev_size`
+> after the summary has printed. Pre-existing (the original single-threaded version did
+> it too) and it does not affect the numbers above, but it is still open.
 
 ## How To See The Output
 
