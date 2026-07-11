@@ -28,3 +28,4 @@ work/**/surgery/
 !**/*.csv
 !**/*.txt
 !**/*.log
+__pycache__/
