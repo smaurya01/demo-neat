@@ -15,5 +15,6 @@ work/
 *.sima
 *.npy
 *.npz
+*.zip
 
 __pycache__/

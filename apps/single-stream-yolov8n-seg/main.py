@@ -39,7 +39,7 @@ PALETTE = [
 
 @dataclass
 class Config:
-    rtsp_url: str = "rtsp://192.168.131.12:8555/stream"
+    rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
     model_path: str = ""
     models_dir: str = ""
     fallback_width: int = 1280
@@ -53,7 +53,7 @@ class Config:
     top_k: int = 100
     num_classes: int = 80
     frames: int = 0
-    udp_host: str = "192.168.131.12"
+    udp_host: str = "<host-ip-that-receives-video>"
     udp_port: int = 0
     udp_port_base: int = 0
     bitrate_kbps: int = 4000

@@ -8,7 +8,7 @@ identity is preserved end to end: each decoded frame is inferenced and annotated
 in place before the next stream is serviced, and every stream owns its own UDP
 output port.
 
-Design notes (all APIs traceable to /workspace/core):
+Design notes (all APIs traceable to https://github.com/sima-neat/core):
 - Per-stream RTSP source graph + video-sender graph, following the three-graph
   shuttle pattern from apps/single-stream-yolo-yolo11/main.py.
 - ONE shared model graph (the "shared YOLO11 model stage"): both streams push
@@ -17,7 +17,7 @@ Design notes (all APIs traceable to /workspace/core):
   just pushed. This is the pragmatic single-process form of the multi-stream
   pattern in core/tutorials/015_run_multiple_streams (combine/ByFrame joins
   streams inside one graph; here we keep per-stream sinks instead of joining).
-- pyneat best practices per /workspace/overall-learning.md: ModelOptions
+- pyneat best practices: ModelOptions
   preprocess presets (COCO_YOLO), BoxDecodeType, NO deprecated
   boxdecode_original_width/height fields (Model.h marks them deprecated;
   box decode reads geometry from preprocess metadata).
@@ -56,8 +56,8 @@ COCO_LABELS = [
 @dataclass
 class Config:
     # Two RTSP inputs. Both default to the same source by design for now.
-    rtsp_url_0: str = "rtsp://192.168.132.129:8555/stream"
-    rtsp_url_1: str = "rtsp://192.168.132.129:8555/stream"
+    rtsp_url_0: str = "rtsp://<rtsp-server-ip>:8555/stream"
+    rtsp_url_1: str = "rtsp://<rtsp-server-ip>:8555/stream"
     model_path: str = ""
     models_dir: str = ""
     model_name: str = "yolo11"  # yolo11 | yolo26n (selects BoxDecodeType)
@@ -72,7 +72,7 @@ class Config:
     top_k: int = 100
     num_classes: int = 80
     frames: int = 0
-    udp_host: str = "192.168.132.129"
+    udp_host: str = "<host-ip-that-receives-video>"
     # Stream i publishes on udp_port_base + i * udp_port_stride.
     udp_port_base: int = 5206
     udp_port_stride: int = 2
@@ -366,7 +366,7 @@ def make_source_options(cfg: Config, url: str, width: int, height: int, fps: int
 
 
 def make_model(cfg: Config):
-    # ModelOptions preprocess presets + BoxDecodeType (overall-learning.md).
+    # ModelOptions preprocess presets + BoxDecodeType.
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
@@ -392,7 +392,7 @@ def make_model(cfg: Config):
     opt.top_k = cfg.top_k
     opt.num_classes = cfg.num_classes
     # NOTE: intentionally NOT setting boxdecode_original_width/height — deprecated
-    # in /workspace/core/include/model/Model.h; geometry comes from preprocess meta.
+    # in https://github.com/sima-neat/core/blob/main/include/model/Model.h; geometry comes from preprocess meta.
     return pyneat.Model(resolve_model_path(cfg), opt)
 
 
@@ -650,7 +650,7 @@ class StageProfile:
 
 # ── the engine ───────────────────────────────────────────────────────────────
 # Thread topology, ported from the proven C++ 4-stream demo
-# (/workspace/neat_demo_elxr/demo-yolo-4-stream/main.cpp), which sustains 4x60 fps:
+# (a C++ 4-stream reference implementation) which sustains 4x60 fps:
 #
 #   stream i  RTSP -> source thread i -> input queue [cap 4]
 #                                            |

@@ -23,7 +23,7 @@ Split validation (see README):
     the exact prompt that WOULD be sent, without touching the VLM. The owner runs the
     real VLM manually.
 
-APIs traceable to /workspace/core and the sibling apps:
+APIs traceable to https://github.com/sima-neat/core and the sibling apps:
   * Detector: adapted from apps/examples/genai/detection-to-vlm-assistant/src/python/main.py
     and apps/multi-stream-yolo-yolo11/main.py (Agent A, live-validated on this exact
     compiled yolo11n archive).
@@ -69,7 +69,7 @@ COCO_LABELS = [
 class Config:
     # --- input ---
     source: str = "rtsp"                # rtsp | image
-    rtsp_url: str = "rtsp://192.168.132.129:8555/stream"
+    rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
     image_path: str = ""               # file, directory, or glob (source=image)
     rtsp_transport_tcp: bool = True
     fallback_width: int = 1280

@@ -49,3 +49,6 @@ __pycache__/
 
 # Debug screenshots emitted by apps/*/tools probes
 apps/*/tools/*.jpg
+
+# Generated benchmark reports
+apps/benchmark/output/*.json

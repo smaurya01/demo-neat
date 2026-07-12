@@ -52,7 +52,6 @@ import time
 os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
 
 APP_DIR = Path(__file__).resolve().parent.parent
-WORK = "/workspace/demo-neat/model-compilation/work"
 
 # Read the archive map straight from the app, so the probe can never measure a
 # DIFFERENT model than the pipeline actually deploys. (It did, once: the probe
@@ -605,7 +604,7 @@ def main() -> int:
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=3,
                     help="iterations excluded from the timing means (graph/model warmup)")
-    ap.add_argument("--rtsp", default="rtsp://192.168.2.105:8555/stream")
+    ap.add_argument("--rtsp", default="rtsp://<rtsp-server-ip>:8555/stream")
     ap.add_argument("--image", help="decode a still image instead of RTSP")
     ap.add_argument("--synthetic", action="store_true", help="use a synthetic frame (no source)")
     ap.add_argument("--save-out", help="write an annotated JPEG of the last frame")

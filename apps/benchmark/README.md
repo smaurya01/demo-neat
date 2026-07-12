@@ -15,15 +15,15 @@ latency.
 - Runtime API: `pyneat.Model.benchmark()`
 - Input: synthetic model input
 - Output: console metrics and JSON benchmark reports
-- Models: `./assets/*.tar.gz`
+- Models: `./assets/models/*.tar.gz` (git-ignored)
 - Reports: `./output/*_benchmark.json`
 
 Current asset models:
 
 ```text
-./assets/yolo_v8n_mpk.tar.gz
-./assets/yolo_v8m_mpk.tar.gz
-./assets/yolo_v8n_seg_mpk.tar.gz
+./assets/models/yolo_v8n_mpk.tar.gz
+./assets/models/yolo_v8m_mpk.tar.gz
+./assets/models/yolo_v8n_seg_mpk.tar.gz
 ```
 
 ## Requirements
@@ -68,26 +68,44 @@ that was moved or deleted. Run `cd /path/to/demo-neat/apps/benchmark` again and 
 Expected model files:
 
 ```text
-./assets/yolo_v8n_mpk.tar.gz
-./assets/yolo_v8m_mpk.tar.gz
-./assets/yolo_v8n_seg_mpk.tar.gz
+./assets/models/yolo_v8n_mpk.tar.gz
+./assets/models/yolo_v8m_mpk.tar.gz
+./assets/models/yolo_v8n_seg_mpk.tar.gz
 ```
 
 If your DevKit uses a different platform version, replace `2.1.2` with that release version.
 
 ## Model Assets
 
-Expected model directory:
+Expected model directory (git-ignored — you download or build the archives):
 
 ```text
-./assets
+./assets/models/
 ```
 
 The benchmark command accepts any compiled model package:
 
 ```bash
---model ./assets/<model>.tar.gz
+--model ./assets/models/<model>.tar.gz
 ```
+
+## Configure
+
+`./config/default.yaml` supplies the defaults when you omit the CLI flags:
+
+```yaml
+model:
+  path: ./assets/models/yolo_v8n_mpk.tar.gz
+benchmark:
+  frames: 1000
+output:
+  report_json: ./output/yolo_v8n_benchmark.json
+```
+
+Every value is overridable on the command line (`--model`, `--frames`, `--output-json`), and the
+"How To Run" commands below do exactly that.
+
+Reports are written to `./output/` (git-ignored).
 
 ## How To Run
 
@@ -95,7 +113,7 @@ Run YOLOv8n:
 
 ```bash
 dk ./main.py \
-  --model ./assets/yolo_v8n_mpk.tar.gz \
+  --model ./assets/models/yolo_v8n_mpk.tar.gz \
   --frames 1000 \
   --output-json ./output/yolo_v8n_benchmark.json
 ```
@@ -104,7 +122,7 @@ Run YOLOv8m:
 
 ```bash
 dk ./main.py \
-  --model ./assets/yolo_v8m_mpk.tar.gz \
+  --model ./assets/models/yolo_v8m_mpk.tar.gz \
   --frames 1000 \
   --output-json ./output/yolo_v8m_benchmark.json
 ```
@@ -113,7 +131,7 @@ Run YOLOv8n segmentation:
 
 ```bash
 dk ./main.py \
-  --model ./assets/yolo_v8n_seg_mpk.tar.gz \
+  --model ./assets/models/yolo_v8n_seg_mpk.tar.gz \
   --frames 1000 \
   --output-json ./output/yolo_v8n_seg_benchmark.json
 ```

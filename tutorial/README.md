@@ -99,11 +99,15 @@ cd ../..
 
 If your DevKit uses a different platform version, replace `2.1.2` with that release.
 
-> **YOLO11 is not in the model zoo.** `sima-cli modelzoo ... get yolo_11n` does **not** work — no
-> YOLO11 variant is published there. YOLO11 archives are produced by the graph-surgery flow in
-> [`model-compilation/`](../model-compilation/README.md); see
-> [`REPLICATION.md`](../model-compilation/REPLICATION.md) for the exact commands. (The zoo does carry
-> a large catalog of *other* models — always check it before compiling something from scratch.)
+> **YOLO11 is in the model zoo** — `sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n`
+> works, as do `yolo_11s/m/l/x`. No notebook here needs it, but the YOLO11 apps do; see
+> [`single-stream-yolo-yolo11`](../apps/single-stream-yolo-yolo11/README.md). A zoo YOLO11 archive
+> decodes with `BoxDecodeType.YoloV8` (raw 64-channel DFL bbox heads), which is why `II-medium/01`
+> describes that family as YOLOv8/YOLO11-style. Compile YOLO11 yourself only for a variant the zoo
+> does not publish — the graph-surgery flow in
+> [`model-compilation/`](../model-compilation/README.md) produces 4-channel l/t/r/b heads instead,
+> which need `BoxDecodeType.YoloV26`. The zoo carries a large catalog of models — always check it
+> before compiling something from scratch.
 
 ## References
 

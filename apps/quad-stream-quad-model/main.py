@@ -13,7 +13,7 @@ Task routing (config/default.conf, per stream slot 0..3):
   * pose         -> yolo26s-pose  (raw heads -> host decode)
   * yolox        -> yolox_s        (raw heads -> host decode)
 
-Design provenance (every API traceable to /workspace/core):
+Design provenance (every API traceable to https://github.com/sima-neat/core):
   * three-graph shuttle (source / model / video) — apps/multi-stream-yolo-yolo11/main.py
   * NV12 RTSP source + video_sender groups — pyneat.groups (core/include/neat/node_groups.h)
   * ModelOptions preprocess presets + BoxDecodeType — core/include/model/Model.h,
@@ -21,7 +21,7 @@ Design provenance (every API traceable to /workspace/core):
   * push/pull named endpoints + RunOptions(queue_depth/overflow/preset) — core/include/pipeline/Run.h
   * host task decode is required because the surgery archives expose RAW per-scale
     heads (Neat's built-in fused decode covers only the detection family) — see
-    src/decoders.py and model-compilation/work/<model>/reports/SURGERY.md.
+    src/decoders.py and ../../model-compilation/compile/_surgery_ultralytics.py.
 """
 from __future__ import annotations
 
@@ -39,21 +39,27 @@ pyneat = None
 dec = None  # src.decoders, imported after runtime deps
 
 APP_DIR = Path(__file__).resolve().parent
-WORK = "/workspace/demo-neat/model-compilation/work"
+# Archives live in this app's own assets/models/ (git-ignored), so the app is
+# self-contained and works from any clone location. Build them with the
+# graph-surgery flow in ../../model-compilation and copy them here — see README.
+MODELS_DIR = APP_DIR / "assets" / "models"
 
-# Default per-task compiled archives (referenced in place; not copied/committed).
+# Default per-task compiled archives. These are the SAME paths config/default.conf
+# sets, so the app behaves identically with or without a config file.
+#
+# NOTE on `pose`: that archive must be compiled with the keypoint head zero-padded
+# 51 -> 64 channels (`pad_channels_to: 64` in
+# ../../model-compilation/compile/_surgery_ultralytics.py). The padding is a
+# load-bearing PERFORMANCE fix, not cosmetics: with the natural 51 channels the same
+# model runs at 1782 ms/frame (0.6 fps), and at 8.5 ms/frame (117 fps) with 64 — a
+# 209x speedup for identical weights. Unpadded, pose holds the shared MLA so long
+# that the other three streams back up and fail their model push, and the quad
+# cannot run at all. src/decoders.py slices channels 51..63 (the padding) back off.
 DEFAULT_ARCHIVES = {
-    "detection": f"{WORK}/yolo11s/compile_int8/yolo11s.compile_ready/yolo11s.compile_ready_mpk.tar.gz",
-    "segmentation": f"{WORK}/yolo11s-seg/compile_int8/yolo11s-seg.compile_ready/yolo11s-seg.compile_ready_mpk.tar.gz",
-    # This archive is compiled with the keypoint head zero-padded 51 -> 64 channels
-    # (`pad_channels_to: 64` in compile/_surgery_ultralytics.py). That padding is a
-    # load-bearing PERFORMANCE fix, not cosmetics: with the natural 51 channels the
-    # same model runs at 1782 ms/frame (0.6 fps), and at 8.5 ms/frame (117 fps) with
-    # 64 — a 209x speedup for identical weights. Unpadded, pose holds the shared MLA
-    # so long that the other three streams back up and fail their model push, and
-    # the quad cannot run at all. src/decoders.py slices channels 51..63 back off.
-    "pose": f"{WORK}/yolo26s-pose/compile_int8/yolo26s-pose.compile_ready/yolo26s-pose.compile_ready_mpk.tar.gz",
-    "yolox": f"{WORK}/yolox_s/compile_int8/yolox_s.compile_ready/yolox_s.compile_ready_mpk.tar.gz",
+    "detection":    str(MODELS_DIR / "yolo11s.compile_ready_mpk.tar.gz"),
+    "segmentation": str(MODELS_DIR / "yolo11s-seg.compile_ready_mpk.tar.gz"),
+    "pose":         str(MODELS_DIR / "yolo26s-pose.compile_ready_mpk.tar.gz"),
+    "yolox":        str(MODELS_DIR / "yolox_s.compile_ready_mpk.tar.gz"),
 }
 DEFAULT_TASKS = ["detection", "segmentation", "pose", "yolox"]
 
@@ -69,8 +75,8 @@ class StreamSpec:
 
 @dataclass
 class Config:
-    rtsp_default: str = "rtsp://192.168.132.129:8555/stream"
-    udp_host: str = "192.168.132.129"
+    rtsp_default: str = "rtsp://<rtsp-server-ip>:8555/stream"
+    udp_host: str = "<host-ip-that-receives-video>"
     udp_port_base: int = 5206
     udp_port_stride: int = 2
     model_width: int = 640

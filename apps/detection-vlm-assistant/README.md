@@ -75,7 +75,7 @@ cd /path/to/demo-neat/apps/detection-vlm-assistant
 yourself, follow `../../model-compilation/README.md`; the compiled archive is:
 
 ```text
-../../model-compilation/work/yolo11n/t1_verify/compile_int8/yolo11n.compile_ready/yolo11n.compile_ready_mpk.tar.gz
+../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz
 ```
 
 A `compile_ready` yolo11n surgery exposes the YoloV26 grouped-tensor head, so this archive
@@ -135,7 +135,7 @@ dk ./main.py --config ./config/default.conf --no-vlm --frames 40
 Still-image dry-run over a folder:
 
 ```bash
-dk ./main.py --source image --image /workspace/demo-neat/model-compilation/assets/yolo_calibration --no-vlm
+dk ./main.py --source image --image ../../model-compilation/assets/inference --no-vlm
 ```
 
 Full pipeline with the real VLM (owner runs this after confirming the VLM dir):
@@ -153,7 +153,7 @@ on-disk file:
 ```bash
 timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
   'source $HOME/pyneat/bin/activate; \
-   cd /workspace/demo-neat/apps/detection-vlm-assistant; \
+   cd apps/detection-vlm-assistant; \
    python main.py --no-vlm --frames 40'
 ```
 

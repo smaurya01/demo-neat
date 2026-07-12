@@ -18,9 +18,9 @@ same object does not re-fire every frame, (3) rate-limit, and (4) absorb latency
 bounded queue.
 
 VLM API verified against:
-  * /workspace/core/include/genai/VisionLanguageModel.h
-  * /workspace/core/include/genai/GenAITypes.h  (GenerationRequest / GenerationResult)
-  * /workspace/core/python/src/module.cpp        (pyneat.genai bindings)
+  * https://github.com/sima-neat/core/blob/main/include/genai/VisionLanguageModel.h
+  * https://github.com/sima-neat/core/blob/main/include/genai/GenAITypes.h  (GenerationRequest / GenerationResult)
+  * https://github.com/sima-neat/core/blob/main/python/src/module.cpp        (pyneat.genai bindings)
   * llima/02-run-llm-vlm/02_run_vlm.ipynb         (house VLM usage)
 """
 

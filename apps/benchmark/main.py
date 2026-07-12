@@ -11,13 +11,23 @@ from pathlib import Path
 
 
 def load_config(path: Path) -> dict:
-    import yaml
+    """Parse the house `key=value` config format.
 
-    with path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
-    if not isinstance(payload, dict):
-        raise ValueError(f"config must be a YAML mapping: {path}")
-    return payload
+    Deliberately dependency-free. This used to be YAML, which was a latent bug: the
+    DevKit's python has no PyYAML, so `import yaml` raised there and the app could
+    not read a config on the very board it is meant to run on. Every other app in
+    this repo uses the same key=value `.conf`, so this is also the consistent choice.
+    """
+    config: dict = {}
+    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if "=" not in line:
+            raise ValueError(f"{path}:{line_no}: expected key=value")
+        key, value = (part.strip() for part in line.split("=", 1))
+        config[key] = value
+    return config
 
 
 def spec_strings(model, method_name: str) -> list[str]:
@@ -51,8 +61,18 @@ def write_report(path: Path, model_path: Path, frames: int, model, report) -> No
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+APP_DIR = Path(__file__).resolve().parent
+
+
+def resolve_app_path(value: str) -> Path:
+    """Config paths are relative to THIS app folder, so the app works from any clone."""
+    path = Path(str(value))
+    return path if path.is_absolute() else APP_DIR / path
+
+
 def main() -> int:
-    default_config = Path(__file__).resolve().parents[1] / "common" / "config.yaml"
+    # Config and outputs live inside this app, so it works from any clone location.
+    default_config = APP_DIR / "config" / "default.conf"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=default_config)
     parser.add_argument("--model", type=Path, help="compiled model package to benchmark")
@@ -71,15 +91,17 @@ def main() -> int:
         model_path = (
             args.model
             if args.model is not None
-            else Path(str(config.get("model", {}).get("path", "")))
+            else resolve_app_path(config.get("model_path", ""))
         )
         frames = (
             args.frames
             if args.frames is not None
-            else int(config.get("benchmark", {}).get("frames", 1000))
+            else int(config.get("frames", 1000))
         )
-        report_path = args.output_json if args.output_json is not None else Path(
-            str(config.get("output", {}).get("report_json", "sandbox/model-benchmark/report.json"))
+        report_path = (
+            args.output_json
+            if args.output_json is not None
+            else resolve_app_path(config.get("output_json", "./output/report.json"))
         )
     except Exception as exc:
         print(f"config error: {exc}", file=sys.stderr)
