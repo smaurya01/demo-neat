@@ -3,7 +3,7 @@
 WHY THIS FILE EXISTS — the load-bearing design lesson of this app:
 
 The four compiled archives all expose *raw per-scale head tensors* (the surgery
-in model-compilation/work/<model>/reports/SURGERY.md deliberately cuts the
+in ../../model-compilation/compile/_surgery_*.py deliberately cuts the
 data-dependent decode/NMS tail so it stays MLA-clean, A65:0). Neat's built-in
 ``BoxDecodeType`` gives a fused on-device decode for the plain *detection*
 family, and that is what stream 0 (yolo11s) uses. For **segmentation, pose and

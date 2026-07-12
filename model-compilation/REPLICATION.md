@@ -1,5 +1,17 @@
 # Replication — compile every model, one at a time
 
+> ### Don't want to compile? Download the prebuilt archives.
+>
+> Every model below has already been compiled, and the artifacts — **original weights + ONNX export +
+> the compiled SiMa `.tar.gz`** — are published as a download. Grab those, drop them into the app's
+> `assets/models/`, and skip this whole document.
+>
+> **→ See [`assets/models/README.md`](assets/models/README.md)** for the download link, the manifest,
+> and exactly which archive each app expects (including the two that need renaming).
+>
+> Compile from source when you want to change a model, retarget a different size, or understand the
+> chain. Otherwise, download.
+
 Copy-paste blocks. One model per section. Nothing is downloaded by hand — **step 1 fetches the
 weights for you**.
 
@@ -8,11 +20,24 @@ Run steps 1–3 on the **host** (SDK container). Run step 4's board test on the 
 
 > **Compile ONE model at a time.** The compiler is memory-hungry — concurrent compiles OOM.
 
+## Compile everything unattended
+
+`compile_all.sh` runs all ten, strictly serially, and collects each model's artifacts into
+`assets/models/<id>/`:
+
+```bash
+source /sdk-extensions/model-compiler/bin/activate
+cd model-compilation
+./compile_all.sh                 # ~2 h; progress in compile_all.log
+```
+
+It is the same four steps per model as the sections below — just scripted, and safe to leave running.
+
 Common setup, once per shell:
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 ```
 
 Board test, same pattern for every model (replace `<ID>`):
@@ -20,24 +45,29 @@ Board test, same pattern for every model (replace `<ID>`):
 ```bash
 ssh sima@<devkit-ip>
 source ~/pyneat/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 python compile/test_model.py --model-id <ID>
 ```
 
-| # | Model | Compile time |
-| --- | --- | --- |
-| 1 | `resnet50` | 2 min |
-| 2 | `convnext_tiny` | 4 min |
-| 3 | `densenet169` | 10 min |
-| 4 | `efficientnet_v2_s` | 10 min |
-| 5 | `yolo11n` | 6 min |
-| 6 | `yolo11s` | 5 min |
-| 7 | `yolo26n` | 7 min |
-| 8 | `yolo11s-seg` | 6 min |
-| 9 | `yolo26s-pose` | 17 min |
-| 10 | `yolox_s` | 7 min |
+Measured **end-to-end** wall time per model — all four steps, i.e. download + export + surgery +
+INT8 compile + validate. These are the real numbers from a full `compile_all.sh` run on the SDK
+container, not compile-only estimates:
 
-**Total ≈ 80 min** of compiling, plus a few minutes of downloads.
+| # | Model | End-to-end |
+| --- | --- | --- |
+| 1 | `resnet50` | 4m32s |
+| 2 | `convnext_tiny` | 9m59s |
+| 3 | `densenet169` | 19m27s |
+| 4 | `efficientnet_v2_s` | 19m43s |
+| 5 | `yolo11n` | 8m32s |
+| 6 | `yolo11s` | 9m48s |
+| 7 | `yolo26n` | 10m05s |
+| 8 | `yolo11s-seg` | 12m02s |
+| 9 | `yolo26s-pose` | 12m16s |
+| 10 | `yolox_s` | 16m02s |
+
+**Total ≈ 2 h**, serial. The compile step dominates; the download and export steps are a minute or two
+each. Times scale with host CPU — treat them as ratios, not promises.
 
 ---
 
@@ -45,11 +75,11 @@ python compile/test_model.py --model-id <ID>
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id resnet50      # downloads torchvision weights -> 98 MB ONNX
 python compile/graph_surgery.py   --model-id resnet50      # prints "kind=none ... skipping"
-python compile/compiler.py        --model-id resnet50      # ~2 min
+python compile/compiler.py        --model-id resnet50   # the long step; whole block ≈ 4m32s
 python compile/test_model.py      --model-id resnet50 --validate-only
 ```
 
@@ -73,11 +103,11 @@ python compile/test_model.py      --model-id resnet50 --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id convnext_tiny   # -> 110 MB ONNX
 python compile/graph_surgery.py   --model-id convnext_tiny   # skipped (surgery: none)
-python compile/compiler.py        --model-id convnext_tiny   # ~4 min
+python compile/compiler.py        --model-id convnext_tiny   # the long step; whole block ≈ 9m59s
 python compile/test_model.py      --model-id convnext_tiny --validate-only
 ```
 
@@ -101,11 +131,11 @@ python compile/test_model.py      --model-id convnext_tiny --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id densenet169   # -> 55 MB ONNX
 python compile/graph_surgery.py   --model-id densenet169   # skipped
-python compile/compiler.py        --model-id densenet169   # ~10 min
+python compile/compiler.py        --model-id densenet169   # the long step; whole block ≈ 19m27s
 python compile/test_model.py      --model-id densenet169 --validate-only
 ```
 
@@ -128,11 +158,11 @@ python compile/test_model.py      --model-id densenet169 --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id efficientnet_v2_s   # -> 82 MB ONNX
 python compile/graph_surgery.py   --model-id efficientnet_v2_s   # skipped
-python compile/compiler.py        --model-id efficientnet_v2_s   # ~10 min
+python compile/compiler.py        --model-id efficientnet_v2_s   # the long step; whole block ≈ 19m43s
 python compile/test_model.py      --model-id efficientnet_v2_s --validate-only
 ```
 
@@ -155,11 +185,11 @@ python compile/test_model.py      --model-id efficientnet_v2_s --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolo11n   # downloads yolo11n.pt -> 11 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11n   # cuts the decode tail, exposes 6 raw heads
-python compile/compiler.py        --model-id yolo11n   # ~6 min
+python compile/compiler.py        --model-id yolo11n   # the long step; whole block ≈ 8m32s
 python compile/test_model.py      --model-id yolo11n --validate-only
 ```
 
@@ -186,11 +216,11 @@ bbox = 4 ch × 3 scales · class = 80 ch × 3 scales.
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolo11s   # -> 37 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11s
-python compile/compiler.py        --model-id yolo11s   # ~5 min
+python compile/compiler.py        --model-id yolo11s   # the long step; whole block ≈ 9m48s
 python compile/test_model.py      --model-id yolo11s --validate-only
 ```
 
@@ -214,11 +244,11 @@ python compile/test_model.py      --model-id yolo11s --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolo26n   # -> 9.5 MB ONNX
 python compile/graph_surgery.py   --model-id yolo26n   # one2one_cv* heads; DFL step skipped
-python compile/compiler.py        --model-id yolo26n   # ~7 min
+python compile/compiler.py        --model-id yolo26n   # the long step; whole block ≈ 10m05s
 python compile/test_model.py      --model-id yolo26n --validate-only
 ```
 
@@ -244,11 +274,11 @@ YOLO26's heads are already 4-channel, so the DFL reconstruction that YOLO11 need
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolo11s-seg   # -> 39 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11s-seg   # + mask-coeff heads and the proto head
-python compile/compiler.py        --model-id yolo11s-seg   # ~6 min
+python compile/compiler.py        --model-id yolo11s-seg   # the long step; whole block ≈ 12m02s
 python compile/test_model.py      --model-id yolo11s-seg --validate-only
 ```
 
@@ -274,11 +304,11 @@ python compile/test_model.py      --model-id yolo11s-seg --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolo26s-pose   # -> 40 MB ONNX
 python compile/graph_surgery.py   --model-id yolo26s-pose   # + keypoint heads, PADDED 51 -> 64 ch
-python compile/compiler.py        --model-id yolo26s-pose   # ~17 min (the slowest)
+python compile/compiler.py        --model-id yolo26s-pose   # the long step; whole block ≈ 12m16s
 python compile/test_model.py      --model-id yolo26s-pose --validate-only
 ```
 
@@ -312,11 +342,11 @@ python compile/test_model.py      --model-id yolo26s-pose --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --model-id yolox_s   # downloads Megvii's official ONNX (no torch)
 python compile/graph_surgery.py   --model-id yolox_s   # decoupled anchor-free head -> 3 raw heads
-python compile/compiler.py        --model-id yolox_s   # ~7 min
+python compile/compiler.py        --model-id yolox_s   # the long step; whole block ≈ 16m02s
 python compile/test_model.py      --model-id yolox_s --validate-only
 ```
 
@@ -340,11 +370,11 @@ python compile/test_model.py      --model-id yolox_s --validate-only
 
 ```bash
 source /sdk-extensions/model-compiler/bin/activate
-cd /workspace/demo-neat/model-compilation
+cd model-compilation
 
 python compile/convert_to_onnx.py --all
 python compile/graph_surgery.py   --all
-python compile/compiler.py        --all       # serial, ~80 min
+python compile/compiler.py        --all       # serial, ~2 h
 python compile/test_model.py      --all --validate-only
 ```
 

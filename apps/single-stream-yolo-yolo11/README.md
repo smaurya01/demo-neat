@@ -27,22 +27,30 @@ cd /path/to/demo-neat/apps/single-stream-yolo-yolo11
 
 ## Model Download Command
 
-Run this in the SDK shell:
+YOLO11 is published in the SiMa model zoo, so just download it:
 
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
 sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+cd ../..
 ```
 
-Expected model path:
+The zoo asset is named `yolo_11n_mpk.tar.gz`, which is exactly the path
+`./config/default.conf` already expects — no config edit needed.
+
+Expected model path (`assets/models/` is git-ignored):
 
 ```text
 ./assets/models/yolo_11n_mpk.tar.gz
 ```
 
-If you use a different YOLO11 size, update `model_path` in `./config/default.conf` to the
-downloaded archive name.
+The zoo publishes the whole detection family — `yolo_11n`, `yolo_11s`, `yolo_11m`, `yolo_11l` and
+`yolo_11x` (plus `yolo_11n_seg` and friends for segmentation). To run a different size, `get` that
+name instead and point `model_path` in `./config/default.conf` at the archive it downloads.
+
+You only need to compile YOLO11 yourself for a variant the zoo does not publish. See
+[Appendix: Building YOLO11 Yourself](#appendix-building-yolo11-yourself).
 
 ## Configure
 
@@ -158,3 +166,48 @@ gst-launch-1.0 -v udpsrc port=5206 caps="application/x-rtp,media=video,encoding-
 ```
 
 Expected output: live video with YOLO11 detection boxes.
+
+---
+
+# Appendix
+
+## Appendix: Building YOLO11 Yourself
+
+You do **not** need this for `yolo11n` — the zoo publishes it (see
+[Model Download Command](#model-download-command)). Use this only for a variant the zoo does not
+ship, or to change the surgery.
+
+Build it with the graph-surgery flow in [`model-compilation/`](../../model-compilation/README.md):
+
+```bash
+source /sdk-extensions/model-compiler/bin/activate
+cd ../../model-compilation
+
+python compile/convert_to_onnx.py --model-id yolo11n
+python compile/graph_surgery.py   --model-id yolo11n
+python compile/compiler.py        --model-id yolo11n
+```
+
+See [`REPLICATION.md`](../../model-compilation/REPLICATION.md) for the exact commands and the
+expected result. The archive lands under `model-compilation/work/yolo11n/compile_int8/`. Copy it in:
+
+```bash
+cd ../apps/single-stream-yolo-yolo11
+mkdir -p ./assets/models
+cp ../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz \
+   ./assets/models/yolo_11n_mpk.tar.gz
+```
+
+**A self-compiled archive decodes differently from the zoo one.** The two expose different detection
+heads, and the decode family must match:
+
+| archive | bbox head | decode family |
+| --- | --- | --- |
+| zoo `yolo_11n` | 3x 64-channel raw DFL | `BoxDecodeType.YoloV8` |
+| self-compiled `yolo11n` | 3x 4-channel l/t/r/b | `BoxDecodeType.YoloV26` |
+
+`model_spec()` in [`main.py`](main.py) reports `yolo11`, which selects `YoloV8` — correct for the
+**zoo** archive. If you drop in a self-compiled archive, its graph surgery folds the DFL into the
+model and emits 4-channel distance heads instead, so switch the decode family to
+`pyneat.BoxDecodeType.YoloV26` in `make_model()`. Getting this wrong still runs and still draws
+boxes; they are just decoded from the wrong channels.

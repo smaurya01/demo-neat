@@ -344,7 +344,7 @@ On Windows, the recommended setup is a **direct USB/Ethernet connection** betwee
 7. In **Home networking connection**, select the **USB/Ethernet** adapter going to the DevKit.
 8. **Apply** (reconnect the adapter if needed).
 
-The shared adapter is typically assigned an address on the `192.168.137.0/24` subnet; the DevKit gets an address in that range.
+The shared adapter is typically assigned an address on the `<host-ip>/24` subnet; the DevKit gets an address in that range.
 
 ### 9.2 Allow NFS traffic through the Windows firewall
 
@@ -368,7 +368,7 @@ The `sima-cli neat install sdk@release-2.1` command in [Step 8](#8-install-the-n
 
 ```text
 Do you want to pair this SDK with a DevKit now? [y/N]: y
-Enter DevKit IP address: 192.168.135.156
+Enter DevKit IP address: <host-ip>
 ```
 
 Run the commands below directly only when you need to re-run setup later (for example, to re-pair or restart the container). From the Ubuntu terminal, if you know the DevKit IP:

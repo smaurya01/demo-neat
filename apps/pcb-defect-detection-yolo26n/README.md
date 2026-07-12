@@ -99,6 +99,24 @@ After the run, annotated images are written to:
 
 ![Sample Detection](./output/pcb_04_spurious_copper_detected.jpg)
 
+## How To See The Output
+
+This app is **image-in / image-out** — it does not publish a video stream. It reads every image in
+`input_dir` and writes an annotated copy to `output_dir`:
+
+```text
+./images/pcb_01_missing_hole.jpg   ->   ./output/pcb_01_missing_hole_detected.jpg
+```
+
+The suffix comes from `output_suffix` in `./config/default.conf` (default `_detected`).
+
+```bash
+ls ./output/
+```
+
+Open any of them to see the detected defects boxed and labelled. Five sample PCB images ship in
+`./images/`, so the app is runnable as soon as you have the model pack.
+
 ## Compile Model Pack
 
 Use this section only if you want to rebuild the BF16

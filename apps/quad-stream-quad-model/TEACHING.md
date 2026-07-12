@@ -2,7 +2,7 @@
 
 This app is a teaching vehicle for the hard parts of a real multi-stream,
 multi-model Neat pipeline. Every API below is cited to its source in
-`/workspace/core`. Nothing here is invented — where an option does not exist, we
+`https://github.com/sima-neat/core`. Nothing here is invented — where an option does not exist, we
 say so.
 
 ---
@@ -64,7 +64,7 @@ frame; a larger stride or a different policy lets you sub-sample expensive sinks
 This is the most valuable insight in the app.
 
 The four `compile_ready` archives were surgered (see
-`model-compilation/work/<model>/reports/SURGERY.md`) to expose **raw per-scale
+`model-compilation/compile/_surgery_*.py`) to expose **raw per-scale
 head tensors** and to *cut* the data-dependent decode/NMS tail. That is what
 keeps them 100% on the MLA: `A65:0`, one `.elf`, zero `.so`. The MLA hands you,
 per head, a **calibrated FP32 NHWC tensor** — detessellation and dequantization
@@ -117,7 +117,7 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 
 * **Colour format follows the source, not the model.** RTSP-decoded frames are
   **NV12**; OpenCV frames are BGR. Using the wrong one is a silent correctness
-  bug (`overall-learning.md` → "pyneat Detection Routes").
+  bug: the image/BGR route needs an explicit letterbox resize.
 * **Decode intent** (detection only):
   `opt.decode_type = pyneat.BoxDecodeType.YoloV26` — a `compile_ready` YOLO11/26
   archive decodes with **YoloV26**, not YoloV8 (YoloV8 rejects the grouped head

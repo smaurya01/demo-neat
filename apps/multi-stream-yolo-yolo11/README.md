@@ -30,14 +30,30 @@ cd /path/to/demo-neat/apps/multi-stream-yolo-yolo11
 
 ## Model Download Command
 
-There is no prebuilt YOLO11n in the model zoo — you compile it yourself. See
-[Appendix: Model Build](#appendix-model-build).
+YOLO11 is published in the SiMa model zoo, so just download it:
+
+```bash
+mkdir -p ./assets/models
+cd ./assets/models
+sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+cd ../..
+```
+
+The zoo asset is named `yolo_11n_mpk.tar.gz`, which is exactly the path `./config/default.conf`
+already expects — no config edit needed.
 
 Expected model path:
 
 ```text
 ./assets/models/yolo_11n_mpk.tar.gz
 ```
+
+The zoo publishes the whole detection family (`yolo_11n`, `yolo_11s`, `yolo_11m`, `yolo_11l`,
+`yolo_11x`). To run a different size, `get` that name and point `model_path` at it. Both streams
+share this one archive.
+
+Only compile YOLO11 yourself for a variant the zoo does not publish — and note that a self-compiled
+archive needs a different `model_name`. See [Appendix: Model Build](#appendix-model-build).
 
 ## Configure
 
@@ -47,10 +63,15 @@ Edit `./config/default.conf` before running. At minimum, set:
 rtsp_url_0=rtsp://<rtsp-server-ip>:8555/stream
 rtsp_url_1=rtsp://<rtsp-server-ip>:8555/stream
 model_path=./assets/models/yolo_11n_mpk.tar.gz
+model_name=yolov8
 udp_host=<host-ip-that-receives-video>
 udp_port_base=5206
 udp_port_stride=2
 ```
+
+Leave `model_name=yolov8` alone when running the zoo archive — despite the name, it is the decode
+family, and it is the right one for zoo YOLO11. See `model_name` under
+[Config Parameters](#config-parameters).
 
 With those defaults stream 0 publishes on `5206` and stream 1 on `5208`.
 
@@ -71,7 +92,11 @@ them to distinct cameras when you have them.
 
 `model_path`: Shared model archive loaded by the Neat model stage.
 
-`model_name`: Decode family. `yolo11` / `yolo26n` select `BoxDecodeType.YoloV26`.
+`model_name`: Decode family, chosen by the shape of the archive's detection head — **not** by the
+model's version number. `yolov8` selects `BoxDecodeType.YoloV8` (raw 64-channel DFL bbox heads),
+which is what the zoo `yolo_11n` archive ships, so it is the default. `yolo11` / `yolo26n` select
+`BoxDecodeType.YoloV26` (4-channel l/t/r/b distance heads), which is only correct for a
+self-compiled archive. Setting this wrong still runs, but decodes boxes from the wrong channels.
 
 `model_width`: Model input width used by Neat preprocessing.
 
@@ -172,10 +197,9 @@ banner burned into the top-left, confirming per-stream identity.
 
 ## Appendix: Model Build
 
-> **There is no prebuilt YOLO11n in the model zoo.** The SDK 2.1.2 Modalix zoo exposes only
-> `yolo_v8n`, `yolo_v8n_seg` and `open_pose` — no yolo11 variant. (The zoo metadata URL also
-> 302-redirects to `auth.sima.ai`, so it cannot be listed anonymously.) A
-> `sima-cli modelzoo ... get yolo_11n` command will **not** give you this model.
+You do **not** need this for `yolo11n` — the SDK 2.1.2 Modalix zoo publishes `yolo_11n` (and
+`yolo_11s/m/l/x`), so use [Model Download Command](#model-download-command). Compile only for a
+variant the zoo does not ship, or to change the surgery.
 
 Compile it with the graph-surgery flow. See `../../model-compilation/README.md` for the full
 walkthrough. The compiled archive lands at:
@@ -186,6 +210,13 @@ walkthrough. The compiled archive lands at:
 
 Copy or symlink it to `./assets/models/yolo_11n_mpk.tar.gz`, or point `model_path` at it directly.
 `./assets/models/` is git-ignored.
+
+**Then set `model_name=yolo11`.** A self-compiled archive is not interchangeable with the zoo one:
+the surgery folds the DFL into the graph and exposes 3x 4-channel l/t/r/b distance heads
+(`BoxDecodeType.YoloV26`), whereas the zoo archive keeps 3x 64-channel raw DFL heads
+(`BoxDecodeType.YoloV8`, the `model_name=yolov8` default). The class heads are 80-channel in both.
+Leaving `model_name=yolov8` on a self-compiled archive still runs, but decodes boxes from the wrong
+channels.
 
 ## Appendix: Pipeline Shape
 
@@ -202,7 +233,7 @@ the rest of the engine is unchanged.
 
 ## Appendix: Threading — how it sustains 60 fps per stream
 
-The thread topology is ported from the proven C++ demo `neat_demo_elxr/demo-yolo-4-stream`
+The thread topology is ported from a proven C++ 4-stream reference implementation
 (4 streams x 60 fps). It is not a design invented here:
 
 ```text
@@ -292,6 +323,6 @@ its `combine` is only on an occasional debug-save path, never the hot path.
 *after* the summary has printed. It is pre-existing — the original single-threaded version did it
 too — and it does not affect the reported numbers, but it is still open.
 
-References: `neat_demo_elxr/demo-yolo-4-stream/main.cpp` (the thread topology this app copies),
+References: a C++ 4-stream reference implementation (the thread topology this app copies),
 `apps/single-stream-yolo-yolo11` (app conventions),
 `core/tutorials/018_consume_rtsp_stream` (RTSP source fragment).

@@ -90,7 +90,7 @@ sima-cli neat install sdk@release-2.1
 
     ---
 
-2. Once the image is available locally, setup starts automatically. At `Do you want to pair this SDK with a DevKit now? [y/N]`, press `y`, then enter the DevKit IP at `Enter DevKit IP address:` (for example, `192.168.135.156`).
+2. Once the image is available locally, setup starts automatically. At `Do you want to pair this SDK with a DevKit now? [y/N]`, press `y`, then enter the DevKit IP at `Enter DevKit IP address:` (for example, `<host-ip>`).
 
     ![Pair the SDK with a DevKit — enter the DevKit IP inline](images/linux/neat-pair-devkit.png)
 
@@ -236,7 +236,7 @@ Reference:
 
         <img src="images/VS-2.png" alt="Install and Setup" width="600">
 
-    - In the attached VS Code window, open the `/workspace` or `/workspace/demo-neat` folder.
+    - In the attached VS Code window, open the `/workspace` folder (or wherever you cloned this repo).
 
         <img src="images/VS-3.png" alt="Install and Setup" width="600">
 
