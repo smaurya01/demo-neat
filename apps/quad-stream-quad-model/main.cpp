@@ -119,27 +119,6 @@ bool uses_coco_yolo_normalize(Task t) {
   return t != Task::Yolox;
 }
 
-// ── worker topology ──────────────────────────────────────────────────────────
-enum class WorkerMode { Serial, Split, Pipelined };
-
-std::optional<WorkerMode> worker_mode_from_string(const std::string& s) {
-  if (s == "serial") return WorkerMode::Serial;
-  if (s == "split") return WorkerMode::Split;
-  if (s == "pipelined") return WorkerMode::Pipelined;
-  return std::nullopt;
-}
-
-// FIX 3: force a BoxDecode sub-variant instead of BoxDecodeTypeOption::Auto. The tokens are
-// the ones box_decode_type_option_token() emits, so config and library never drift.
-std::optional<neat::BoxDecodeTypeOption> decode_option_from_string(const std::string& s) {
-  using O = neat::BoxDecodeTypeOption;
-  for (auto o : {O::Auto, O::PackedPerHead, O::InterleavedByHead, O::GroupedByRole,
-                 O::Split3Interleaved, O::Split3Grouped, O::InterleavedByHeadProbability,
-                 O::InterleavedByHeadLogit, O::GroupedByRoleProbability, O::GroupedByRoleLogit}) {
-    if (s == neat::box_decode_type_option_token(o)) return o;
-  }
-  return std::nullopt;
-}
 
 // ── config (same keys as config/default.conf, shared with main.py) ───────────
 struct StreamSpec {
@@ -178,27 +157,11 @@ struct Config {
   // 0 disables it and you only get the summary at exit.
   double profile_interval_s = 5.0;
 
-  // ── worker topology (see WorkerMode below) ─────────────────────────────────
-  //   serial     one thread does infer -> postproc -> overlay -> encode  (the original)
-  //   split      FIX 1: postproc+overlay+encode moved to a second thread
-  //   pipelined  FIX 2: FIX 1 + push and pull split across two threads, so the model
-  //              graph keeps model_queue_depth frames in flight instead of one
-  std::string worker_mode = "serial";
-  int model_queue_depth = 4;    // frames in flight inside the model graph (pipelined mode)
-  int output_queue_depth = 2;   // frames parked between the model side and the output thread
-
-  // ── FIX 3: on-device BoxDecode knobs (no model change) ─────────────────────
-  // The app already runs SimaBoxDecode on device for every task, including the zoo
-  // 64-channel DFL heads. These are the levers that change how much work that stage does.
-  //
-  // decode_option forces a decoder sub-variant instead of letting the planner infer the
-  // layout from tensor geometry (BoxDecodeTypeOption::Auto). Tokens are exactly the ones in
-  // pipeline/BoxDecodeType.h: auto | packed-per-head | interleaved-by-head | grouped-by-role |
-  // split3-interleaved | split3-grouped | interleaved-by-head-probability |
-  // interleaved-by-head-logit | grouped-by-role-probability | grouped-by-role-logit
-  std::string decode_option = "auto";
-  // Sets SIMA_BOXDECODE_BYPASS_MLA_UNPACK=1 — skips the MLA unpack ahead of decode.
-  bool boxdecode_bypass_unpack = false;
+  // Frames the model graph may hold in flight at once. The pusher will not hand it a
+  // frame beyond this; excess frames are dropped at the source mailbox instead.
+  int model_queue_depth = 4;
+  // Frames parked between the model side and the output thread.
+  int output_queue_depth = 2;
   bool print_backend = false;
   bool no_overlay = false;
   std::string cvu_pre_target = "EV74";
@@ -253,11 +216,8 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   else if (key == "frames") cfg.frames = std::stoi(value);
   else if (key == "warmup_frames") cfg.warmup_frames = std::stoi(value);
   else if (key == "profile_interval") cfg.profile_interval_s = std::stod(value);
-  else if (key == "worker_mode") cfg.worker_mode = value;
   else if (key == "model_queue_depth") cfg.model_queue_depth = std::stoi(value);
   else if (key == "output_queue_depth") cfg.output_queue_depth = std::stoi(value);
-  else if (key == "decode_option") cfg.decode_option = value;
-  else if (key == "boxdecode_bypass_unpack") cfg.boxdecode_bypass_unpack = to_bool(value);
   else if (key == "print_backend") cfg.print_backend = to_bool(value);
   else if (key == "cvu_pre_target") cfg.cvu_pre_target = value;
   else if (key == "cvu_post_target") cfg.cvu_post_target = value;
@@ -352,18 +312,12 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   opt.top_k = cfg.top_k;
   opt.num_classes = num_classes_for(spec.task);
 
-  // FIX 3. The zoo detection/segmentation archives keep raw 64-channel DFL bbox heads, so the
-  // on-device SimaBoxDecode stage has to detessellate, dequantize and DFL-decode 64 ch x 8400
-  // anchors every frame — on the SAME EV74 the other three streams are using. It is already
-  // on-device; the lever is not "move it to the device", it is "make that stage do less work".
-  //
-  // decode_type_option forces a decoder sub-variant rather than letting the planner infer the
-  // layout from tensor geometry. Default stays Auto, i.e. exactly today's behaviour.
-  if (const auto o = decode_option_from_string(cfg.decode_option)) {
-    opt.decode_type_option = *o;
-  } else {
-    throw std::runtime_error("unknown decode_option: " + cfg.decode_option);
-  }
+  // decode_type_option is deliberately LEFT AT Auto. These are MPK-backed models, so the
+  // archive's own contract already pins tensor order, layout, dtype and score domain, and
+  // SimaBoxDecode.h says application code should set only the decode FAMILY and the
+  // thresholds. Forcing an explicit sub-variant makes the model-managed route fail to
+  // compile, and it surfaces as "Missing prepared runtime stage for graph-owned processcvu"
+  // on the PREPROC element — a thoroughly confusing place to learn you broke the decode.
   // NOT setting boxdecode_original_width/height — deprecated in core/include/model/Model.h.
 
   return std::make_unique<neat::Model>(spec.model_path, opt);
@@ -424,14 +378,8 @@ neat::Graph make_model_graph(const Config& cfg, const StreamSpec& spec, const ne
   // puller. This must be at least model_queue_depth, or the two settings contradict each
   // other: --mode pipelined deliberately keeps N frames in flight, and if the sink can only
   // hold 1 finished result, results back up inside the graph and throttle the very pipelining
-  // we are paying for. It was hardcoded to 1 — fine for serial/split (one frame in flight),
-  // wrong for pipelined. (apps/multi-model-load-probe uses 4; the library default is 30.)
-  //
-  // Only pipelined gets the deeper sink. serial/split push one frame and immediately block on
-  // its pull, so at most one result can exist and a deeper sink would change nothing there —
-  // except stop `serial` from being a byte-for-byte baseline to measure the fixes against.
-  const bool pipelined = worker_mode_from_string(cfg.worker_mode) == WorkerMode::Pipelined;
-  const int out_buffers = pipelined ? std::max(1, cfg.model_queue_depth) : 1;
+  // we are paying for. (apps/multi-model-load-probe uses 4; the library default is 30.)
+  const int out_buffers = std::max(1, cfg.model_queue_depth);
   g.add(neat::nodes::Output("detections", neat::OutputOptions::EveryFrame(out_buffers)));
   return g;
 }
@@ -1267,76 +1215,9 @@ void mark_steady_done(StreamRuntime& rt) {
   }
 }
 
-// ── mode: serial (baseline) ──────────────────────────────────────────────────
-void run_stream_serial(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
-  const std::string banner = stream_banner(rt);
-  neat::PullError err;
 
-  while (!g_stop.load()) {
-    if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
 
-    InferItem item;
-    if (!take_frame(cfg, rt, deadline, item.frame, item.fw, item.fh, item.qwait_ms, item.t_in)) {
-      break;
-    }
-
-    const auto infer_begin = Clock::now();
-    if (!rt.model_run.push("image", neat::TensorList{item.frame})) {
-      ++rt.dropped;
-      continue;
-    }
-    rt.in_flight.fetch_add(1);
-    auto st = rt.model_run.pull("detections", 20000, item.det, &err);
-    rt.in_flight.fetch_sub(1);
-    item.infer_ms = ms_since(infer_begin, Clock::now());
-    if (st == neat::PullStatus::Timeout) { ++rt.pull_timeouts; continue; }
-    if (st == neat::PullStatus::Closed) break;
-    if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
-      continue;
-    }
-    rt.pulled.fetch_add(1);
-
-    finish_frame(cfg, rt, item, banner);
-  }
-  mark_steady_done(rt);
-}
-
-// ── mode: split (FIX 1) — model thread ───────────────────────────────────────
-void run_model_thread(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
-  neat::PullError err;
-
-  while (!g_stop.load()) {
-    if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
-
-    InferItem item;
-    if (!take_frame(cfg, rt, deadline, item.frame, item.fw, item.fh, item.qwait_ms, item.t_in)) {
-      break;
-    }
-
-    const auto infer_begin = Clock::now();
-    if (!rt.model_run.push("image", neat::TensorList{item.frame})) {
-      ++rt.dropped;
-      continue;
-    }
-    rt.in_flight.fetch_add(1);
-    auto st = rt.model_run.pull("detections", 20000, item.det, &err);
-    rt.in_flight.fetch_sub(1);
-    item.infer_ms = ms_since(infer_begin, Clock::now());
-    if (st == neat::PullStatus::Timeout) { ++rt.pull_timeouts; continue; }
-    if (st == neat::PullStatus::Closed) break;
-    if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
-      continue;
-    }
-    rt.pulled.fetch_add(1);
-
-    if (!rt.out_q.push(std::move(item))) break;   // blocks if the output thread is behind
-  }
-  rt.out_q.close();
-}
-
-// ── mode: pipelined (FIX 2) — pusher ─────────────────────────────────────────
+// ── pusher: mailbox -> model graph (bounded by model_queue_depth) ────────────
 void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
   while (!g_stop.load()) {
     if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
@@ -1378,10 +1259,12 @@ void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
     }
     // The lock is NOT held across push(): draining is the puller's job and it needs this same
     // lock, so holding it here would deadlock the pair the moment the queue filled.
+    rt.in_flight.fetch_add(1);
     if (!rt.model_run.push("image", neat::TensorList{to_push})) {
       // A failed push means the Run is closing. Stop rather than race the puller to un-record
       // the pending entry — the stale entry is harmless: the puller times out, sees push_done,
       // and drains.
+      rt.in_flight.fetch_sub(1);
       ++rt.dropped;
       break;
     }
@@ -1390,8 +1273,8 @@ void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
   rt.pending_cv.notify_all();
 }
 
-// ── mode: pipelined (FIX 2) — puller ─────────────────────────────────────────
-void run_puller(const Config& cfg, StreamRuntime& rt) {
+// ── puller: model graph -> output queue ──────────────────────────────────────
+void run_puller(StreamRuntime& rt) {
   neat::PullError err;
 
   while (true) {
@@ -1446,7 +1329,7 @@ void run_puller(const Config& cfg, StreamRuntime& rt) {
   rt.out_q.close();
 }
 
-// ── output thread (FIX 1, shared by split + pipelined) ───────────────────────
+// ── output thread: postproc -> overlay -> encode ─────────────────────────────
 void run_output_thread(const Config& cfg, StreamRuntime& rt) {
   const std::string banner = stream_banner(rt);
   InferItem item;
@@ -1494,8 +1377,8 @@ void print_live(std::vector<std::unique_ptr<StreamRuntime>>& rts, std::vector<Li
   os << std::left << std::setw(7) << "stream" << std::setw(14) << "task" << std::right
      << std::setw(8) << "decode" << std::setw(8) << "infer" << std::setw(10) << "postproc"
      << std::setw(9) << "overlay" << std::setw(8) << "encode" << std::setw(9) << "latency"
-     << std::setw(10) << "dec fps" << std::setw(10) << "mdl fps" << std::setw(10) << "pull fps"
-     << std::setw(11) << "deliv fps" << std::setw(7) << "inflt" << std::setw(7) << "objs" << "\n";
+     << std::setw(10) << "dec fps" << std::setw(10) << "pull fps" << std::setw(11) << "deliv fps"
+     << std::setw(7) << "inflt" << std::setw(7) << "objs" << "\n";
 
   double aggregate = 0.0;
   for (std::size_t i = 0; i < rts.size(); ++i) {
@@ -1527,7 +1410,6 @@ void print_live(std::vector<std::unique_ptr<StreamRuntime>>& rts, std::vector<Li
     // The model's TRUE throughput: frames it actually completed per second. In pipelined mode
     // `infer` is an in-flight latency, so 1000/infer understates the model badly — this does not.
     const double pull_fps = dt > 0.0 ? (pulled - c.pulled) / dt : 0.0;
-    const double mdl_fps = inf > 0.0 ? 1000.0 / inf : 0.0;
     c.decoded = decoded;
     c.processed = processed;
     c.pulled = pulled;
@@ -1539,8 +1421,8 @@ void print_live(std::vector<std::unique_ptr<StreamRuntime>>& rts, std::vector<Li
        << std::setw(8) << dec << std::setw(8) << inf << std::setw(10) << post
        << std::setw(9) << ovl << std::setw(8) << enc << std::setw(9) << lat
        << std::setprecision(1)
-       << std::setw(10) << dec_fps << std::setw(10) << mdl_fps << std::setw(10) << pull_fps
-       << std::setw(11) << dlv_fps << std::setw(7) << inflt << std::setw(7) << objs << "\n";
+       << std::setw(10) << dec_fps << std::setw(10) << pull_fps << std::setw(11) << dlv_fps
+       << std::setw(7) << inflt << std::setw(7) << objs << "\n";
   }
   os << std::string(52, ' ') << "aggregate delivered " << std::fixed << std::setprecision(1)
      << aggregate << " fps\n";
@@ -1619,15 +1501,13 @@ void print_report(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>
   std::cout << "\n=== per model-stream throughput (window " << std::fixed << std::setprecision(1)
             << wall_s << "s) ===\n";
   std::cout << std::left << std::setw(7) << "stream" << std::setw(14) << "task"
-            << std::right << std::setw(12) << "decode fps" << std::setw(12) << "model fps"
+            << std::right << std::setw(12) << "decode fps"
             << std::setw(11) << "pull fps" << std::setw(15) << "delivered fps"
             << std::setw(12) << "src wait" << std::setw(10) << "qwait"
             << std::setw(10) << "dropped" << std::setw(10) << "pull t/o" << "\n";
   double aggregate = 0.0;
   for (auto& rt : rts) {
     const auto& sp = rt->source_profile;
-    const double infer_mean = mean_of(rt->profile.infer, skip);
-    const double model_fps = infer_mean > 0.0 ? 1000.0 / infer_mean : 0.0;
 
     const int steady_decoded = std::max(0, sp.decoded - cfg.warmup_frames);
     const double dec_secs = sp.steady_seconds > 0.0 ? sp.steady_seconds : wall_s;
@@ -1643,7 +1523,6 @@ void print_report(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>
     std::cout << std::left << std::setw(7) << rt->spec.id << std::setw(14)
               << task_name(rt->spec.task) << std::right << std::fixed
               << std::setprecision(1) << std::setw(12) << decode_fps
-              << std::setw(12) << model_fps
               << std::setprecision(2) << std::setw(11) << pull_fps
               << std::setw(15) << delivered
               << std::setw(12) << mean_of(sp.wait, skip)
@@ -1654,12 +1533,9 @@ void print_report(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>
   std::cout
       << "\n  decode fps    frames the decoder produced (INCLUDING ones the worker was too\n"
       << "                busy to take — `dropped`). This is the source's true rate.\n"
-      << "  model fps     1000 / infer. Only meaningful in --mode serial/split, where one frame\n"
-      << "                is in the graph at a time. In --mode pipelined `infer` is a frame's\n"
-      << "                in-graph LATENCY with several frames in flight, so this UNDERSTATES the\n"
-      << "                model — read `pull fps` there instead.\n"
-      << "  pull fps      frames the model actually completed per second. The model's true\n"
-      << "                throughput in every mode.\n"
+      << "  pull fps      frames the model actually completed per second — its true throughput.\n"
+      << "                Do NOT read 1000/infer as a rate: with several frames in flight, `infer`\n"
+      << "                is a frame's in-graph LATENCY, not its period.\n"
       << "  delivered fps frames that actually reached the encoder. The number that matters.\n"
       << "  src wait      source thread blocked on pull. ~1000/stream_fps (e.g. 16.7 ms at\n"
       << "                60 fps) means the decoder is keeping up; well above it means it is not.\n"
@@ -1679,24 +1555,8 @@ void print_usage() {
       << "  --num-streams <1..4>  how many stream slots to run\n"
       << "  --no-overlay          skip the annotation (isolates the model rate)\n"
       << "  --profile-interval <s> how often to print the live time profile (0 = off, default 5)\n"
-      << "\n  worker topology:\n"
-      << "  --mode <m>            serial (default) | split | pipelined\n"
-      << "                          serial     one thread: infer -> postproc -> overlay -> encode\n"
-      << "                          split      FIX 1: postproc+overlay+encode on a 2nd thread\n"
-      << "                          pipelined  FIX 2: split + push/pull on separate threads, so\n"
-      << "                                     the model keeps --model-queue-depth frames in flight\n"
-      << "  --model-queue-depth <n>  frames in flight in the model graph (pipelined; default 4)\n"
+      << "  --model-queue-depth <n>  frames the model graph may hold in flight (default 4)\n"
       << "  --output-queue-depth <n> frames parked before the output thread (default 2)\n"
-      << "\n  on-device BoxDecode (FIX 3 — no model change):\n"
-      << "  --decode-option <o>   force a decoder sub-variant instead of auto. One of:\n"
-      << "                          auto | packed-per-head | interleaved-by-head | grouped-by-role\n"
-      << "                          | split3-interleaved | split3-grouped\n"
-      << "                          | interleaved-by-head-probability | interleaved-by-head-logit\n"
-      << "                          | grouped-by-role-probability | grouped-by-role-logit\n"
-      << "  --boxdecode-bypass-unpack  set SIMA_BOXDECODE_BYPASS_MLA_UNPACK=1\n"
-      << "  --top-k <n>           BoxDecode top-K cap (default 100)\n"
-      << "  --score-threshold <f> BoxDecode score threshold (default 0.25)\n"
-      << "  --nms-iou <f>         BoxDecode NMS IoU threshold (default 0.50)\n"
       << "  --pre-target <t>      AUTO | EV74 | A65\n"
       << "  --post-target <t>     AUTO | EV74 | A65\n"
       << "  --print-backend       dump the generated GStreamer backends\n";
@@ -1731,33 +1591,12 @@ int main(int argc, char** argv) {
       else if (a == "--num-streams") cfg.num_streams = std::stoi(next());
       else if (a == "--warmup-frames") cfg.warmup_frames = std::stoi(next());
       else if (a == "--profile-interval") cfg.profile_interval_s = std::stod(next());
-      // FIX 1 / FIX 2: worker topology.
-      else if (a == "--mode") cfg.worker_mode = next();
       else if (a == "--model-queue-depth") cfg.model_queue_depth = std::stoi(next());
       else if (a == "--output-queue-depth") cfg.output_queue_depth = std::stoi(next());
-      // FIX 3: on-device BoxDecode knobs (no model change).
-      else if (a == "--decode-option") cfg.decode_option = next();
-      else if (a == "--boxdecode-bypass-unpack") cfg.boxdecode_bypass_unpack = true;
-      else if (a == "--top-k") cfg.top_k = std::stoi(next());
-      else if (a == "--score-threshold") cfg.score_threshold = std::stof(next());
-      else if (a == "--nms-iou") cfg.nms_iou = std::stof(next());
       else if (a == "--no-overlay") cfg.no_overlay = true;
       else if (a == "--print-backend") cfg.print_backend = true;
       else if (a == "--pre-target") cfg.cvu_pre_target = next();
       else if (a == "--post-target") cfg.cvu_post_target = next();
-    }
-
-    const auto mode_opt = worker_mode_from_string(cfg.worker_mode);
-    if (!mode_opt) {
-      throw std::runtime_error("unknown --mode: " + cfg.worker_mode +
-                               " (expected serial | split | pipelined)");
-    }
-    const WorkerMode mode = *mode_opt;
-
-    // FIX 3: skip the MLA unpack ahead of BoxDecode. Off by default; setenv with overwrite=0 so
-    // an explicitly exported value from the shell still wins.
-    if (cfg.boxdecode_bypass_unpack) {
-      ::setenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK", "1", 0);
     }
 
     const auto specs = build_specs(cfg);
@@ -1768,20 +1607,17 @@ int main(int argc, char** argv) {
     run_options.overflow_policy = neat::OverflowPolicy::KeepLatest;
     run_options.output_memory = neat::OutputMemory::ZeroCopy;
 
-    // The SOURCE run always stays Realtime/KeepLatest: a live camera must be drained and its
-    // stale frames thrown away. Only the MODEL run changes shape between topologies.
+    // The SOURCE run stays Realtime/KeepLatest: a live camera must be drained continuously and
+    // its stale frames thrown away. The MODEL run is different — Block, not KeepLatest:
+    //   * Block keeps push/pull strictly FIFO-paired, so `pending` can match each result back
+    //     to the frame it came from. KeepLatest silently drops results and breaks that pairing.
+    //   * It does NOT bound how many frames sit in the graph — that is the pusher's in-flight
+    //     gate (see run_pusher). Relying on Block alone let segmentation accumulate a 600-frame,
+    //     11-second backlog.
     neat::RunOptions model_run_options = run_options;
-    if (mode == WorkerMode::Pipelined) {
-      // FIX 2. Block (not KeepLatest) is what makes a decoupled pusher/puller correct AND fast:
-      //   * it keeps push/pull strictly FIFO-paired, so `pending` can match each result to its
-      //     frame — KeepLatest silently drops results and breaks that pairing;
-      //   * it lets queue_depth frames sit in flight, so the MLA stays pipelined instead of
-      //     idling while the host does EV74 preprocess for the next frame.
-      // Verbatim from the C++ 4-stream demo and multi-stream-yolo-yolo11.
-      model_run_options.preset = neat::RunPreset::Reliable;
-      model_run_options.queue_depth = cfg.model_queue_depth;
-      model_run_options.overflow_policy = neat::OverflowPolicy::Block;
-    }
+    model_run_options.preset = neat::RunPreset::Reliable;
+    model_run_options.queue_depth = cfg.model_queue_depth;
+    model_run_options.overflow_policy = neat::OverflowPolicy::Block;
 
     neat::RunOptions video_run_options = run_options;
     video_run_options.output_memory = neat::OutputMemory::Owned;
@@ -1830,49 +1666,31 @@ int main(int argc, char** argv) {
       rt->source_run = rt->source_graph.build(run_options);
     }
 
-    std::cout << "build " << __DATE__ << " " << __TIME__ << "  (in-flight gate: bounded at "
-              << cfg.model_queue_depth << ")\n";
-    std::cout << "Running " << rts.size() << " streams, mode=" << cfg.worker_mode
-              << " (decode_option=" << cfg.decode_option
-              << (cfg.boxdecode_bypass_unpack ? ", boxdecode-bypass-unpack" : "")
-              << (mode == WorkerMode::Pipelined
-                      ? ", model_queue_depth=" + std::to_string(cfg.model_queue_depth) + ", Block"
-                      : "")
-              << "). Ctrl-C to stop.\n"
+    std::cout << "build " << __DATE__ << " " << __TIME__ << "\n"
+              << "Running " << rts.size() << " streams x 4 threads"
+              << " (model_queue_depth=" << cfg.model_queue_depth
+              << ", output_queue_depth=" << cfg.output_queue_depth
+              << ", overlay=" << (cfg.no_overlay ? "off" : "on") << "). Ctrl-C to stop.\n"
               << std::flush;
 
     const auto start = Clock::now();
     const auto deadline =
         start + std::chrono::milliseconds(static_cast<long>(cfg.duration_s * 1000.0));
 
-    // Thread topology per stream, by --mode:
-    //   serial     source + worker                        (2)
-    //   split      source + model + output                (3)
-    //   pipelined  source + pusher + puller + output      (4)
-    std::vector<std::thread> sources;   // always
-    std::vector<std::thread> models;    // serial worker / split model thread / pipelined pusher
-    std::vector<std::thread> pullers;   // pipelined only
-    std::vector<std::thread> outputs;   // split + pipelined
-    sources.reserve(rts.size());
-    models.reserve(rts.size());
+    // Four threads per stream:
+    //   source  RTSP -> drop-oldest mailbox
+    //   pusher  mailbox -> model graph        (bounded by model_queue_depth)
+    //   puller  model graph -> output queue
+    //   output  postproc -> overlay -> encode
+    std::vector<std::thread> sources, pushers, pullers, outputs;
+    for (auto* v : {&sources, &pushers, &pullers, &outputs}) v->reserve(rts.size());
 
     for (auto& rt : rts) {
       StreamRuntime* p = rt.get();
       sources.emplace_back([&cfg, p, deadline]() { run_source(cfg, *p, deadline); });
-      switch (mode) {
-      case WorkerMode::Serial:
-        models.emplace_back([&cfg, p, deadline]() { run_stream_serial(cfg, *p, deadline); });
-        break;
-      case WorkerMode::Split:
-        models.emplace_back([&cfg, p, deadline]() { run_model_thread(cfg, *p, deadline); });
-        outputs.emplace_back([&cfg, p]() { run_output_thread(cfg, *p); });
-        break;
-      case WorkerMode::Pipelined:
-        models.emplace_back([&cfg, p, deadline]() { run_pusher(cfg, *p, deadline); });
-        pullers.emplace_back([&cfg, p]() { run_puller(cfg, *p); });
-        outputs.emplace_back([&cfg, p]() { run_output_thread(cfg, *p); });
-        break;
-      }
+      pushers.emplace_back([&cfg, p, deadline]() { run_pusher(cfg, *p, deadline); });
+      pullers.emplace_back([p]() { run_puller(*p); });
+      outputs.emplace_back([&cfg, p]() { run_output_thread(cfg, *p); });
     }
 
     // One reporter thread prints the live time profile for ALL streams on an interval.
@@ -1882,9 +1700,9 @@ int main(int argc, char** argv) {
     for (auto& s : sources) s.join();
     for (auto& rt : rts) rt->mailbox.close();   // releases a worker/pusher blocked in take()
     for (auto& rt : rts) rt->pending_cv.notify_all();   // and one blocked waiting for a slot
-    for (auto& m : models) m.join();            // sets push_done in pipelined mode
+    for (auto& u : pushers) u.join();           // sets push_done
     for (auto& q : pullers) q.join();           // drains the in-flight frames, then closes out_q
-    for (auto& rt : rts) rt->out_q.close();     // idempotent; covers the serial/split paths
+    for (auto& rt : rts) rt->out_q.close();     // idempotent
     for (auto& o : outputs) o.join();
 
     // The reporter reads the profiles these threads write, so it MUST be joined before the

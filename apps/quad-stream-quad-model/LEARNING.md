@@ -159,20 +159,33 @@ Historically `AUTO` was far worse — it once placed `yolo26s-pose`'s post stage
 ~1.8 s/frame, which starved every other stream. `EV74` is the default in
 `config/default.conf` for this reason.
 
-## Lesson 7: On a saturated MLA, deeper pipelining makes things worse
+## Lesson 7: `1000 / infer` is NOT a frame rate — and this once fooled us badly
 
-The intuition "more frames in flight = better utilisation" is wrong once the accelerator is
-the constraint. Raising `pipeline_depth` from 2 to 4:
+> **This lesson previously said "on a saturated MLA, deeper pipelining makes things worse."
+> That was wrong, and the error is worth preserving.** The MLA was never saturated (Lesson 12),
+> and deeper pipelining later took this app from 165 → 236 fps. What actually happened is that
+> we read a *latency* as if it were a *rate*.
 
-| pipeline_depth | model fps (per stream) | aggregate delivered |
-| --- | --- | --- |
-| **2** | **37 – 41** | **~77 – 86 fps** |
-| 4 | 18 | 68 – 73 fps |
+`infer` measures `push` → `pull` for one frame. With N frames in flight, a frame waits behind
+the others, so `infer` is that frame's **in-graph latency**, not its service period. Little's
+law is the whole story:
 
-Model fps *halves*. The extra in-flight frames do not create MLA capacity that does not
-exist; they just queue behind it, and `infer` — which measures push→pull latency, not
-service time — inflates to match. Depth buys you overlap between *different* stages; it
-cannot buy you a second MLA.
+```
+frames in flight  =  throughput  ×  latency
+```
+
+So when pipelining is switched on, `infer` **rises** and throughput **rises too**. Computing
+`1000 / infer` and calling it "model fps" makes the model look like it collapsed:
+
+| | infer | 1000/infer ("model fps") | pull fps (TRUE throughput) |
+| --- | --- | --- | --- |
+| serial (1 in flight) | 22.2 ms | 45.1 | 45.1 |
+| pipelined (~1.8 in flight) | 32.3 ms | **30.9 — looks 30% worse** | **57.9 — is 28% better** |
+
+Same model, same board. The rate did not fall; the *latency* rose because we deliberately put
+more frames in flight. **The app therefore reports `pull fps` — frames the model actually
+completed per second — and has no `model fps` column at all.** A rate you computed from a
+latency is not a rate.
 
 ## Lesson 8: The GIL is a real pipeline stage
 
@@ -270,25 +283,24 @@ That reports a steady state that never existed.
 Use a wall-clock window (`--duration 20`). Every stream gets the same slice of contended
 time, which is the thing you are actually trying to measure.
 
-## Lesson 11: Two FPS numbers, and they answer different questions
+## Lesson 11: The three rates, and the one that is a lie
 
-Every run prints both. Do not conflate them.
+The profile prints `dec fps`, `pull fps` and `deliv fps`. Read them as a chain:
 
-* **`model fps` = `1000 / mean(infer)`** — the model stage alone: preprocess + MLA +
-  on-device decode. This is the "can this model do 60 fps" number.
-* **`delivered fps`** — frames actually published to UDP per second of wall clock. Includes
-  the host-side overlay and the encoder push.
+* **`dec fps`** — what the decoder produced, *including* frames the pusher was too busy to
+  take. The source's true rate.
+* **`pull fps`** — frames the model actually completed. **The model's true throughput.**
+* **`deliv fps`** — frames that reached the encoder. The number that matters.
 
-In this app they are far apart, and the gap *is* the finding:
+When all three converge on the camera rate (~60), the pipeline is **source-limited** — the
+goal state. That is where this app now sits: ~236 fps aggregate against a 239.8 ceiling.
 
-| stream | model | model fps | delivered fps | overlay ms |
-| --- | --- | --- | --- | --- |
-| 0 detection | `yolo_11s` (zoo) | 37 – 41 | ~15 | ~63 |
-| 1 segmentation | `yolo_11s_seg` (zoo) | 29 – 35 | ~7 | ~138 |
-| 2 pose | `yolo26s-pose` | 32 – 42 | ~15 – 18 | ~60 |
-| 3 yolox | `yolox_s` | 32 – 41 | ~34 – 39 | ~26 |
+The lie is any rate you *derive* from `infer` (Lesson 7). There is deliberately no such column.
 
-The models are healthy. **The host overlay is what the delivered rate is paying for.**
+**And a rate above the source rate is always a bug.** A 59.94 fps camera makes 239.8 the hard
+ceiling for four streams. We once printed **261 fps aggregate**, with one stream "delivering"
+85 fps from a 60 fps source. That was not throughput — it was a backlog draining (Lesson 13).
+The impossibility is what exposed the bug. Always sanity-check against the source rate.
 
 ---
 
