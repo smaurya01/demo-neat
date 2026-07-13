@@ -177,10 +177,33 @@ models:
     source: https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.onnx
     license_note: Megvii YOLOX (Apache-2.0); review before redistribution.
     surgery: yolox
-    decode: yolo_raw_heads
+    # Split decoupled heads, scale-major (bbox, obj, cls) triplets with depths (4,1,80).
+    # This is BoxDecodeType::YoloX (Split3Interleaved) -> decoded on-device by Neat.
+    # obj/class are PRE-sigmoid logits; Neat applies the sigmoid itself.
+    decode: yolox_split_heads
     input_name: images
-    output_names: [yolox_head_0, yolox_head_1, yolox_head_2]
+    output_names:
+      - bbox_0
+      - obj_logit_0
+      - class_logit_0
+      - bbox_1
+      - obj_logit_1
+      - class_logit_1
+      - bbox_2
+      - obj_logit_2
+      - class_logit_2
     input_shape: [1, 3, 640, 640]
+    # YOLOX is NOT normalized like the Ultralytics models. mean/std are applied in
+    # normalized [0,1] space -- the preprocessor always divides by 255 first, then does
+    # (x - mean) / std. Ultralytics wants exactly x/255, so it uses mean=0, std=1.
+    #
+    # Megvii YOLOX is trained on RAW 0-255 pixels, so std = 1/255 cancels the built-in
+    # division and hands the model the raw pixel value back.
+    #
+    # Getting this wrong is silent and total: with std=1 the model sees an image 255x too
+    # dark, every objectness logit pins negative (obj_max -8.4 vs +5.9 on the same frame,
+    # measured on COCO val 000000000139), and YOLOX detects NOTHING while still running at
+    # full speed and reporting healthy FPS.
     mean: [0.0, 0.0, 0.0]
-    std: [1.0, 1.0, 1.0]
+    std: [0.00392156862745098, 0.00392156862745098, 0.00392156862745098]
     enabled: true

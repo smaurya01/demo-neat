@@ -63,7 +63,7 @@ from main import DEFAULT_ARCHIVES as ARCHIVES  # noqa: E402
 cv2 = None
 np = None
 pyneat = None
-dec = None
+ov = None
 
 
 def load_deps() -> None:
@@ -77,8 +77,52 @@ def load_deps() -> None:
     cv2, np, pyneat = _cv2, _np, _pyneat
     if str(APP_DIR) not in sys.path:
         sys.path.insert(0, str(APP_DIR))
-    from src import decoders as _dec
-    dec = _dec
+    from src import overlay as _ov
+    ov = _ov
+
+
+# Decode families, kept in lockstep with main.py (the whole point of this probe is
+# that its numbers transfer to the app, so the model must be built identically).
+DECODE_FAMILY = {
+    "detection": "YoloV8",       # zoo yolo_11s
+    "segmentation": "YoloV8Seg",  # zoo yolo_11s_seg
+    "pose": "YoloV26Pose",        # yolo26s-pose
+    "yolox": "YoloX",             # yolox_s
+}
+NUM_CLASSES = {"detection": 80, "segmentation": 80, "yolox": 80, "pose": 1}
+
+
+def decode_on_device(task: str, tensors, w: int, h: int):
+    """Read the BBOX payload the model graph's on-device BoxDecode stage produced.
+    This is a payload READ, not a decode — the MLA/EV74 already did the work."""
+    result = ov.DecodeResult([])
+    if task == "pose":
+        for r in pyneat.decode_pose(tensors, clamp_to=(w, h), top_k=100):
+            boxes = np.asarray(r.boxes.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
+            kpts = np.asarray(r.keypoints.to_numpy(copy=True), dtype=np.float32).reshape((-1, 17, 3))
+            for i, (x1, y1, x2, y2, sc, cid) in enumerate(boxes):
+                if sc < 0.25:
+                    continue
+                d = ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid))
+                if i < kpts.shape[0]:
+                    d.keypoints = kpts[i]
+                result.detections.append(d)
+        return result
+    if task == "segmentation":
+        for r in pyneat.decode_segmentation(tensors, clamp_to=(w, h), top_k=100):
+            boxes = np.asarray(r.boxes.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
+            for x1, y1, x2, y2, sc, cid in boxes:
+                if sc >= 0.25:
+                    result.detections.append(
+                        ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid)))
+        return result
+    for t in pyneat.decode_bbox(tensors, clamp_to=(w, h), top_k=100):
+        arr = np.asarray(t.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
+        for x1, y1, x2, y2, sc, cid in arr:
+            if sc >= 0.25:
+                result.detections.append(
+                    ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid)))
+    return result
 
 
 # ── NV12 plumbing (identical contract to the app, so results transfer) ────────
@@ -167,12 +211,12 @@ def make_model(archive: str, task: str, args, w: int, h: int):
         opt.processmla.output_pool_buffers = args.mla_pool_buffers
     if args.async_queue_depth:
         opt.async_queue_depth = args.async_queue_depth
-    if task == "detection":
-        opt.decode_type = pyneat.BoxDecodeType.YoloV26
-        opt.score_threshold = 0.25
-        opt.nms_iou_threshold = 0.5
-        opt.top_k = 100
-        opt.num_classes = 80
+    # Every task decodes on-device, same contract as the app (see main.DECODE_FAMILY).
+    opt.decode_type = getattr(pyneat.BoxDecodeType, DECODE_FAMILY[task])
+    opt.score_threshold = 0.25
+    opt.nms_iou_threshold = 0.5
+    opt.top_k = 100
+    opt.num_classes = NUM_CLASSES[task]
     if args.planner:
         opt.verbose.planner = True
         opt.verbose.level = pyneat.VerbosityLevel.Verbose
@@ -301,7 +345,7 @@ def annotate(bgr, result, task: str):
             for kx, ky, kv in d.keypoints:
                 if kv >= 0.3:
                     cv2.circle(bgr, (int(kx), int(ky)), 3, (0, 0, 255), -1)
-            for a, b in dec.COCO_SKELETON:
+            for a, b in ov.COCO_SKELETON:
                 if a < len(d.keypoints) and b < len(d.keypoints) and \
                         d.keypoints[a, 2] >= 0.3 and d.keypoints[b, 2] >= 0.3:
                     cv2.line(bgr,
@@ -369,20 +413,7 @@ def probe(args, task: str, quiet: bool = False):
 
             tensors = extract_tensors(sample)
             t0 = time.perf_counter()
-            if task == "detection":
-                result = dec.DecodeResult([])
-                for t in pyneat.decode_bbox(tensors, clamp_to=(w, h), top_k=100):
-                    arr = np.asarray(t.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-                    for x1, y1, x2, y2, sc, cid in arr:
-                        if sc >= 0.25:
-                            result.detections.append(
-                                dec.Detection(float(x1), float(y1), float(x2),
-                                              float(y2), float(sc), int(cid)))
-            else:
-                result = dec.HOST_DECODERS[
-                    task if task != "detection" else "detection_host"](
-                    tensors, w, h, model_w=640, model_h=640,
-                    score_thr=0.25, iou_thr=0.5, top_k=100)
+            result = decode_on_device(task, tensors, w, h)
             decode_ms.append((time.perf_counter() - t0) * 1000.0)
             last_tensors, last_result, last_nv12 = tensors, result, nv12
             if not quiet and i == 0:
@@ -407,7 +438,7 @@ def probe(args, task: str, quiet: bool = False):
         print(f"  infer  mean {mean_infer:8.2f} ms   p95 {pct(infer_ms, 95):8.2f} ms"
               f"   -> model rate {1000.0 / mean_infer:6.1f} fps")
         print(f"  decode mean {statistics.mean(decode_ms):8.2f} ms   "
-              f"p95 {pct(decode_ms, 95):8.2f} ms   (host, A65)")
+              f"p95 {pct(decode_ms, 95):8.2f} ms   (BBOX payload read, host)")
         if task == "pose":
             check_pose(last_result, w, h)
         else:
@@ -422,140 +453,6 @@ def probe(args, task: str, quiet: bool = False):
             print(f"\n  wrote {args.save_out}")
 
     return mean_infer, len(last_result.detections) if last_result else 0
-
-
-def kpt_formula_scan(args):
-    """Find the correct YOLO26 keypoint decode empirically.
-
-    The person BOXES decode correctly (verified visually), so they are a reliable
-    reference: a correct keypoint decode must place most of a person's visible
-    keypoints inside (or very near) that person's box. Each candidate formula is
-    scored by exactly that. This beats guessing which Ultralytics variant applies
-    to a YOLO26 `one2one_cv4_kpts` head.
-
-    Candidates (k = raw conv value, i = integer grid index, s = stride):
-      A  (2k + i) * s          Ultralytics v8/v11 pose (what src/decoders.py uses)
-      B  (k + i + 0.5) * s     no 2x, anchor-centred
-      C  (k + i) * s           no 2x, integer grid
-      D  (2k + i + 0.5) * s    2x, anchor-centred
-      E  (2*sigmoid(k) - 0.5 + i) * s   sigmoid-gated offset
-    """
-    archive = args.model or ARCHIVES["pose"]
-    w, h, fps = 1280, 720, 60
-    src_run = build_rtsp_run(args.rtsp, w, h, fps)
-    run, endpoint, _ = build_model_run(archive, "pose", args, w, h, fps)
-
-    FORMULAS = {
-        "A (2k+i)*s        [current]": lambda k, g, s: (k * 2.0 + g) * s,
-        "B (k+i+0.5)*s             ": lambda k, g, s: (k + g + 0.5) * s,
-        "C (k+i)*s                 ": lambda k, g, s: (k + g) * s,
-        "D (2k+i+0.5)*s            ": lambda k, g, s: (k * 2.0 + g + 0.5) * s,
-        "E (2*sig(k)-0.5+i)*s      ": lambda k, g, s: (2.0 * dec._sigmoid(k) - 0.5 + g) * s,
-    }
-    # per formula: inside, total_visible, span_sum, nose_ok, nose_n, det_n
-    score = {name: [0, 0, 0.0, 0.0, 0, 0] for name in FORMULAS}
-
-    try:
-        for _ in range(args.iters):
-            ts = src_run.pull_tensors(timeout_ms=20000)
-            if not ts:
-                continue
-            nv12, fw, fh = tensor_nv12_from_decoded(ts[0])
-            if not run.push([make_nv12_tensor(nv12, fw, fh)]):
-                continue
-            sample = run.pull(endpoint, 30000)
-            if sample is None:
-                continue
-            tensors = extract_tensors(sample)
-
-            b = dec._classify(tensors, 640)
-            geom = dec.LetterboxGeom.compute(fw, fh, 640, 640)
-            all_boxes, all_scores, per_scale = [], [], []
-            for hh in sorted(b["bbox"], reverse=True):
-                if hh not in b["cls"] or hh not in b["kpt"]:
-                    continue
-                ww = b["bbox"][hh].shape[2]
-                stride = 640.0 / hh
-                bbox = b["bbox"][hh].reshape(4, -1)
-                cls = dec._sigmoid(b["cls"][hh].reshape(-1))
-                kpt = b["kpt"][hh].reshape(51, -1)
-                gx05, gy05 = dec._anchor_grid(hh, ww, 0.5)
-                gxi, gyi = dec._anchor_grid(hh, ww, 0.0)
-                boxes = dec._dist2bbox(bbox, gx05, gy05, stride)
-                all_boxes.append(boxes)
-                all_scores.append(cls)
-                per_scale.append((kpt, gxi, gyi, stride, boxes.shape[0]))
-            if not all_boxes:
-                continue
-            boxes = np.concatenate(all_boxes, 0)
-            scores = np.concatenate(all_scores, 0)
-            offsets = np.cumsum([0] + [p[4] for p in per_scale])
-
-            m = scores >= 0.25
-            idx_map = np.nonzero(m)[0]
-            if not idx_map.size:
-                continue
-            keep = dec._nms(boxes[m], scores[m], 0.5, 100)
-
-            for kk in keep:
-                gidx = idx_map[kk]
-                sidx = int(np.searchsorted(offsets, gidx, side="right") - 1)
-                kpt, gxi, gyi, stride, _n = per_scale[sidx]
-                li = gidx - offsets[sidx]
-                bx = boxes[gidx]
-                fx1, fy1 = geom.to_frame_xy(bx[0], bx[1])
-                fx2, fy2 = geom.to_frame_xy(bx[2], bx[3])
-                vis = dec._sigmoid(kpt[2::3, li])
-                for name, fn in FORMULAS.items():
-                    kx = fn(kpt[0::3, li], gxi[li], stride)
-                    ky = fn(kpt[1::3, li], gyi[li], stride)
-                    px, py = geom.to_frame_xy(kx, ky)
-                    sel = vis >= 0.3
-                    if not sel.any():
-                        continue
-                    # generous margin: a limb may extend slightly past the box
-                    mx, my = 0.25 * (fx2 - fx1), 0.10 * (fy2 - fy1)
-                    inside = ((px[sel] >= fx1 - mx) & (px[sel] <= fx2 + mx) &
-                              (py[sel] >= fy1 - my) & (py[sel] <= fy2 + my))
-                    st = score[name]
-                    st[0] += int(inside.sum())
-                    st[1] += int(sel.sum())
-                    st[5] += 1
-
-                    # "inside the box" alone is gameable: a formula that collapses
-                    # every keypoint onto the anchor scores 100% while being useless
-                    # (formula E's sigmoid bounds the offset to ~1 cell, which does
-                    # exactly that). These two checks cannot be gamed that way.
-                    box_h = max(1e-6, fy2 - fy1)
-                    # (a) the skeleton must SPAN the person, not clump on the anchor
-                    st[2] += float((py[sel].max() - py[sel].min()) / box_h)
-                    # (b) anatomy: the nose must sit above the ankles
-                    if vis[0] >= 0.3 and (vis[15] >= 0.3 or vis[16] >= 0.3):
-                        ank = [py[i] for i in (15, 16) if vis[i] >= 0.3]
-                        st[3] += 1.0 if py[0] < (sum(ank) / len(ank)) else 0.0
-                        st[4] += 1
-    finally:
-        run.close()
-        src_run.close()
-
-    print("\n############ keypoint decode formula scan ############")
-    print("A correct decode must satisfy ALL THREE, not just the first:")
-    print("  inside%     visible keypoints inside their (known-correct) person box")
-    print("  span        vertical spread of skeleton / box height. Want ~0.8-1.0.")
-    print("              A formula that collapses keypoints onto the anchor scores ~0")
-    print("              here while still scoring 100% on inside% — that is the trap.")
-    print("  nose<ankle  anatomy: head above feet. Want ~100%.\n")
-    print(f"  {'formula':<28} {'inside%':>8} {'span':>7} {'nose<ankle':>11}")
-    rows = []
-    for name, (ins, tot, span_sum, nose_ok, nose_n, det_n) in score.items():
-        if not tot or not det_n:
-            continue
-        rows.append((name, ins / tot, span_sum / det_n, nose_ok / max(1, nose_n)))
-    # a formula must win on all three; span is capped at 1.0 so overshoot is not rewarded
-    ranked = sorted(rows, key=lambda r: -(r[1] * min(r[2], 1.0) * r[3]))
-    for name, insf, span, nosef in ranked:
-        print(f"  {name:<28} {insf * 100:7.1f}% {span:7.2f} {nosef * 100:10.1f}%")
-    print(f"\n  WINNER: {ranked[0][0].strip()}")
 
 
 def sweep(args):
@@ -616,16 +513,12 @@ def main() -> int:
                     help="dump the MPK contract / planner advisories")
     ap.add_argument("--sweep", action="store_true",
                     help="try all runtime knobs on pose and report whether any helps")
-    ap.add_argument("--kpt-scan", action="store_true",
-                    help="empirically find the correct YOLO26 keypoint decode formula")
     args = ap.parse_args()
 
     load_deps()
     try:
         if args.sweep:
             sweep(args)
-        elif args.kpt_scan:
-            kpt_formula_scan(args)
         else:
             probe(args, args.task)
         return 0

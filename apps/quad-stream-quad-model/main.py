@@ -7,11 +7,25 @@ identity is preserved end to end: the frame pulled from stream i's source is the
 exact frame pushed into stream i's model, decoded for stream i's task, annotated
 in place, and published on stream i's UDP port.
 
-Task routing (config/default.conf, per stream slot 0..3):
-  * detection    -> yolo11s      (built-in Neat BoxDecodeType.YoloV26 on-device decode)
-  * segmentation -> yolo11s-seg   (raw heads -> host decode, src/decoders.py)
-  * pose         -> yolo26s-pose  (raw heads -> host decode)
-  * yolox        -> yolox_s        (raw heads -> host decode)
+Task routing (config/default.conf, per stream slot 0..3). EVERY stream decodes
+on-device with Neat's fused BoxDecode — there is no host-side decode anywhere:
+
+  task          model                     source          Neat decode family
+  detection     yolo_11s                  MODEL ZOO       BoxDecodeType.YoloV8
+  segmentation  yolo_11s_seg              MODEL ZOO       BoxDecodeType.YoloV8Seg
+  pose          yolo26s-pose              self-compiled   BoxDecodeType.YoloV26Pose
+  yolox         yolox_s                   self-compiled   BoxDecodeType.YoloX
+
+The decode family is chosen by the shape of the archive's HEAD, not by the model's
+version number:
+  * The zoo archives keep the raw 64-channel DFL bbox heads -> the YoloV8 family
+    (this is why zoo YOLO11 decodes as YoloV8, not as some "YoloV11").
+  * The self-compiled archives fold the DFL into the graph and emit 4-channel
+    l/t/r/b distance heads -> the YoloV26 family.
+Both are correct; they are different contracts. Get it wrong and the app still
+runs and still draws boxes — just decoded from the wrong channels.
+
+The zoo has no YOLO-pose and no YOLOX, which is why those two stay self-compiled.
 
 Design provenance (every API traceable to https://github.com/sima-neat/core):
   * three-graph shuttle (source / model / video) — apps/multi-stream-yolo-yolo11/main.py
@@ -19,9 +33,8 @@ Design provenance (every API traceable to https://github.com/sima-neat/core):
   * ModelOptions preprocess presets + BoxDecodeType — core/include/model/Model.h,
     core/include/pipeline/BoxDecodeType.h
   * push/pull named endpoints + RunOptions(queue_depth/overflow/preset) — core/include/pipeline/Run.h
-  * host task decode is required because the surgery archives expose RAW per-scale
-    heads (Neat's built-in fused decode covers only the detection family) — see
-    src/decoders.py and ../../model-compilation/compile/_surgery_ultralytics.py.
+  * pyneat.decode_bbox / decode_pose / decode_segmentation read the BBOX payload the
+    on-device BoxDecode stage produced — core/python/src/module.cpp.
 """
 from __future__ import annotations
 
@@ -36,7 +49,7 @@ import time
 cv2 = None
 np = None
 pyneat = None
-dec = None  # src.decoders, imported after runtime deps
+ov = None  # src.overlay (labels + result containers), imported after runtime deps
 
 APP_DIR = Path(__file__).resolve().parent
 # Archives live in this app's own assets/models/ (git-ignored), so the app is
@@ -54,14 +67,61 @@ MODELS_DIR = APP_DIR / "assets" / "models"
 # model runs at 1782 ms/frame (0.6 fps), and at 8.5 ms/frame (117 fps) with 64 — a
 # 209x speedup for identical weights. Unpadded, pose holds the shared MLA so long
 # that the other three streams back up and fail their model push, and the quad
-# cannot run at all. src/decoders.py slices channels 51..63 (the padding) back off.
+# cannot run at all.
+#
+# The padding is also compatible with Neat's on-device pose decode: YoloV26Pose
+# requires the keypoint head's SLICE depth to be 51 but allows its INPUT depth to be
+# larger (see infer_*/keypoint_depth checks in core BoxDecodeStageSemantics.cpp), so
+# the 51-of-64 padded head is accepted as-is and Neat ignores the 13 pad channels.
 DEFAULT_ARCHIVES = {
-    "detection":    str(MODELS_DIR / "yolo11s.compile_ready_mpk.tar.gz"),
-    "segmentation": str(MODELS_DIR / "yolo11s-seg.compile_ready_mpk.tar.gz"),
+    # From the SiMa model zoo — see README "Model Download Command".
+    "detection":    str(MODELS_DIR / "yolo_11s_mpk.tar.gz"),
+    "segmentation": str(MODELS_DIR / "yolo_11s_seg_mpk.tar.gz"),
+    # Not published in the zoo (it has no YOLO-pose and no YOLOX), so these two are
+    # built by the graph-surgery flow in ../../model-compilation.
     "pose":         str(MODELS_DIR / "yolo26s-pose.compile_ready_mpk.tar.gz"),
     "yolox":        str(MODELS_DIR / "yolox_s.compile_ready_mpk.tar.gz"),
 }
 DEFAULT_TASKS = ["detection", "segmentation", "pose", "yolox"]
+
+# Neat on-device decode family per task, keyed by the archive's head contract.
+# See the module docstring: the family follows the HEAD SHAPE, not the model name.
+DECODE_FAMILY = {
+    "detection":    "YoloV8",       # zoo yolo_11s      : 64-ch DFL bbox + 80-ch class
+    "segmentation": "YoloV8Seg",    # zoo yolo_11s_seg  : + 32-ch mask coeff + 32x160 proto
+    "pose":         "YoloV26Pose",  # yolo26s-pose      : 4-ch l/t/r/b + 1-ch score + 51-ch kpt
+    "yolox":        "YoloX",        # yolox_s           : (4, 1, 80) triplets per scale
+}
+# Pose is single-class ("person"); the rest are COCO-80.
+NUM_CLASSES = {"detection": 80, "segmentation": 80, "yolox": 80, "pose": 1}
+
+# Input normalization, per MODEL FAMILY — not a detail you can share across all four.
+#
+# COCO_YOLO feeds the model x/255 (values in [0,1]). Every Ultralytics model wants that.
+# Megvii YOLOX does NOT: it is trained on RAW 0-255 pixels, so it needs normalization
+# turned off. Feed YOLOX the COCO_YOLO preset and it sees an image 255x too dark; its
+# objectness logits pin negative and it detects NOTHING — at full speed, with healthy
+# FPS and no error anywhere. Measured on COCO val 000000000139:
+#
+#            preset          obj logit max      boxes @0.25
+#            COCO_YOLO           -3.47                0
+#            None                +1.36                8   <- correct
+#   (CPU reference, raw 0-255)   +5.90
+#
+# This pairs with the archive: yolox_s is compiled with std=1/255 (models.yaml) so its
+# input quantization expects 0-255 (q_scale ~ 1.0, vs ~255 for the /255 models). BOTH
+# halves are required — the compile-time scale and the runtime preset must agree.
+NORMALIZE_PRESET = {
+    "detection":    "COCO_YOLO",
+    "segmentation": "COCO_YOLO",
+    "pose":         "COCO_YOLO",
+    "yolox":        "None",       # Megvii YOLOX: raw 0-255 input, no normalization.
+}
+
+# Every model graph now ends in an on-device BoxDecode stage, so they all publish a
+# decoded BBOX payload on the same endpoint. (This used to be "detections" for the
+# detection stream and "heads" for the raw-head streams.)
+MODEL_ENDPOINT = "detections"
 
 
 @dataclass
@@ -97,6 +157,9 @@ class Config:
     # Frames per stream excluded from the reported FPS/stage means (graph build,
     # model load and RTSP jitter-buffer fill all land on the first few frames).
     warmup_frames: int = 20
+    # How often the live time profile is printed to the terminal while running.
+    # 0 disables it and you only get the summary at exit.
+    profile_interval_s: float = 5.0
     # Run every stage of every stream on one thread (the original round-robin).
     # Slower by design; kept so the pipelined speedup stays reproducible.
     serial: bool = False
@@ -145,7 +208,7 @@ class Config:
 
 # ── runtime dep loading (board dist-packages, like the reference app) ─────────
 def load_runtime_dependencies() -> None:
-    global cv2, np, pyneat, dec
+    global cv2, np, pyneat, ov
     if pyneat is not None:
         return
     for path in glob.glob("/usr/lib/python3*/dist-packages"):
@@ -157,8 +220,8 @@ def load_runtime_dependencies() -> None:
     cv2, np, pyneat = cv2_module, np_module, pyneat_module
     if str(APP_DIR) not in sys.path:
         sys.path.insert(0, str(APP_DIR))
-    from src import decoders as decoders_module
-    dec = decoders_module
+    from src import overlay as overlay_module
+    ov = overlay_module
 
 
 # ── config parsing ────────────────────────────────────────────────────────────
@@ -187,6 +250,7 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         "top_k": ("top_k", int), "bitrate_kbps": ("bitrate_kbps", int),
         "queue_depth": ("queue_depth", int), "frames": ("frames", int),
         "num_streams": ("num_streams", int), "warmup_frames": ("warmup_frames", int),
+        "profile_interval": ("profile_interval_s", float),
         "pipeline_depth": ("pipeline_depth", int), "pull_timeout_ms": ("pull_timeout_ms", int),
         "cvu_pre_target": ("cvu_pre_target", str), "cvu_post_target": ("cvu_post_target", str),
         "duration_s": ("duration_s", float),
@@ -250,6 +314,8 @@ def parse_args(argv) -> Config:
                     help="single-threaded round-robin (the pre-pipelining behaviour)")
     ap.add_argument("--no-overlay", action="store_true",
                     help="skip host decode + NV12 annotation; isolates the model rate")
+    ap.add_argument("--profile-interval", type=float,
+                    help="seconds between live time-profile prints (0 = off, default 5)")
     ap.add_argument("--duration", type=float,
                     help="measure for this many seconds after warmup (shared-resource "
                          "throughput test); overrides --frames as the stop condition")
@@ -297,6 +363,8 @@ def parse_args(argv) -> Config:
         cfg.frames = a.frames
     if a.warmup_frames is not None:
         cfg.warmup_frames = a.warmup_frames
+    if a.profile_interval is not None:
+        cfg.profile_interval_s = a.profile_interval
     if a.pipeline_depth is not None:
         cfg.pipeline_depth = a.pipeline_depth
     if a.serial:
@@ -318,18 +386,34 @@ def parse_args(argv) -> Config:
 
 # ── time profiling ────────────────────────────────────────────────────────────
 # Each frame is timed stage by stage, so a slow stream can be attributed to a
-# specific stage rather than guessed at. Stage meanings:
-#   rtsp    wait + copy of one decoded NV12 frame out of the RTSP source graph
-#   prep    NV12 -> pyneat.Tensor for the model input
-#   infer   THE MODEL: push + pull (EV74 preprocess, MLA, on-device box decode)
-#   decode  task decode. detection = Neat's fused on-device decode (cheap);
-#           segmentation / pose / yolox = host A65 NumPy decode of the RAW heads
-#   overlay NV12 Y-plane annotation (boxes, labels, masks, skeletons)
-#   send    NV12 -> Tensor + push into the H.264/RTP UDP sender graph
+# specific stage rather than guessed at. Same stage names as main.cpp, so the two
+# implementations are directly comparable.
+#
+# Stage meanings — note that two of them do NOT measure what their name suggests,
+# because the stages either side of the model are PIPELINED on the device:
+#
+#   decode   pull + copy of one decoded NV12 frame out of the RTSP source graph.
+#            ARRIVAL-GATED: this thread blocks until the next frame exists, so on a
+#            healthy 60 fps stream it reads ~16.7 ms however fast the decoder is.
+#            That is the frame INTERVAL, not the decode cost. The H.264 decode runs
+#            on the hardware decoder and is not visible from the host. It only
+#            climbs above the interval once the decoder has genuinely fallen behind.
+#            (In main.cpp a dedicated source thread absorbs this wait; here it sits
+#            in the critical path, which is part of why Python delivers less.)
+#   prep     NV12 -> pyneat.Tensor for the model input.
+#   infer    THE MODEL: push + pull (EV74 preprocess, MLA, on-device box decode).
+#   postproc host-side read of the already-decoded payload + instance build. Every
+#            model now box-decodes ON DEVICE, so this is just a NumPy reshape. It
+#            used to be a full A65 NumPy decode of the raw heads (~340 ms for seg).
+#   overlay  NV12 Y-plane annotation (boxes, labels, masks, skeletons).
+#   encode   NV12 -> Tensor + push into the H.264/RTP UDP sender graph. This ENQUEUES
+#            to the encoder and returns, so it is encoder HEADROOM, not encode
+#            latency: near zero until the encoder falls behind, and only then does
+#            its backpressure surface here.
 #
 # `infer` is the number to read for "can this model do 60 fps": it is the model
-# stage alone, with no host decode and no overlay in it.
-STAGES = ("rtsp", "prep", "infer", "decode", "overlay", "send")
+# stage alone, with no host postproc and no overlay in it.
+STAGES = ("decode", "prep", "infer", "postproc", "overlay", "encode")
 
 
 class StageProfile:
@@ -340,6 +424,14 @@ class StageProfile:
         self.total: list = []
 
     def add(self, timings: dict, total_ms: float) -> None:
+        # There are two call sites (the serial path and the threaded output thread) and
+        # they build this dict independently. A key that drifts from STAGES would either
+        # KeyError deep inside a worker thread or, worse, silently drop a stage from the
+        # report. Fail loudly and say exactly which key is wrong.
+        if timings.keys() != self.samples.keys():
+            raise KeyError(
+                f"stage timings {sorted(timings)} do not match STAGES {sorted(self.samples)}"
+            )
         for name, value in timings.items():
             self.samples[name].append(value)
         self.total.append(total_ms)
@@ -364,6 +456,57 @@ class StageProfile:
         return len(self.total)
 
 
+# ── live time profile ─────────────────────────────────────────────────────────
+# ONE reporter prints the whole table every `profile_interval` seconds, so the terminal
+# shows stage timings as the run happens rather than only at exit. Every number is the mean
+# over THAT WINDOW (since the previous print), not a cumulative average — a cumulative mean
+# hides a stream that degrades halfway through the run.
+#
+# Same columns and same window semantics as main.cpp, so the two are directly comparable.
+class LiveCursor:
+    """Where the previous window ended, for one stream."""
+
+    def __init__(self) -> None:
+        self.n = 0            # index into profile.samples[*] / profile.total
+        self.processed = 0
+        self.t = 0.0
+
+
+def print_live_profile(contexts, cursors, start: float) -> None:
+    now = time.perf_counter()
+    out = [f"\n── t={now - start:5.1f}s ─── ms/frame, mean over this window ───"]
+    out.append(f"{'stream':<7}{'task':<14}"
+               + "".join(f"{name:>9}" for name in STAGES)
+               + f"{'latency':>9}{'mdl fps':>9}{'deliv fps':>11}{'dropped':>9}{'objs':>6}")
+
+    aggregate = 0.0
+    for ctx, cur in zip(contexts, cursors):
+        # len() first, then slice to it: list.append is atomic under the GIL, so a slice
+        # bounded by a previously-read length can never see a partially written element.
+        n = len(ctx.profile.total)
+
+        def window_mean(values: list) -> float:
+            chunk = values[cur.n:n]
+            return sum(chunk) / len(chunk) if chunk else 0.0
+
+        means = {name: window_mean(ctx.profile.samples[name]) for name in STAGES}
+        latency = window_mean(ctx.profile.total)
+
+        dt = now - cur.t
+        delivered = (ctx.processed - cur.processed) / dt if dt > 0 else 0.0
+        model_fps = 1000.0 / means["infer"] if means["infer"] > 0 else 0.0
+        cur.n, cur.processed, cur.t = n, ctx.processed, now
+        aggregate += delivered
+
+        out.append(f"{ctx.spec.stream_id:<7}{ctx.spec.task:<14}"
+                   + "".join(f"{means[name]:>9.2f}" for name in STAGES)
+                   + f"{latency:>9.2f}{model_fps:>9.1f}{delivered:>11.1f}"
+                   f"{ctx.dropped:>9}{ctx.last_objs:>6}")
+
+    out.append(" " * 52 + f"aggregate delivered {aggregate:.1f} fps")
+    print("\n".join(out), flush=True)
+
+
 # ── stream context ────────────────────────────────────────────────────────────
 @dataclass
 class StreamContext:
@@ -374,7 +517,6 @@ class StreamContext:
     width: int
     height: int
     fps: int
-    is_builtin_decode: bool
     processed: int = 0
     last_objs: int = 0
     dropped: int = 0
@@ -437,21 +579,25 @@ def make_model(cfg: Config, spec: StreamSpec):
     opt.preprocess.resize.pad_value = 114
     opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.NV12
     opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
-    opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+    # Normalization is per-family: Ultralytics wants x/255, Megvii YOLOX wants raw
+    # 0-255. See NORMALIZE_PRESET — getting this wrong silently zeroes the detections.
+    opt.preprocess.preset = getattr(pyneat.NormalizePreset, NORMALIZE_PRESET[spec.task])
     # Pin the pre/post CVU stages when asked. Leaving these AUTO lets the planner
     # drop a raw-head model's detessellate+dequantize onto the A65, which is
     # ~180x slower than the EV74 for the pose head layout.
     opt.processcvu.pre_run_target = cfg.cvu_pre_target
     opt.processcvu.post_run_target = cfg.cvu_post_target
-    if spec.task == "detection":
-        # compile_ready yolo11s exposes the 6 YoloV26 grouped tensors -> on-device decode.
-        opt.decode_type = pyneat.BoxDecodeType.YoloV26
-        opt.score_threshold = cfg.score_threshold
-        opt.nms_iou_threshold = cfg.nms_iou
-        opt.top_k = cfg.top_k
-        opt.num_classes = 80
-    # seg / pose / yolox: leave decode_type Unspecified -> model emits RAW heads,
-    # decoded on the host in src/decoders.py. NOT setting boxdecode_original_* (deprecated).
+    # Every task decodes ON-DEVICE. Leaving decode_type Unspecified would make the
+    # model emit raw per-scale heads and force a host (A65) NumPy decode — which is
+    # exactly what this app used to do, and what made seg/pose/yolox slow.
+    family = DECODE_FAMILY[spec.task]
+    opt.decode_type = getattr(pyneat.BoxDecodeType, family)
+    opt.score_threshold = cfg.score_threshold
+    opt.nms_iou_threshold = cfg.nms_iou
+    opt.top_k = cfg.top_k
+    opt.num_classes = NUM_CLASSES[spec.task]
+    # NOT setting boxdecode_original_width/height — deprecated in core/include/model/Model.h;
+    # box decode reads the frame geometry from the preprocess metadata.
     return pyneat.Model(spec.model_path, opt)
 
 
@@ -466,9 +612,10 @@ def build_model_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):
     g = pyneat.Graph(f"model_{spec.task}_{spec.stream_id}")
     g.add(pyneat.nodes.input(make_nv12_input_options(w, h, fps)))
     g.add(make_model(cfg, spec))
-    endpoint = "detections" if spec.task == "detection" else "heads"
-    g.add(pyneat.nodes.output(endpoint, pyneat.OutputOptions.every_frame(1)))
-    return g, endpoint
+    # One endpoint for all four tasks: the model graph ends in an on-device BoxDecode
+    # stage, so what comes out is always a decoded BBOX payload, never raw heads.
+    g.add(pyneat.nodes.output(MODEL_ENDPOINT, pyneat.OutputOptions.every_frame(1)))
+    return g, MODEL_ENDPOINT
 
 
 def build_video_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):
@@ -550,79 +697,125 @@ def annotate(nv12, w, h, result, task, banner) -> int:
         _fill_rect(y, x1, y1, x1 + th, y2, 235)
         _fill_rect(y, x2 - th, y1, x2, y2, 235)
         if task in ("detection", "segmentation", "yolox"):
-            label = dec.class_label(d.class_id)
+            label = ov.class_label(d.class_id)
         else:
             label = "PERSON"
         ly = y1 - 6 if y1 >= 20 else min(h - 8, y1 + 18)
+        # LINE_8, not LINE_AA. Antialiased glyphs cost ~2x for a label nobody reads
+        # at subpixel precision (0.72 -> 0.39 ms per frame at 13 objects).
         cv2.putText(y, f"{label} {d.score:.2f}", (x1, ly),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, 235, 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, 235, 1, cv2.LINE_8)
         if d.mask is not None:
-            mh, mw = d.mask.shape
             bw, bh = x2 - x1, y2 - y1
             if bw > 0 and bh > 0:
-                m = cv2.resize(d.mask, (bw, bh), interpolation=cv2.INTER_NEAREST).astype(bool)
+                m = cv2.resize(d.mask, (bw, bh), interpolation=cv2.INTER_NEAREST)
                 region = y[y1:y2, x1:x2]
                 if region.shape[:2] == m.shape:
-                    region[m] = np.clip(region[m].astype(np.int16) + 60, 0, 255).astype(np.uint8)
+                    # cv2.add(mask=) instead of `region[m] = clip(region[m] + 60)`.
+                    # Two wins, and the second is the big one:
+                    #   1. 27.8 -> 5.2 ms per frame (13 objects) — no fancy-index copies.
+                    #   2. cv2 RELEASES THE GIL; NumPy fancy indexing does not. With four
+                    #      overlay threads (one per stream) the NumPy path serialised all
+                    #      four, so its cost showed up multiplied in wall-clock.
+                    cv2.add(region, 60, dst=region, mask=m)
         if d.keypoints is not None:
             for kx, ky, kv in d.keypoints:
                 if kv < 0.3:
                     continue
                 cx, cy = int(kx), int(ky)
                 _fill_rect(y, cx - 2, cy - 2, cx + 3, cy + 3, 255)
-            for a, b in dec.COCO_SKELETON:
+            for a, b in ov.COCO_SKELETON:
                 if a < len(d.keypoints) and b < len(d.keypoints):
                     if d.keypoints[a, 2] >= 0.3 and d.keypoints[b, 2] >= 0.3:
                         cv2.line(y, (int(d.keypoints[a, 0]), int(d.keypoints[a, 1])),
-                                 (int(d.keypoints[b, 0]), int(d.keypoints[b, 1])), 200, 1, cv2.LINE_AA)
+                                 (int(d.keypoints[b, 0]), int(d.keypoints[b, 1])), 200, 1, cv2.LINE_8)
         drawn += 1
-    cv2.putText(y, banner, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 235, 2, cv2.LINE_AA)
+    cv2.putText(y, banner, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 235, 2, cv2.LINE_8)
     return drawn
 
 
 # ── per-stream service (preserves stream identity) ────────────────────────────
-def decode_for_task(cfg, task, tensors, w, h):
-    mw, mh = cfg.model_width, cfg.model_height
-    kw = dict(model_w=mw, model_h=mh, score_thr=cfg.score_threshold,
-              iou_thr=cfg.nms_iou, top_k=cfg.top_k)
-    if task == "segmentation":
-        return dec.decode_segmentation(tensors, w, h, **kw)
-    if task == "pose":
-        return dec.decode_pose(tensors, w, h, **kw)
-    if task == "yolox":
-        return dec.decode_yolox(tensors, w, h, **kw)
-    return dec.decode_detection(tensors, w, h, **kw)
+def _boxes_to_detections(arr, score_threshold, keep_index=False):
+    """Neat hands back boxes as float32 [N, 6] = (x1, y1, x2, y2, score, class_id),
+    already NMS'd, already clamped to frame pixels. All we do is drop sub-threshold
+    rows and wrap them for the overlay."""
+    out = []
+    arr = np.asarray(arr, dtype=np.float32).reshape((-1, 6))
+    for i, (x1, y1, x2, y2, sc, cid) in enumerate(arr):
+        if sc < score_threshold:
+            continue
+        det = ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid))
+        out.append((i, det) if keep_index else det)
+    return out
 
 
 def decode_sample(cfg, ctx: StreamContext, tensors, fw: int, fh: int):
-    """Task decode for one model output. Detection uses Neat's fused on-device
-    box decode; segmentation / pose / yolox decode the RAW heads on the host."""
-    if ctx.is_builtin_decode:
-        result = dec.DecodeResult([])
-        decoded = pyneat.decode_bbox(tensors, clamp_to=(fw, fh), top_k=cfg.top_k)
-        for t in decoded:
-            arr = np.asarray(t.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-            for x1, y1, x2, y2, sc, cid in arr:
-                if sc < cfg.score_threshold:
-                    continue
-                result.detections.append(dec.Detection(float(x1), float(y1), float(x2),
-                                                        float(y2), float(sc), int(cid)))
+    """Read the decoded BBOX payload produced by the model graph's on-device
+    BoxDecode stage. No anchor grids, no sigmoid, no NMS, no mask assembly here —
+    the MLA/EV74 did all of it. This function only reshapes and thresholds.
+
+    pyneat gives one reader per payload kind (core/python/src/module.cpp):
+      decode_bbox         -> boxes [N, 6]
+      decode_pose         -> boxes [N, 6] + keypoints [N, 17, 3]  (x, y, visibility)
+      decode_segmentation -> boxes [N, 6] + masks     [N, 160, 160] uint8
+    """
+    task = ctx.spec.task
+    result = ov.DecodeResult([])
+
+    if task == "pose":
+        for r in pyneat.decode_pose(tensors, clamp_to=(fw, fh), top_k=cfg.top_k):
+            kpts = np.asarray(r.keypoints.to_numpy(copy=True), dtype=np.float32)
+            kpts = kpts.reshape((-1, 17, 3))
+            for i, det in _boxes_to_detections(r.boxes.to_numpy(copy=True),
+                                               cfg.score_threshold, keep_index=True):
+                if i < kpts.shape[0]:
+                    det.keypoints = kpts[i]
+                result.detections.append(det)
         return result
-    if os.environ.get("QSQM_DEBUG") and ctx.processed == 0:
-        shapes = []
-        for t in tensors:
-            a = t.to_numpy(copy=True) if hasattr(t, "to_numpy") else np.asarray(t)
-            shapes.append(tuple(a.shape))
-        print(f"[dbg] stream {ctx.spec.stream_id} {ctx.spec.task}: "
-              f"{len(tensors)} raw tensors shapes={shapes}", file=sys.stderr, flush=True)
-    return decode_for_task(cfg, ctx.spec.task, tensors, fw, fh)
+
+    if task == "segmentation":
+        for r in pyneat.decode_segmentation(tensors, clamp_to=(fw, fh), top_k=cfg.top_k):
+            masks = np.asarray(r.masks.to_numpy(copy=True), dtype=np.uint8)
+            masks = masks.reshape((-1, 160, 160))
+            for i, det in _boxes_to_detections(r.boxes.to_numpy(copy=True),
+                                               cfg.score_threshold, keep_index=True):
+                if i < masks.shape[0]:
+                    # Neat returns a full 160x160 model-space mask per instance. The
+                    # overlay wants the box crop, so map the box back into mask space.
+                    det.mask = crop_mask_to_box(masks[i], det, fw, fh,
+                                                cfg.model_width, cfg.model_height)
+                result.detections.append(det)
+        return result
+
+    # detection + yolox: plain boxes.
+    for t in pyneat.decode_bbox(tensors, clamp_to=(fw, fh), top_k=cfg.top_k):
+        result.detections.extend(
+            _boxes_to_detections(t.to_numpy(copy=True), cfg.score_threshold))
+    return result
+
+
+def crop_mask_to_box(mask, det, frame_w, frame_h, model_w, model_h):
+    """Neat's segmentation mask is [160,160] in LETTERBOXED MODEL space (160 = 640/4).
+    The box is already in frame pixels, so undo the letterbox to find the box's
+    footprint in the mask and return just that crop."""
+    scale = min(model_w / frame_w, model_h / frame_h)
+    pad_x = (model_w - frame_w * scale) / 2.0
+    pad_y = (model_h - frame_h * scale) / 2.0
+    q = model_w / mask.shape[1]          # model px per mask px (640/160 = 4)
+    x1 = int(np.clip((det.x1 * scale + pad_x) / q, 0, mask.shape[1] - 1))
+    y1 = int(np.clip((det.y1 * scale + pad_y) / q, 0, mask.shape[0] - 1))
+    x2 = int(np.clip((det.x2 * scale + pad_x) / q, 0, mask.shape[1]))
+    y2 = int(np.clip((det.y2 * scale + pad_y) / q, 0, mask.shape[0]))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return mask[y1:y2, x1:x2]
 
 
 def service_stream(cfg, ctx: StreamContext) -> bool:
     """Serial path: one thread runs every stage of this stream, timed per stage."""
     timings: dict = {}
     frame_start = time.perf_counter()
-    endpoint = "detections" if ctx.is_builtin_decode else "heads"
+    endpoint = MODEL_ENDPOINT
 
     mark = time.perf_counter()
     frames = ctx.source_run.pull_tensors(timeout_ms=20000)
@@ -630,7 +823,7 @@ def service_stream(cfg, ctx: StreamContext) -> bool:
         print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout", file=sys.stderr)
         return False
     nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
-    timings["rtsp"] = (time.perf_counter() - mark) * 1000.0
+    timings["decode"] = (time.perf_counter() - mark) * 1000.0
 
     mark = time.perf_counter()
     tensor = make_nv12_tensor(nv12, fw, fh)
@@ -655,7 +848,7 @@ def service_stream(cfg, ctx: StreamContext) -> bool:
 
     mark = time.perf_counter()
     result = None if cfg.no_overlay else decode_sample(cfg, ctx, extract_tensors(sample), fw, fh)
-    timings["decode"] = (time.perf_counter() - mark) * 1000.0
+    timings["postproc"] = (time.perf_counter() - mark) * 1000.0
 
     mark = time.perf_counter()
     if result is not None:
@@ -666,7 +859,7 @@ def service_stream(cfg, ctx: StreamContext) -> bool:
     mark = time.perf_counter()
     if not ctx.video_run.push([make_nv12_tensor(nv12, fw, fh)]):
         raise RuntimeError("video push failed")
-    timings["send"] = (time.perf_counter() - mark) * 1000.0
+    timings["encode"] = (time.perf_counter() - mark) * 1000.0
 
     ctx.profile.add(timings, (time.perf_counter() - frame_start) * 1000.0)
     ctx.processed += 1
@@ -776,7 +969,7 @@ def run(cfg: Config) -> int:
         _, video_run, port = build_video_graph(cfg, s, w, h, fps)
         contexts.append(StreamContext(
             spec=s, source_run=source_run, model_run=model_run, video_run=video_run,
-            width=w, height=h, fps=fps, is_builtin_decode=(s.task == "detection")))
+            width=w, height=h, fps=fps))
         print(f"Stream {s.stream_id}: {s.task:12s} {Path(s.model_path).name}")
         print(f"  RTSP {s.rtsp_url} -> udp://{cfg.udp_host}:{port}")
         print(f"  Viewer: gst-launch-1.0 -v udpsrc port={port} "
@@ -804,6 +997,11 @@ def run_serial(cfg, contexts: list, warmup: int) -> int:
     start = time.perf_counter()
     steady_start = None
     total = 0
+    # Live profile: no per-frame heartbeat, just the table on an interval.
+    cursors = [LiveCursor() for _ in contexts]
+    for cur in cursors:
+        cur.t = start
+    next_profile = (start + cfg.profile_interval_s) if cfg.profile_interval_s > 0 else None
     try:
         while cfg.frames <= 0 or min(c.processed for c in contexts) < cfg.frames:
             for ctx in contexts:
@@ -811,13 +1009,13 @@ def run_serial(cfg, contexts: list, warmup: int) -> int:
                     continue
                 if service_stream(cfg, ctx):
                     total += 1
-                    if ctx.processed % 50 == 0:
-                        print(f"stream={ctx.spec.stream_id} task={ctx.spec.task} "
-                              f"frame={ctx.processed} objs={ctx.last_objs}", flush=True)
             if steady_start is None and min(c.processed for c in contexts) >= warmup:
                 steady_start = time.perf_counter()
                 for ctx in contexts:
                     ctx.steady_base = ctx.processed
+            if next_profile is not None and time.perf_counter() >= next_profile:
+                print_live_profile(contexts, cursors, start)
+                next_profile = time.perf_counter() + cfg.profile_interval_s
             time.sleep(0)
     finally:
         if steady_start is not None:
@@ -892,14 +1090,14 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                           file=sys.stderr)
                     continue
                 nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
-                rtsp_ms = (time.perf_counter() - mark) * 1000.0
+                decode_ms = (time.perf_counter() - mark) * 1000.0
 
                 mark = time.perf_counter()
                 tensor = make_nv12_tensor(nv12, fw, fh)
                 prep_ms = (time.perf_counter() - mark) * 1000.0
 
                 ctx.dropped += _drop_oldest_put(
-                    ctx.model_q, (nv12, tensor, fw, fh, rtsp_ms, prep_ms, time.perf_counter()))
+                    ctx.model_q, (nv12, tensor, fw, fh, decode_ms, prep_ms, time.perf_counter()))
         except Exception as exc:
             errors.append(f"source {ctx.spec.stream_id}: {exc}")
             stop.set()
@@ -907,7 +1105,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
     def model_thread(ctx: StreamContext) -> None:
         """Sole pusher AND sole puller of THIS stream's model Run, so the graph's
         FIFO ordering keeps the Nth sample matched to the Nth frame pushed."""
-        endpoint = "detections" if ctx.is_builtin_decode else "heads"
+        endpoint = MODEL_ENDPOINT
         pending: list = []
         try:
             while True:
@@ -920,16 +1118,16 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                     except queue_mod.Empty:
                         item = None
                 if item is not None:
-                    nv12, tensor, fw, fh, rtsp_ms, prep_ms, t_in = item
+                    nv12, tensor, fw, fh, decode_ms, prep_ms, t_in = item
                     push_mark = time.perf_counter()
                     if not ctx.model_run.push([tensor]):
                         print(f"[warn] stream {ctx.spec.stream_id}: model push failed",
                               file=sys.stderr)
                         continue
-                    pending.append((nv12, fw, fh, rtsp_ms, prep_ms, t_in, push_mark))
+                    pending.append((nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark))
 
                 if pending and (len(pending) >= cfg.pipeline_depth or item is None):
-                    nv12, fw, fh, rtsp_ms, prep_ms, t_in, push_mark = pending.pop(0)
+                    nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark = pending.pop(0)
                     # Four model graphs share one MLA. Under contention a pull can
                     # block far longer than a solo run would suggest, and pyneat
                     # RAISES on pull timeout rather than returning None. Treat that
@@ -951,7 +1149,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                         continue
                     infer_ms = (time.perf_counter() - push_mark) * 1000.0
                     ctx.dropped += _drop_oldest_put(
-                        ctx.out_q, (nv12, sample, fw, fh, rtsp_ms, prep_ms, infer_ms, t_in))
+                        ctx.out_q, (nv12, sample, fw, fh, decode_ms, prep_ms, infer_ms, t_in))
         except Exception as exc:
             errors.append(f"model {ctx.spec.stream_id}: {exc}")
             stop.set()
@@ -960,7 +1158,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
         try:
             while not stop.is_set():
                 try:
-                    nv12, sample, fw, fh, rtsp_ms, prep_ms, infer_ms, t_in = \
+                    nv12, sample, fw, fh, decode_ms, prep_ms, infer_ms, t_in = \
                         ctx.out_q.get(timeout=0.2)
                 except queue_mod.Empty:
                     continue
@@ -968,7 +1166,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                 mark = time.perf_counter()
                 result = (None if cfg.no_overlay
                           else decode_sample(cfg, ctx, extract_tensors(sample), fw, fh))
-                decode_ms = (time.perf_counter() - mark) * 1000.0
+                postproc_ms = (time.perf_counter() - mark) * 1000.0
 
                 mark = time.perf_counter()
                 if result is not None:
@@ -979,25 +1177,37 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                 mark = time.perf_counter()
                 if not ctx.video_run.push([make_nv12_tensor(nv12, fw, fh)]):
                     raise RuntimeError("video push failed")
-                send_ms = (time.perf_counter() - mark) * 1000.0
+                encode_ms = (time.perf_counter() - mark) * 1000.0
 
+                # Keys MUST match STAGES — StageProfile.samples is keyed on it.
                 ctx.profile.add(
-                    {"rtsp": rtsp_ms, "prep": prep_ms, "infer": infer_ms,
-                     "decode": decode_ms, "overlay": overlay_ms, "send": send_ms},
+                    {"decode": decode_ms, "prep": prep_ms, "infer": infer_ms,
+                     "postproc": postproc_ms, "overlay": overlay_ms, "encode": encode_ms},
                     (time.perf_counter() - t_in) * 1000.0,
                 )
                 ctx.processed += 1
                 note_steady()
-                if ctx.processed % 60 == 0:
-                    print(f"stream={ctx.spec.stream_id} task={ctx.spec.task} "
-                          f"frame={ctx.processed} objs={ctx.last_objs} "
-                          f"dropped={ctx.dropped}", flush=True)
+                # No per-frame heartbeat: the reporter thread prints the live profile.
                 if (cfg.duration_s <= 0 and cfg.frames > 0
                         and all(c.processed >= cfg.frames for c in contexts)):
                     stop.set()
         except Exception as exc:
             errors.append(f"output {ctx.spec.stream_id}: {exc}")
             stop.set()
+
+    run_start = time.perf_counter()
+    cursors = [LiveCursor() for _ in contexts]
+    for cur in cursors:
+        cur.t = run_start
+
+    def reporter_thread() -> None:
+        """Print the live time profile every profile_interval_s until the run stops."""
+        if cfg.profile_interval_s <= 0:
+            return
+        # Event.wait() returns True the moment stop is set, so Ctrl-C and --duration are
+        # honoured immediately instead of after a full interval of sleeping.
+        while not stop.wait(cfg.profile_interval_s):
+            print_live_profile(contexts, cursors, run_start)
 
     threads = []
     for ctx in contexts:
@@ -1007,6 +1217,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                                         name=f"mdl{ctx.spec.stream_id}", daemon=True))
         threads.append(threading.Thread(target=output_thread, args=(ctx,),
                                         name=f"out{ctx.spec.stream_id}", daemon=True))
+    threads.append(threading.Thread(target=reporter_thread, name="profile", daemon=True))
     print(f"\npipelined: {len(contexts)} x (source + model + output) threads, "
           f"pipeline_depth={cfg.pipeline_depth}, overlay="
           f"{'off' if cfg.no_overlay else 'on'}", flush=True)
