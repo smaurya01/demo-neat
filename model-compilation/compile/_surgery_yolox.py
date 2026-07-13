@@ -7,21 +7,31 @@ Ultralytics YOLO family, so it needs its own surgery rather than the shared
 
   * No transformer attention block -> no MatMul->Einsum rewrite needed.
   * Decoupled head per scale: a reg branch (4 = cx,cy,w,h, raw), an obj branch
-    (1, already Sigmoid-activated in the exported ONNX) and a cls branch
-    (80, already Sigmoid-activated). They are Concat'd to [1,85,H,W] per scale.
-  * No DFL: box regression is 4 raw channels decoded with grid+stride offsets
-    on the CPU (YOLOX decode), analogous to the Ultralytics decode we strip.
+    (1) and a cls branch (80). In the exported ONNX the obj/cls branches are
+    Sigmoid-activated and all three are Concat'd to [1,85,H,W] per scale.
+  * No DFL: box regression is 4 raw channels decoded with grid+stride offsets.
   * The exported ONNX tail flattens the 3 scales:
         [1,85,H,W] --Reshape--> [1,85,N] --Concat--> [1,85,8400]
         --Transpose--> [1,8400,85]
-    That transpose/reshape flatten is postprocess layout only; we cut it and
-    expose the three per-scale [1,85,H,W] head tensors so the compiler keeps a
-    clean NCHW conv-head boundary and the decode stays on the host.
+    That transpose/reshape flatten is postprocess layout only, and so is the
+    per-scale Concat. We cut both.
 
-Node/tensor names are pinned from the official 0.1.1rc0 yolox_s.onnx (opset 11).
-To rediscover them on another export: trace back from graph output through the
-final Transpose -> Concat -> per-scale Reshape -> per-scale Concat; the Concat
-inputs at [1,85,80,80]/[1,85,40,40]/[1,85,20,20] are the head tensors.
+WHY THE HEADS ARE EXPOSED SPLIT, NOT PACKED
+-------------------------------------------
+Neat's on-device decoder (`BoxDecodeType::YoloX`) does not accept a packed
+[1,85,H,W] head. Its contract is three SEPARATE tensors per scale, interleaved
+scale-major -- (bbox, obj, cls) x 3 -- with depths (4, 1, 80). See
+`infer_yolox_interleaved_class_depth` in core/src/pipeline/internal/sima/
+stagesemantics/BoxDecodeStageSemantics.cpp, which rejects the contract outright
+unless the tensor count is a multiple of 3 and the depths are exactly 4/1/N.
+An earlier version of this surgery exposed the packed Concat output, which meant
+YOLOX could not use the Neat decoder at all and had to be decoded in NumPy on
+the host -- the single biggest cost in the quad-stream app.
+
+We expose the PRE-Sigmoid obj/cls logits, not the exported Sigmoid outputs,
+because Neat forces `score_activation = Sigmoid` for the YoloX family
+(`apply_raw_yolov6_yolox_compiled_payload_overrides`). Handing it already-
+activated scores would apply sigmoid twice and silently corrupt every score.
 """
 
 from __future__ import annotations
@@ -39,12 +49,30 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUT_NAME = "images"
 INPUT_SHAPE = [1, 3, 640, 640]
 
-# Per-scale decoupled-head Concat outputs in the official yolox_s.onnx.
-HEAD_TENSORS = [
-    ("yolox_head_0", "798", 85, 80, 80),
-    ("yolox_head_1", "824", 85, 40, 40),
-    ("yolox_head_2", "850", 85, 20, 20),
+# Split decoupled-head branches in the official yolox_s.onnx, pinned by tensor name.
+#
+# Per scale the exported graph is:
+#     reg  Conv    -> 794 / 820 / 846        [1, 4,H,W]   raw cx,cy,w,h
+#     obj  Conv    -> 795 / 821 / 847        [1, 1,H,W]   LOGIT (Sigmoid consumes it)
+#     cls  Conv    -> 785 / 811 / 837        [1,80,H,W]   LOGIT (Sigmoid consumes it)
+#     Concat(reg, Sigmoid(obj), Sigmoid(cls)) -> 798 / 824 / 850   [1,85,H,W]
+#
+# We take the three branch tensors and drop the Concat. The obj/cls names are the
+# Sigmoid *inputs*, so the compiled archive carries logits and Neat applies the
+# sigmoid itself (see module docstring).
+#
+# Emitted scale-major as (bbox, obj, cls) triplets -- the order YoloX decode expects.
+#
+# To rediscover on another export: walk back from each graph output through
+# Transpose -> Concat -> per-scale Reshape -> per-scale Concat, then take that
+# Concat's three inputs; follow the 2nd and 3rd back through their Sigmoid.
+HEAD_SCALES = [
+    # (suffix, H, W, reg_tensor, obj_logit_tensor, cls_logit_tensor)
+    ("0", 80, 80, "794", "795", "785"),
+    ("1", 40, 40, "820", "821", "811"),
+    ("2", 20, 20, "846", "847", "837"),
 ]
+REG_C, OBJ_C, CLS_C = 4, 1, 80
 
 
 def all_node_outputs(model):
@@ -79,17 +107,28 @@ def main() -> int:
     onnx.checker.check_model(graph)
 
     available = all_node_outputs(graph)
-    missing = [t for _, t, *_ in HEAD_TENSORS if t not in available]
+    wanted = [t for _, _, _, *tensors in HEAD_SCALES for t in tensors]
+    missing = [t for t in wanted if t not in available]
     if missing:
         raise SystemExit(f"expected head tensors not found: {missing}")
 
     new_nodes = []
     new_outputs = []
     output_names = []
-    for name, src, c, h, w in HEAD_TENSORS:
-        new_nodes.append(helper.make_node("Identity", [src], [name], name=f"/sima_t5_heads/{name}/Identity"))
-        new_outputs.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, c, h, w]))
-        output_names.append(name)
+    # Scale-major (bbox, obj, cls) triplets: BoxDecodeType::YoloX / Split3Interleaved.
+    for suffix, h, w, reg_t, obj_t, cls_t in HEAD_SCALES:
+        for role, src, depth in (
+            (f"bbox_{suffix}", reg_t, REG_C),
+            (f"obj_logit_{suffix}", obj_t, OBJ_C),
+            (f"class_logit_{suffix}", cls_t, CLS_C),
+        ):
+            new_nodes.append(
+                helper.make_node("Identity", [src], [role], name=f"/sima_t5_heads/{role}/Identity")
+            )
+            new_outputs.append(
+                helper.make_tensor_value_info(role, TensorProto.FLOAT, [1, depth, h, w])
+            )
+            output_names.append(role)
 
     graph.graph.node.extend(new_nodes)
     del graph.graph.output[:]
@@ -110,8 +149,12 @@ def main() -> int:
         "attention_rewrites": [],
         "outputs": output_names,
         "num_outputs": len(output_names),
-        "contract": "YOLOX per-scale decoupled heads [1,85,H,W]; flatten/transpose tail removed; grid+stride decode on host",
-        "head_layout": "channels 0:4 = reg(cx,cy,w,h raw), 4 = obj(sigmoid), 5:85 = cls(sigmoid)",
+        "contract": (
+            "YOLOX split decoupled heads, scale-major (bbox,obj,cls) triplets with depths "
+            "(4,1,80); per-scale Concat and flatten/transpose tail removed. Matches "
+            "BoxDecodeType::YoloX (Split3Interleaved) -> on-device Neat decode."
+        ),
+        "head_layout": "bbox_i = reg(cx,cy,w,h raw); obj_logit_i, class_logit_i = PRE-sigmoid logits (Neat applies sigmoid)",
     }
     (report_dir / "compile_ready_surgery.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
