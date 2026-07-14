@@ -3,8 +3,6 @@
 Learn Neat application concepts through runnable notebooks. Start at `I-easy/01`, work down. Each
 notebook is a markdown concept cell, a short runnable code cell, then a brief interpretation.
 
-← Back to the [repo README](../README.md) · Setup first: [`installation/`](../installation/README.md)
-
 ## Running On The DevKit
 
 Run these **on the DevKit board**, so the notebook kernel can import and execute `pyneat`.
@@ -14,15 +12,26 @@ board-side with no copying.
 Activate the pyneat environment, install Jupyter if needed, and start the notebook server:
 
 ```bash
+ssh sima@<devkit-ip>
+
 source $HOME/pyneat/bin/activate
-python -m pip install notebook
+
+python -m pip install notebook (only once)
+
+cd /workspace/demo-neat
 jupyter notebook --no-browser --ip=0.0.0.0 --port=8888
 ```
 
-Then open the DevKit notebook URL from your machine:
+Then open the DevKit notebook URL from your machine (host system):
 
-```text
-http://<devkit-ip>:8888/tree
+```bash
+http://modalix:8888/tree?token=************************
+```
+
+Replace the `modalix` name in above URL with devkit ip.
+
+```bash
+http://192.168.135.203:8888/tree?token=**************
 ```
 
 ## I — Easy

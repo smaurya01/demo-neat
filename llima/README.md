@@ -4,19 +4,9 @@ This folder teaches **LLiMa** — the toolchain that prepares and runs generativ
 ASR) on a Modalix DevKit — and the **`pyneat.genai`** Python API you use to call those models from an
 application.
 
-← Back to the [repo README](../README.md) · Setup first: [`installation/`](../installation/README.md)
-
-> **Nothing in this folder has been executed by the authors.** Every LLM/VLM/ASR run and every GenAI
-> compile is written copy-paste ready with expected output, for **you** to run on the DevKit. See
-> [What has been run, and what has not](../README.md#what-has-been-run-and-what-has-not).
-
 Everything here is written to run on the **Modalix DevKit**. The notebooks follow the same house
 style as `../tutorial/I-easy`: a markdown concept cell, then a short runnable code cell, then a brief
 interpretation.
-
-> Loading an LLM, VLM, or ASR model is hardware-bound: it needs the DevKit, several GB of memory, and
-> a minute or two. Those commands are given as text you copy and run on the board. The cheap CLI
-> probes (`llima --help`, `llima list`, `llima search`) appear inline as text.
 
 ## Folder map
 
@@ -46,14 +36,18 @@ llima/
 
 The five sections build on each other:
 
-- **`01-llima-basics/`** — what LLiMa is and the `llima` CLI, subcommand by subcommand.
-- **`02-run-llm-vlm/`** — run LLMs, VLMs, and ASR from Python via `pyneat.genai`.
+- **[`01-llima-basics`](./01-llima-basics/llima-introduction.ipynb)** — what LLiMa is and the `llima` CLI, subcommand by subcommand.
+
+- **[`02-run-llm-vlm`](./02-run-llm-vlm)** — run LLMs, VLMs, and ASR from Python via `pyneat.genai`.
   See [`02-run-llm-vlm/01_run_llm.ipynb`](02-run-llm-vlm/01_run_llm.ipynb).
+
 - **[`03-yolo-plus-vlm/`](03-yolo-plus-vlm/01_detection_to_vlm.ipynb)** — trigger-based
   detection → VLM captioning (pairs with `../apps/detection-vlm-assistant`).
+
 - **[`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb)** — bring-your-own
   LLM/VLM compilation via the host-side `llima-compile` tool, plus a
   [triage checklist](04-llm-vlm-compilation/notes/triage_checklist.md).
+
 - **[`05-genai-server/`](05-genai-server/01_genai_server.ipynb)** — `pyneat.genai.GenAIServer`:
   one OpenAI-compatible HTTP server hosting an LLM/VLM + ASR, with a runnable start/client/stop walkthrough.
 
@@ -62,16 +56,6 @@ The five sections build on each other:
 > compilation is a separate **host-side `llima-compile` (Model Compiler)** tool. Its exact flags
 > should be confirmed against the official SiMa documentation. The load-bearing, testable part — the
 > deployed model-directory contract — is verified against `core/src/genai/GenAIInternal.cpp`.
-
-## Two layers, do not confuse them
-
-| Layer | What it is | Where it runs | Covered in |
-| --- | --- | --- | --- |
-| **`llima` CLI** | Prepares models: search a catalog, pull weights, list/remove local models, and quick-test with `run` / `benchmark-server`. | `/usr/bin/llima` on the DevKit. | `01-llima-basics/llima-introduction.ipynb` |
-| **`pyneat.genai` API** | The application-facing Python API you call from your own code (`GenAIModel`, `VisionLanguageModel`, `ASRModel`, `GenAIServer`). | Your Python process on the DevKit. | `02-run-llm-vlm/*` |
-
-LLiMa **prepares** a model directory; `pyneat.genai` **runs** that directory from an app. The
-notebooks in `02-run-llm-vlm` point at the same model directories the `llima` CLI produced.
 
 ## Models
 
@@ -87,25 +71,44 @@ and `llima pull <model-id>` for any you need.
 
 ## How to run these notebooks
 
-`pyneat` and `llima` live **on the DevKit**, not in the SDK container. Edit the notebooks on your host
-(`/workspace` is NFS-mounted on the board at the same path), and run them **on the DevKit** where the
-runtime and models live — start Jupyter on the board and open the `.ipynb` files, or lift the code
-cells into a script and run that in the `pyneat` environment. The heavy cells load a model, so run
-them on the DevKit when you are ready.
+Run these **on the DevKit board**, so the notebook kernel can import and execute `pyneat` — `pyneat`
+and `llima` live on the DevKit, not in the SDK container, and so do the models. `/workspace` is
+NFS-mounted on the board at the same path, so you can edit host-side and run board-side with no
+copying.
 
-For the notebooks, run Jupyter on the DevKit and open the `.ipynb` files, or lift the code cells into
-a script and run that. The heavy cells keep their model-running commands as printed strings or fenced
-blocks — run those steps yourself when you are ready.
+Activate the pyneat environment, install Jupyter if needed, and start the notebook server:
 
-## Correctness traps taught throughout
+```bash
+ssh sima@<devkit-ip>
 
-1. The serve subcommand is **`benchmark-server`, NOT `serve`**.
-2. ASR is run through **`llima run --stt_model_path <elf-dir> <model>`** (the model needs its
-   speech-to-text ELF directory passed explicitly).
-3. Quantization suffixes: **`a16w4`** = 16-bit activations / 4-bit weights;
-   **`a16w8`** = 16-bit activations / 8-bit weights.
+source $HOME/pyneat/bin/activate
 
-## Sources of truth
+python -m pip install notebook (only once)
+
+cd /workspace/demo-neat
+jupyter notebook --no-browser --ip=0.0.0.0 --port=8888
+```
+
+Then open the DevKit notebook URL from your machine (host system):
+
+```bash
+http://modalix:8888/tree?token=************************
+```
+
+Replace the `modalix` name in above URL with devkit ip.
+
+```bash
+http://192.168.135.203:8888/tree?token=**************
+```
+
+From the file tree, open `llima/` and start at
+[`01-llima-basics/llima-introduction.ipynb`](01-llima-basics/llima-introduction.ipynb).
+
+If you would rather not run Jupyter, lift the code cells into a script and run that in the same
+`pyneat` environment.
+
+
+## Reference
 
 - GenAI C++ headers: [`include/genai/`](https://github.com/sima-neat/core/tree/main/include/genai)
 - `pyneat` bindings: [`module.cpp`](https://github.com/sima-neat/core/blob/main/python/src/module.cpp)
