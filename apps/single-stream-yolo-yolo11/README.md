@@ -188,8 +188,9 @@ python compile/graph_surgery.py   --model-id yolo11n
 python compile/compiler.py        --model-id yolo11n
 ```
 
-See [`REPLICATION.md`](../../model-compilation/REPLICATION.md) for the exact commands and the
-expected result. The archive lands under `model-compilation/work/yolo11n/compile_int8/`. Copy it in:
+See [`COMPILE-COMMANDS.md`](../../model-compilation/COMPILE-COMMANDS.md#5-yolo11n--detection-surgery)
+for the exact commands and the expected result. The archive lands under
+`model-compilation/work/yolo11n/compile_int8/`. Copy it in:
 
 ```bash
 cd ../apps/single-stream-yolo-yolo11
