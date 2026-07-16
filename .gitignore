@@ -52,3 +52,9 @@ apps/*/tools/*.jpg
 
 # Generated benchmark reports
 apps/benchmark/output/*.json
+
+#
+training-slides/
+clean
+*.pptx
+*.pdf
