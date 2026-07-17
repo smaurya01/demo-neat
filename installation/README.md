@@ -116,7 +116,7 @@ From inside the attached SDK container, use `dk` to execute on the paired board:
 Smoke test — save as `hello_neat.py`, then `dk hello_neat.py`:
 
 ```python
-import neat
+import pyneat
 print("PyNeat import successful")
 ```
 

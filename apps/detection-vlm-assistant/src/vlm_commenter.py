@@ -116,6 +116,22 @@ class VlmCommenter:
     def _remember(self, box: dict, now: float) -> None:
         self._recent.append({"class_id": box["class_id"], "box": box, "at": now})
 
+    def gate_candidate(self, boxes: list[dict], frame_shape) -> "dict | None":
+        """The box the VLM would treat as its subject this frame — for the overlay.
+
+        Applies only the class/score/area gate (the same _passes_gate used by the
+        real send path) and returns the highest-score gate-passer, or None. It is
+        deliberately NON-mutating: no rate-limit, no dedup memory, no queue side
+        effects. Used purely to highlight that one box in red in the video output,
+        so the highlight can update every frame without disturbing the send logic.
+        """
+        height, width = frame_shape[:2]
+        frame_area = float(width * height)
+        candidates = [b for b in boxes if self._passes_gate(b, frame_area)]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda b: b["score"])
+
     def select(self, boxes: list[dict], frame_shape) -> "_Trigger | None":
         """Pick at most one crop per frame: highest-score gated, non-duplicate box."""
         height, width = frame_shape[:2]

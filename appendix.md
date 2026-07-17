@@ -131,7 +131,7 @@ hangs or fails to load a model, and nothing in the error message points at the r
 
    ```bash
    top          # find the hung app, note its PID
-   kill -9 <PID>
+   sudo kill -9 <PID>
    ```
 
 2. Reset the runtime:
@@ -168,14 +168,10 @@ Run on the Modalix board. Use these when `fix_devkit_runtime.sh` alone did not c
 | `sudo fuser -v /dev/m4_lp_mbox` | Show which process holds the **MLA mailbox**. This is usually the culprit. |
 | `sudo fuser -v /dev/rpm*` | Show what holds the RPM devices. |
 | `ps aux \| grep pyneat \| grep -v grep` | Find leftover `pyneat` processes still holding the runtime. |
-| `sudo pkill -9 python3` | Kill **every** Python 3 process on the board. |
 | `fuser -k 5001/tcp` | Kill whatever holds TCP **5001** (a stale server socket blocking a restart). |
 
-**Two blast-radius warnings, because both of these bite:**
+**Blast-radius warning, because this bites:**
 
-- `sudo pkill -9 python3` kills *all* Python on the board — including a Jupyter kernel you are running
-  the tutorial notebooks from, and any other user's session. Identify the process with `fuser -v` or
-  the `ps aux` line first and kill that PID specifically; reach for `pkill -9` only when that fails.
 - `fuser -k 5001/tcp` kills the process holding the port, not just the socket.
 
 ### Suggested order
@@ -187,7 +183,7 @@ Escalate — do not start at the bottom.
 3. `sudo fuser -v /dev/m4_lp_mbox` → kill the PID it names.
 4. `ps aux | grep pyneat` → kill leftovers by PID.
 5. `sudo systemctl restart simaai-appcomplex` (LLiMa / app-complex issues).
-6. Only then the blunt instruments: `sudo pkill -9 python3`, `fuser -k 5001/tcp`.
+6. Only then the blunt instrument: `fuser -k 5001/tcp`.
 7. Still stuck → reboot the board.
 
 ---
