@@ -18,6 +18,18 @@ track below.
 `/workspace` is **NFS-mounted on the DevKit at the same path**, so you edit files host-side and run
 them board-side with **no copying**.
 
+## Table of Contents
+
+- [1. Installation](#1-installation)
+- [2. Tutorial — learn the concepts](#2-tutorial--learn-the-concepts)
+- [3. Apps](#3-apps)
+  - [Running one](#running-one)
+- [4. Model compilation](#4-model-compilation)
+- [5. GenAI — LLM / VLM / ASR](#5-genai--llm--vlm--asr)
+- [6. Operations](#6-operations)
+- [Prerequisites](#prerequisites)
+- [Contributing & Contact](#contributing--contact)
+
 ---
 
 ## 1. Installation
@@ -154,3 +166,14 @@ sudo apt-get update
 sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
+
+---
+
+## Contributing & Contact
+
+This repository is co-developed with [Claude](https://www.anthropic.com/claude).
+
+Found an error? Please report it to [suraj.maurya@sima.ai](mailto:suraj.maurya@sima.ai).
+
+To request an application or feature, suggest a correction, or contribute, contact
+[suraj.maurya@sima.ai](mailto:suraj.maurya@sima.ai).

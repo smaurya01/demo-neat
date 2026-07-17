@@ -1,5 +1,20 @@
 # Single Stream OpenPose (TODO:: Stable Output)
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To See The Output](#how-to-see-the-output)
+- [TODO](#todo)
+
+---
+
 ## Introduction
 
 This demo runs one RTSP stream through the SiMa Neat OpenPose model, decodes heatmaps and PAFs,
@@ -58,7 +73,10 @@ udp_port_base=5204
 OpenPose uses packaged 480x480 model geometry internally. Download the model before running,
 then keep `model_path` pointed at the archive.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `rtsp_url`: RTSP H.264 input stream consumed by the source graph.
 
@@ -83,6 +101,8 @@ then keep `model_path` pointed at the archive.
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
 `print_backend`: Print generated backend pipelines when set to `true`.
+
+</details>
 
 ## How To Build
 
@@ -125,6 +145,11 @@ gst-launch-1.0 -v udpsrc port=5204 caps="application/x-rtp,media=video,encoding-
 
 Expected output: live video with grouped OpenPose skeletons.
 
-## TODO
+<details>
+<summary><h2>TODO</h2></summary>
+
+<br>
 
 - Add a sample input/output image after running the demo.
+
+</details>

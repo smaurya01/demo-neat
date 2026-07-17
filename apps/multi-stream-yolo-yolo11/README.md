@@ -1,5 +1,24 @@
 # Multi Stream YOLO11 Detection (2x RTSP)
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Run](#how-to-run)
+- [How To See The Output](#how-to-see-the-output)
+- [Appendix](#appendix)
+- [Appendix: Model Build](#appendix-model-build)
+- [Appendix: Pipeline Shape](#appendix-pipeline-shape)
+- [Appendix: Threading — how it sustains 60 fps per stream](#appendix-threading--how-it-sustains-60-fps-per-stream)
+- [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile)
+- [Appendix: Learnings](#appendix-learnings)
+
+---
+
 ## Introduction
 
 This demo runs two RTSP streams through one shared SiMa Neat YOLO11 object detection model, draws
@@ -77,7 +96,10 @@ With those defaults stream 0 publishes on `5206` and stream 1 on `5208`.
 
 For a bounded smoke test, set `frames=30` in `./config/default.conf`.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `rtsp_url_0`, `rtsp_url_1`: The two RTSP H.264 input streams. Both default to the same source; set
 them to distinct cameras when you have them.
@@ -133,6 +155,8 @@ model load and RTSP jitter-buffer fill all land on the first few frames.
 
 Every value is also overridable on the command line (`--rtsp0`, `--rtsp1`, `--udp-port-base`,
 `--frames`, ...). Run `python main.py --help`.
+
+</details>
 
 ## How To Run
 
@@ -195,7 +219,10 @@ banner burned into the top-left, confirming per-stream identity.
 
 # Appendix
 
-## Appendix: Model Build
+<details>
+<summary><h2>Appendix: Model Build</h2></summary>
+
+<br>
 
 You do **not** need this for `yolo11n` — the SDK 2.1.2 Modalix zoo publishes `yolo_11n` (and
 `yolo_11s/m/l/x`), so use [Model Download Command](#model-download-command). Compile only for a
@@ -218,7 +245,12 @@ the surgery folds the DFL into the graph and exposes 3x 4-channel l/t/r/b distan
 Leaving `model_name=yolov8` on a self-compiled archive still runs, but decodes boxes from the wrong
 channels.
 
-## Appendix: Pipeline Shape
+</details>
+
+<details>
+<summary><h2>Appendix: Pipeline Shape</h2></summary>
+
+<br>
 
 ```text
 RTSP stream 0 ──> source graph 0 ─┐
@@ -231,7 +263,12 @@ Since both default to the same source this holds. If your two cameras differ, th
 error; to support mixed resolutions, build one model graph per stream instead of one shared handle —
 the rest of the engine is unchanged.
 
-## Appendix: Threading — how it sustains 60 fps per stream
+</details>
+
+<details>
+<summary><h2>Appendix: Threading — how it sustains 60 fps per stream</h2></summary>
+
+<br>
 
 The thread topology is ported from a proven C++ 4-stream reference implementation
 (4 streams x 60 fps). It is not a design invented here:
@@ -269,7 +306,12 @@ Measured against a 1280x720 H.264 @ 59.94 fps source:
 The old loop ran every stage of every stream on one thread and left the MLA idle ~60% of the time:
 only 6.1 of 14.8 ms/frame was the model; the rest was host marshalling, overlay and encode push.
 
-## Appendix: Reading The Time Profile
+</details>
+
+<details>
+<summary><h2>Appendix: Reading The Time Profile</h2></summary>
+
+<br>
 
 The stages run on four different threads and **overlap**, so they deliberately do NOT sum to the
 frame period. Read `delivered fps` as throughput; read the columns as cost attribution.
@@ -304,7 +346,12 @@ The app says which case you are in.
 the source rate — if you ever see a number above it, the measurement window was too short (queue
 drain at the boundary), not real throughput.
 
-## Appendix: Learnings
+</details>
+
+<details>
+<summary><h2>Appendix: Learnings</h2></summary>
+
+<br>
 
 **Do not "modernise" this into an in-graph `graphs.branch` / `combine` pipeline.** Tried and rejected
 on measurement. The official example `apps/examples/object-detection/multi-stream-object-detector` is
@@ -326,3 +373,5 @@ too — and it does not affect the reported numbers, but it is still open.
 References: a C++ 4-stream reference implementation (the thread topology this app copies),
 `apps/single-stream-yolo-yolo11` (app conventions),
 `core/tutorials/018_consume_rtsp_stream` (RTSP source fragment).
+
+</details>

@@ -7,6 +7,22 @@ the model-compiler env, `pip install ultralytics`, and `cd model-compilation`.
 
 > ⚠️ **Compile strictly ONE model at a time.** The compiler is memory-hungry; concurrent compiles OOM.
 
+## Table of Contents
+
+- [Compile everything](#compile-everything)
+  - [How long each model takes](#how-long-each-model-takes)
+- [Compile a single model](#compile-a-single-model)
+  - [1. `resnet50` — classification, no surgery](#1-resnet50--classification-no-surgery)
+  - [2. `convnext_tiny` — classification, no surgery](#2-convnext_tiny--classification-no-surgery)
+  - [3. `densenet169` — classification, no surgery](#3-densenet169--classification-no-surgery)
+  - [4. `efficientnet_v2_s` — classification, no surgery, 384×384 input](#4-efficientnet_v2_s--classification-no-surgery-384384-input)
+  - [5. `yolo11n` — detection, surgery](#5-yolo11n--detection-surgery)
+  - [6. `yolo11s` — detection, surgery](#6-yolo11s--detection-surgery)
+  - [7. `yolo26n` — detection, surgery (**no DFL rebuild**)](#7-yolo26n--detection-surgery-no-dfl-rebuild)
+  - [8. `yolo11s-seg` — segmentation, surgery](#8-yolo11s-seg--segmentation-surgery)
+  - [9. `yolo26s-pose` — pose, surgery (**carries the 209× fix**)](#9-yolo26s-pose--pose-surgery-carries-the-209-fix)
+  - [10. `yolox_s` — detection, **different surgery**](#10-yolox_s--detection-different-surgery)
+
 ---
 
 ## Compile everything
