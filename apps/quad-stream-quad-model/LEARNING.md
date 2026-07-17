@@ -14,6 +14,22 @@ slow, it says so.
 
 Every API is cited to <https://github.com/sima-neat/core>.
 
+## Table of Contents
+
+- [Lesson 1: The decode family follows the HEAD SHAPE, not the model's name](#lesson-1-the-decode-family-follows-the-head-shape-not-the-models-name)
+- [Lesson 2: Neat decodes segmentation, pose and YOLOX on-device too](#lesson-2-neat-decodes-segmentation-pose-and-yolox-on-device-too)
+- [Lesson 3: YOLOX is not normalized like the Ultralytics models](#lesson-3-yolox-is-not-normalized-like-the-ultralytics-models)
+- [Lesson 4: YOLOX's head must be exposed SPLIT, not packed](#lesson-4-yoloxs-head-must-be-exposed-split-not-packed)
+- [Lesson 5: A padded head can be faster *and* still decodable](#lesson-5-a-padded-head-can-be-faster-and-still-decodable)
+- [Lesson 6: Pin the CVU stages; don't trust AUTO](#lesson-6-pin-the-cvu-stages-dont-trust-auto)
+- [Lesson 7: `1000 / infer` is NOT a frame rate — and this once fooled us badly](#lesson-7-1000--infer-is-not-a-frame-rate--and-this-once-fooled-us-badly)
+- [Lesson 8: The GIL is a real pipeline stage](#lesson-8-the-gil-is-a-real-pipeline-stage)
+- [Lesson 9: A live source must be drained, or it kills itself](#lesson-9-a-live-source-must-be-drained-or-it-kills-itself)
+- [Lesson 10: Measure with `--duration`, never `--frames`, on a shared resource](#lesson-10-measure-with---duration-never---frames-on-a-shared-resource)
+- [Lesson 11: The three rates, and the one that is a lie](#lesson-11-the-three-rates-and-the-one-that-is-a-lie)
+- [What is still slow, and why](#what-is-still-slow-and-why)
+- [Where to look next](#where-to-look-next)
+
 ---
 
 ## Lesson 1: The decode family follows the HEAD SHAPE, not the model's name

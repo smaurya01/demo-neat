@@ -10,6 +10,39 @@ Primary references:
 
 > This document is the **Windows-specific** companion.
 
+## Table of Contents
+
+- [The short version (WSL-first)](#the-short-version-wsl-first)
+- [Component overview](#component-overview)
+- [Quick checklist (start here)](#quick-checklist-start-here)
+- [1. Prerequisites](#1-prerequisites)
+  - [1.1 Hardware (host minimums)](#11-hardware-host-minimums)
+  - [1.2 Operating system](#12-operating-system)
+  - [1.3 Confirm Windows version and resources](#13-confirm-windows-version-and-resources)
+- [2. Install WSL2 + Ubuntu](#2-install-wsl2--ubuntu)
+- [3. Configure WSL networking](#3-configure-wsl-networking)
+- [4. Install Docker (with WSL2 integration)](#4-install-docker-with-wsl2-integration)
+  - [4.1 If `docker --version` fails inside Ubuntu](#41-if-docker---version-fails-inside-ubuntu)
+  - [4.2 If `docker --version` works in PowerShell but not in Ubuntu](#42-if-docker---version-works-in-powershell-but-not-in-ubuntu)
+  - [4.3 Verify Docker inside Ubuntu](#43-verify-docker-inside-ubuntu)
+- [5. Verify Python and pip inside WSL](#5-verify-python-and-pip-inside-wsl)
+- [6. Install sima-cli inside WSL](#6-install-sima-cli-inside-wsl)
+- [7. Log in to the SiMa Developer Portal](#7-log-in-to-the-sima-developer-portal)
+- [8. Install the NEAT SDK](#8-install-the-neat-sdk)
+- [9. Pair with the Modalix DevKit](#9-pair-with-the-modalix-devkit)
+  - [9.1 Connect the DevKit (Windows networking)](#91-connect-the-devkit-windows-networking)
+  - [9.2 Allow NFS traffic through the Windows firewall](#92-allow-nfs-traffic-through-the-windows-firewall)
+  - [9.3 Run guided setup](#93-run-guided-setup)
+- [10. (Optional) Install the Model Compiler](#10-optional-install-the-model-compiler)
+  - [10.1 Check your processor architecture](#101-check-your-processor-architecture)
+  - [10.2 Install for your architecture](#102-install-for-your-architecture)
+  - [10.3 Authorize the device login](#103-authorize-the-device-login)
+  - [10.4 If it reports missing system packages](#104-if-it-reports-missing-system-packages)
+  - [10.5 Activate](#105-activate)
+- [11. Open the SDK in VS Code, then build and run](#11-open-the-sdk-in-vs-code-then-build-and-run)
+- [12. Troubleshooting (Windows-specific)](#12-troubleshooting-windows-specific)
+- [References](#references)
+
 ---
 
 ## The short version (WSL-first)

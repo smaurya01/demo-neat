@@ -1,5 +1,28 @@
 # Detection-to-VLM Assistant (YOLO11 + Vision-Language Model)
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Pipeline Shape](#pipeline-shape)
+- [Full Architecture](#full-architecture)
+- [Split Validation — read this](#split-validation--read-this)
+- [Requirements](#requirements)
+- [Model Setup](#model-setup)
+- [Configure](#configure)
+  - [Config parameters](#config-parameters)
+- [How To Run (human UX)](#how-to-run-human-ux)
+- [How To Run (CI / automation fallback)](#how-to-run-ci--automation-fallback)
+- [Expected Output](#expected-output)
+- [Visualization — boxes over UDP (H.264/RTP)](#visualization--boxes-over-udp-h264rtp)
+  - [How the VLM box is chosen (what the red box means)](#how-the-vlm-box-is-chosen-what-the-red-box-means)
+- [Colour Correctness (a real trap)](#colour-correctness-a-real-trap)
+- [Direct `VisionLanguageModel` vs `GenAIServer`](#direct-visionlanguagemodel-vs-genaiserver)
+- [Verified](#verified)
+- [Notes](#notes)
+
+---
+
 ## Introduction
 
 An **always-on YOLO11 detector** watches a video stream (or a folder of images).
@@ -23,7 +46,10 @@ Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape
 - Output: per-frame detection log + VLM caption per selected crop
 - Runtime config: `./config/default.conf`
 
-## Pipeline Shape
+<details>
+<summary><h2>Pipeline Shape</h2></summary>
+
+<br>
 
 ```
 frame (RTSP NV12 -> BGR, or still image BGR)
@@ -43,7 +69,12 @@ References: `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM),
 `pyneat.decode_bbox`), `core/include/genai/VisionLanguageModel.h`,
 `core/include/genai/GenAITypes.h`, `llima/02-run-llm-vlm/02_run_vlm.ipynb`.
 
-## Full Architecture
+</details>
+
+<details>
+<summary><h2>Full Architecture</h2></summary>
+
+<br>
 
 Two decoupled legs share each frame. The **detector** runs every frame (cheap) and feeds
 both the **VLM leg** (gated / dedup'd / rate-limited, bounded background worker, never
@@ -91,7 +122,12 @@ Key point: the VLM crop is taken from the **clean** BGR frame inside `on_frame(.
 handed to the VLM. The video leg only runs in RTSP mode when `udp_host` is set; image
 mode is stdout-only.
 
-## Split Validation — read this
+</details>
+
+<details>
+<summary><h2>Split Validation — read this</h2></summary>
+
+<br>
 
 The two legs are validated differently on purpose:
 
@@ -105,6 +141,8 @@ The two legs are validated differently on purpose:
 Dry-run turns on automatically when `--no-vlm` is passed, when `vlm_enabled=false`, or when
 the configured `vlm_model_dir` is missing. This is also how you validate the detection leg
 without a VLM present, and it is genuinely useful for tuning the trigger/prompt.
+
+</details>
 
 ## Requirements
 
@@ -145,7 +183,10 @@ model_path=./assets/models/yolo_11n_mpk.tar.gz
 vlm_trigger_classes=person
 ```
 
-### Config parameters
+<details>
+<summary><h3>Config parameters</h3></summary>
+
+<br>
 
 - `source`: `rtsp` (always-on demo) or `image` (still file / directory / glob).
 - `rtsp_url`, `rtsp_transport`, `latency_ms`, `fallback_*`: RTSP input.
@@ -168,6 +209,8 @@ vlm_trigger_classes=person
     substituted with the detected class.
 
 Every value is overridable on the command line; run `python main.py --help`.
+
+</details>
 
 ## How To Run (human UX)
 
@@ -231,7 +274,10 @@ across the platform carrying a bag.  (58 tok, 22.4 tok/s, ttft=0.34s)
 
 Exact wording depends on the image and the model's sampling; the shape is what to verify.
 
-## Visualization — boxes over UDP (H.264/RTP)
+<details>
+<summary><h2>Visualization — boxes over UDP (H.264/RTP)</h2></summary>
+
+<br>
 
 Like the sibling single-stream apps, RTSP mode can draw the detections on each frame
 and stream the result as H.264/RTP over UDP. Colour convention:
@@ -270,14 +316,24 @@ the rate limit (`vlm_interval_seconds`), IoU/cooldown dedup (`vlm_dedup_iou`,
 `vlm_dedup_cooldown_s`), and the bounded queue (`vlm_max_pending`); the red overlay
 (`VlmCommenter.gate_candidate`) is non-mutating and shows the current subject every frame.
 
-## Colour Correctness (a real trap)
+</details>
+
+<details>
+<summary><h2>Colour Correctness (a real trap)</h2></summary>
+
+<br>
 
 VLM images must be **uint8 HWC RGB**. Crops here are OpenCV-native **BGR**, so
 `src/vlm_commenter.py` calls `cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)` **at the VLM request
 boundary**. Skipping this silently feeds the VLM channel-swapped images and quietly degrades
 every answer. The dry-run log prints the crop shape and reminds you of the conversion.
 
-## Direct `VisionLanguageModel` vs `GenAIServer`
+</details>
+
+<details>
+<summary><h2>Direct `VisionLanguageModel` vs `GenAIServer`</h2></summary>
+
+<br>
 
 This app calls the VLM **in-process** via `pyneat.genai.VisionLanguageModel` — lowest
 latency, no network hop, one model handle holding LM weights + vision encoder resident.
@@ -285,7 +341,12 @@ Use `GenAIServer` (OpenAI-compatible HTTP) instead only when the boundary is a n
 browser UI or a separate service that should not link the Neat runtime. The upstream
 `apps/examples/genai/detection-to-vlm-assistant` uses the HTTP path; see `llima/05-genai-server`.
 
-## Verified
+</details>
+
+<details>
+<summary><h2>Verified</h2></summary>
+
+<br>
 
 - **Detection leg, live on the DevKit (<devkit-ip>)** via ssh, `--no-vlm`:
   - Still-image mode over `model-compilation/assets/yolo_calibration`: real detections,
@@ -296,7 +357,12 @@ browser UI or a separate service that should not link the Neat runtime. The upst
 - **VLM leg: code-complete, API-checked, NOT executed.** Owner runs it manually after
   confirming the VLM directory.
 
-## Notes
+</details>
+
+<details>
+<summary><h2>Notes</h2></summary>
+
+<br>
 
 - The detector uses `push([tensor])` + `pull("detections", ...)` (Agent A's pattern). The
   synchronous `run([...])` helper does **not** surface this archive's model-managed
@@ -304,3 +370,5 @@ browser UI or a separate service that should not link the Neat runtime. The upst
 - `vlm_interval_seconds` is wall-clock: over a fast batch of still images only the first
   qualifying crop fires. That is intended for the always-on RTSP use case; lower it (or set
   it to 0) if you want a caption per image.
+
+</details>

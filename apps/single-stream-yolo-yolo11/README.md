@@ -1,5 +1,22 @@
 # Single Stream YOLO11 Detection
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To Run With Python](#how-to-run-with-python)
+- [How To See The Output](#how-to-see-the-output)
+- [Appendix](#appendix)
+- [Appendix: Building YOLO11 Yourself](#appendix-building-yolo11-yourself)
+
+---
+
 ## Introduction
 
 This demo runs one RTSP stream through the SiMa Neat YOLO11 object detection model, draws decoded
@@ -65,7 +82,10 @@ udp_port=5206
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `rtsp_url`: RTSP H.264 input stream consumed by the source graph.
 
@@ -102,6 +122,8 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
 `print_backend`: Print generated backend pipelines when set to `true`.
+
+</details>
 
 ## How To Build
 
@@ -171,7 +193,10 @@ Expected output: live video with YOLO11 detection boxes.
 
 # Appendix
 
-## Appendix: Building YOLO11 Yourself
+<details>
+<summary><h2>Appendix: Building YOLO11 Yourself</h2></summary>
+
+<br>
 
 You do **not** need this for `yolo11n` — the zoo publishes it (see
 [Model Download Command](#model-download-command)). Use this only for a variant the zoo does not
@@ -212,3 +237,5 @@ heads, and the decode family must match:
 model and emits 4-channel distance heads instead, so switch the decode family to
 `pyneat.BoxDecodeType.YoloV26` in `make_model()`. Getting this wrong still runs and still draws
 boxes; they are just decoded from the wrong channels.
+
+</details>

@@ -1,5 +1,18 @@
 # PCB Defect Detection - YOLO26n
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Project Files](#project-files)
+- [Requirements](#requirements)
+- [Model Download](#model-download)
+- [Configure](#configure)
+- [How To Run](#how-to-run)
+- [How To See The Output](#how-to-see-the-output)
+- [Compile Model Pack](#compile-model-pack)
+
+---
+
 ## Introduction
 
 This app runs a folder of PCB images through a custom YOLO26n defect-detection model on the

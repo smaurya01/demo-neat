@@ -1,5 +1,20 @@
 # Single Stream YOLOv8n Segmentation
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To Run With Python](#how-to-run-with-python)
+- [How To See The Output](#how-to-see-the-output)
+
+---
+
 ## Introduction
 
 This demo runs one RTSP stream through the SiMa Neat YOLOv8n segmentation model, draws
@@ -54,7 +69,10 @@ udp_port_base=5202
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `rtsp_url`: RTSP H.264 input stream consumed by the source graph.
 
@@ -91,6 +109,8 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
 `print_backend`: Print generated backend pipelines when set to `true`.
+
+</details>
 
 ## How To Build
 

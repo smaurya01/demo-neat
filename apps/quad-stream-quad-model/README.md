@@ -1,5 +1,30 @@
 # Quad Stream Quad Model (4x RTSP, 4 different models)
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+  - [Config Parameters](#config-parameters)
+- [How To Build (C++)](#how-to-build-c)
+- [How To Run](#how-to-run)
+- [How To See The Output](#how-to-see-the-output)
+- [Time Profile](#time-profile)
+  - [Why `infer` is ~20–32 ms, and why that is *not* the MLA](#why-infer-is-2032-ms-and-why-that-is-not-the-mla)
+  - [The backpressure bound is the app's own, not Neat's](#the-backpressure-bound-is-the-apps-own-not-neats)
+  - [Where the remaining cost is](#where-the-remaining-cost-is)
+- [Appendix](#appendix)
+  - [Measured behaviour](#appendix-measured-behaviour)
+    - [C++ — current](#c-buildquad_stream_quad_model--current)
+    - [How it got there](#how-it-got-there)
+    - [Python (`./main.py`)](#python-mainpy--same-models-same-config-single-threaded-per-stream)
+  - [`tools/pose_probe.py` — study one model on its own](#appendix-toolspose_probepy--study-one-model-on-its-own)
+  - [Known limitations](#appendix-known-limitations)
+
+---
+
 ## Introduction
 
 Four RTSP streams → **four different** INT8 models → four independent annotated H.264/RTP UDP
@@ -18,8 +43,8 @@ so you can tell the four windows apart.
 - Output: 4x UDP/RTP H.264 streams, one port per stream
 - Runtime config: `./config/default.conf` — **shared by both implementations**
 
-Both do exactly the same thing. The C++ build is roughly **2x faster end to end**
-(**~171 fps** aggregate delivered vs **~77 fps**), because Python's overlay is serialised by
+Both do exactly the same thing. The C++ build is ** faster end to end**
+(**~236 fps** aggregate delivered in c++), because Python's overlay is serialised by
 the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
 
 | slot | task | model | source | Neat on-device decode |
@@ -60,21 +85,12 @@ sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11s_seg
 cd ../..
 ```
 
-The zoo publishes **no YOLO-pose and no YOLOX**, so those two are built with the graph-surgery flow
-in [`model-compilation/`](../../model-compilation/README.md):
+The zoo publishes **no YOLO-pose and no YOLOX**. The quickest option is to grab the prebuilt
+archives — **📦 [Models-v1.zip](https://drive.google.com/file/d/10zOUhD56VrZaY3urSHgqpjGZjIY3jEKt/view?usp=sharing)** —
+and copy `yolo26s-pose` and `yolox_s`'s `*_mpk.tar.gz` into `./assets/models/`.
 
-```bash
-source /sdk-extensions/model-compiler/bin/activate
-cd ../../model-compilation
-for M in yolo26s-pose yolox_s; do
-  python compile/convert_to_onnx.py --model-id $M
-  python compile/graph_surgery.py   --model-id $M
-  python compile/compiler.py        --model-id $M
-done
-cd ../apps/quad-stream-quad-model
-cp ../../model-compilation/work/yolo26s-pose/compile_int8/*/*_mpk.tar.gz ./assets/models/
-cp ../../model-compilation/work/yolox_s/compile_int8/*/*_mpk.tar.gz      ./assets/models/
-```
+Otherwise, build those two yourself with the graph-surgery flow in
+[`model-compilation/`](../../model-compilation/README.md).
 
 Expected model paths (`assets/models/` is git-ignored — the archives are large and not committed):
 
@@ -85,18 +101,9 @@ Expected model paths (`assets/models/` is git-ignored — the archives are large
 ./assets/models/yolox_s.compile_ready_mpk.tar.gz
 ```
 
-Two things about the self-compiled pair are load-bearing, and the compile flow handles both for you:
-
-> **`yolo26s-pose` must be the padded build.** Its keypoint head is zero-padded 51 → 64 channels.
-> That padding is a **209x performance fix** (1782 ms/frame → 8.5 ms/frame for identical weights),
-> and it is still decodable on-device — `YoloV26Pose` requires a *slice* depth of 51 but allows a
-> larger *input* depth.
-
-> **`yolox_s` must be the split-head build, compiled with `std = 1/255`.** Neat's `YoloX` decoder
-> needs three separate tensors per scale — `(bbox, obj, cls)` = `(4, 1, 80)` — not a packed 85-channel
-> head. And YOLOX is trained on **raw 0-255 pixels**, unlike the Ultralytics models. Get the
-> normalization wrong and YOLOX detects **nothing**, silently, at full speed. See
-> [`LEARNING.md`](LEARNING.md) Lesson 3.
+Both self-compiled archives carry build details that are load-bearing (the padded pose head and the
+split-head YOLOX normalization); the compile flow handles them for you, and they are documented in
+[`model-compilation/`](../../model-compilation/README.md).
 
 ## Configure
 
@@ -113,7 +120,14 @@ With those defaults stream *i* publishes on `5206 + 2*i` → `5206`, `5208`, `52
 
 For a bounded smoke test, set `frames=30`.
 
-## Config Parameters
+<a id="config-parameters"></a>
+
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
+
+**Sources**
 
 `rtsp_default`: RTSP URL used by any stream slot that does not set its own `stream<i>_rtsp`.
 
@@ -123,6 +137,12 @@ source; point them at four different cameras and stream identity still holds.
 
 `rtsp_transport`: RTSP transport mode. Use `tcp` for reliability or `udp` for lower latency.
 
+`latency_ms`: RTSP receiver jitter buffer, in milliseconds.
+
+`fallback_width`, `fallback_height`, `fallback_fps`: Used when RTSP caps are incomplete.
+
+**Streams & models**
+
 `num_streams`: How many stream slots to run (1–4). Drop to 2 for a lighter, higher-FPS pipeline.
 
 `stream0_task` … `stream3_task`: Task for each slot — `detection` | `segmentation` | `pose` | `yolox`.
@@ -130,27 +150,31 @@ The task also selects the on-device decode family and the input normalization.
 
 `stream0_model` … `stream3_model`: Model archive for each slot. Relative to this app folder.
 
+`model_width`, `model_height`: Model input size used by Neat preprocessing (all four are 640×640).
+
+**Output**
+
 `udp_host`: Host/IP that receives all four annotated UDP/RTP output streams.
 
 `udp_port_base`: UDP/RTP output port for stream 0.
 
 `udp_port_stride`: Port spacing. Stream `i` publishes on `udp_port_base + i * udp_port_stride`.
 
-`model_width`, `model_height`: Model input size used by Neat preprocessing (all four are 640×640).
+`bitrate_kbps`: H.264 output encoder bitrate.
 
-`fallback_width`, `fallback_height`, `fallback_fps`: Used when RTSP caps are incomplete.
-
-`latency_ms`: RTSP receiver jitter buffer, in milliseconds.
+**On-device decode**
 
 `score_threshold`, `nms_iou`, `top_k`: Passed into the **on-device** BoxDecode stage, so the NMS runs
 on the accelerator and the host never sees a sub-threshold box.
+
+**Performance**
 
 `queue_depth`: Bounded per-graph queue depth (Realtime preset, KeepLatest overflow).
 
 `cvu_pre_target`, `cvu_post_target`: Where the model's pre/post CVU stages run — `AUTO` | `EV74` |
 `A65`. Defaults to `EV74`; `AUTO` measured ~12% slower (see [`LEARNING.md`](LEARNING.md) Lesson 6).
 
-`bitrate_kbps`: H.264 output encoder bitrate.
+**Run control**
 
 `frames`: Frames to process **per stream**. Use `0` to run until interrupted.
 
@@ -161,6 +185,8 @@ Every value is also overridable on the command line. Run `python main.py --help`
 Useful flags: `--num-streams {1..4}`, `--tasks a,b,c` (custom model set), `--task <t>` (run ONE model
 solo), `--no-overlay` (isolate the model rate from the host overlay cost), `--duration <seconds>`,
 `--frames N`, `--rtsp URL` (override all sources), `--pre-target/--post-target`, `--print-backend`.
+
+</details>
 
 ## How To Build (C++)
 
@@ -223,7 +249,12 @@ done
 Expected output: four live windows — boxes, masks, skeletons and YOLOX boxes respectively — each
 with an `S<i> <TASK> :<port>` banner burned into the top-left.
 
-## Time Profile
+<a id="time-profile"></a>
+
+<details>
+<summary><h2>Time Profile</h2></summary>
+
+<br>
 
 The app prints a **live** time profile every `profile_interval` seconds (default 5; `0` turns it
 off), plus a fuller summary at exit. There is no per-frame log line — one reporter thread prints the
@@ -331,27 +362,27 @@ as metadata for the viewer to draw. `nodes::SimaRender` can annotate on-device, 
 
 That is the real fork: **burned-in overlay for all four tasks costs you the host round-trip.**
 
----
+</details>
 
+
+---
 # Appendix
 
-## Appendix: Measured behaviour
+<a id="appendix-measured-behaviour"></a>
+
+<details>
+<summary><h2>Appendix: Measured behaviour</h2></summary>
+
+<br>
 
 Modalix DevKit, RTSP 1280×720 H.264 @ 59.94 fps, all four streams concurrent, `cvu_*_target=EV74`,
 overlay on.
 
 ### C++ (`./build/quad_stream_quad_model`) — current
 
-| stream | model | infer ms | postproc ms | overlay ms | **pull fps** | **delivered fps** |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 detection | `yolo_11s` (zoo) | 21.8 | 0.05 | **0.60** | **59.1** | **59.1** |
-| 1 segmentation | `yolo_11s_seg` (zoo) | 32.3 | 1.50 | **13.9** | **57.9** | **58.3** |
-| 2 pose | `yolo26s-pose` | 21.6 | 0.09 | **1.03** | **59.5** | **59.3** |
-| 3 yolox | `yolox_s` | 20.1 | 0.05 | **0.26** | **59.3** | **59.3** |
-| | | | | | | **aggregate ~236 fps** |
-
 **~236 fps against a 239.8 fps ceiling (4 × 59.94) — 98% of what the cameras can supply.** All four
-streams deliver at the source rate; the pipeline is not the bottleneck any more.
+streams deliver at the source rate; the pipeline is not the bottleneck any more. The per-stream
+numbers are the [Time Profile](#time-profile) live table above — the same run, not repeated here.
 
 ### How it got there
 
@@ -410,7 +441,14 @@ Python (there it is just the cost of reshaping the payload through NumPy).
 > consuming the one MLA — while slow streams starve. That reports rates no steady state ever
 > produced.
 
-## Appendix: `tools/pose_probe.py` — study one model on its own
+</details>
+
+<a id="appendix-toolspose_probepy--study-one-model-on-its-own"></a>
+
+<details>
+<summary><h2>Appendix: `tools/pose_probe.py` — study one model on its own</h2></summary>
+
+<br>
 
 The quad app runs four models across a dozen threads. When one model misbehaves that is the worst
 possible place to debug it. `tools/pose_probe.py` strips everything away: ONE model graph
@@ -429,7 +467,14 @@ python tools/pose_probe.py --sweep
 
 Because it is lock-step, its `infer` is the real model service time, not graph latency.
 
-## Appendix: Known limitations
+</details>
+
+<a id="appendix-known-limitations"></a>
+
+<details>
+<summary><h2>Appendix: Known limitations</h2></summary>
+
+<br>
 
 1. **The host overlay gates the delivered rate.** See the measured table above and `LEARNING.md`.
    Burning masks and skeletons into the stream requires the frame on the CPU; Neat's in-graph
@@ -440,3 +485,5 @@ Because it is lock-step, its `infer` is the real model service time, not graph l
    the numbers are valid, but it is a real defect in the teardown path.
 
 3. Set `QSQM_DEBUG=1` to print the tensor shapes each model delivers.
+
+</details>

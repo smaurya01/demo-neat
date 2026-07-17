@@ -8,6 +8,29 @@ dead ends.
 Environment: Modalix DevKit, Neat runtime **0.2.2** (`libsima_neat.so.2.1.2`),
 SDK 2.1.2, Logitech Brio 100 USB camera.
 
+## Table of Contents
+
+- [The short version](#the-short-version)
+- [Step 1 — Identify the camera](#step-1--identify-the-camera)
+  - [Resolution and frame rate — the format decides everything](#resolution-and-frame-rate--the-format-decides-everything)
+  - [A measurement lesson](#a-measurement-lesson)
+- [Step 2 — Find the model (it is not in the model zoo)](#step-2--find-the-model-it-is-not-in-the-model-zoo)
+- [Step 3 — Decode MJPEG: the hardware decoder loses, badly](#step-3--decode-mjpeg-the-hardware-decoder-loses-badly)
+  - [What worked](#what-worked)
+- [Step 4 — The zero-copy graph that returns zero detections](#step-4--the-zero-copy-graph-that-returns-zero-detections)
+  - [Two bugs found on the way](#two-bugs-found-on-the-way)
+  - [The root cause](#the-root-cause)
+- [Step 5 — The push path (what actually ships)](#step-5--the-push-path-what-actually-ships)
+- [Step 6 — "It only detects a TV at 0.33" — bug, or just a boring room?](#step-6--it-only-detects-a-tv-at-033--bug-or-just-a-boring-room)
+- [Step 7 — "The encoder emits no video" (it did; I was measuring the wrong 48 seconds)](#step-7--the-encoder-emits-no-video-it-did-i-was-measuring-the-wrong-48-seconds)
+- [Step 8 — Where the time actually goes](#step-8--where-the-time-actually-goes)
+- [Step 9 — int8: 2× faster inference, worth nothing, and it breaks the scores](#step-9--int8-2-faster-inference-worth-nothing-and-it-breaks-the-scores)
+  - [Reading the planner instead of guessing](#reading-the-planner-instead-of-guessing)
+  - [The actual cause is in the package's quantization](#the-actual-cause-is-in-the-packages-quantization)
+  - [The optimisation was pointless anyway](#the-optimisation-was-pointless-anyway)
+- [Replicating from scratch](#replicating-from-scratch)
+- [Things that did not work — quick index](#things-that-did-not-work--quick-index)
+
 ---
 
 ## The short version

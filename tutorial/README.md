@@ -3,6 +3,21 @@
 Learn Neat application concepts through runnable notebooks. Start at `I-easy/01`, work down. Each
 notebook is a markdown concept cell, a short runnable code cell, then a brief interpretation.
 
+## Table of Contents
+
+- [Running On The DevKit](#running-on-the-devkit)
+- [I — Easy](#i--easy)
+- [II — Medium](#ii--medium)
+- [III — Advanced](#iii--advanced)
+- [Next](#next)
+- [Assets](#assets)
+- [Getting the models](#getting-the-models)
+  - [ResNet-50 — for notebook `I-easy/04`](#resnet-50--for-notebook-i-easy04)
+  - [YOLOv8s — for notebooks `I-easy/05` and `I-easy/06`](#yolov8s--for-notebooks-i-easy05-and-i-easy06)
+- [References](#references)
+
+---
+
 ## Running On The DevKit
 
 Run these **on the DevKit board**, so the notebook kernel can import and execute `pyneat`.
