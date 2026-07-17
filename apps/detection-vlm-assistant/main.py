@@ -89,6 +89,13 @@ class Config:
     frames: int = 0                    # 0 = run until interrupted (rtsp) / all images
     timeout_ms: int = 20000
 
+    # --- video output (draw boxes + H.264/RTP over UDP, like the sibling apps) ---
+    video_enabled: bool = True
+    udp_host: str = ""                 # viewer machine; empty => no video, stdout only
+    udp_port: int = 0                  # UDP base port for the H.264/RTP stream
+    udp_port_base: int = 0             # alias for udp_port (sibling-app convention)
+    bitrate_kbps: int = 4000
+
     # --- VLM trigger / commenter (src/vlm_commenter.py) ---
     vlm_enabled: bool = True
     vlm_model_dir: str = "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
@@ -216,6 +223,16 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.vlm_max_new_tokens = int(value)
     elif key == "vlm_prompt":
         cfg.vlm_prompt = value
+    elif key == "video_enabled":
+        cfg.video_enabled = _parse_bool(value)
+    elif key == "udp_host":
+        cfg.udp_host = value
+    elif key == "udp_port":
+        cfg.udp_port = int(value)
+    elif key == "udp_port_base":
+        cfg.udp_port_base = int(value)
+    elif key == "bitrate_kbps":
+        cfg.bitrate_kbps = int(value)
     else:
         raise ValueError(f"unknown config key: {key}")
 
@@ -250,6 +267,11 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
     parser.add_argument("--top-k", type=int)
     parser.add_argument("--frames", type=int)
     parser.add_argument("--vlm-model-dir")
+    parser.add_argument("--udp-host")
+    parser.add_argument("--udp-port", type=int)
+    parser.add_argument("--bitrate", type=int)
+    parser.add_argument("--no-video", action="store_true",
+                        help="disable box overlay + UDP video output")
     parser.add_argument("--no-vlm", action="store_true",
                         help="dry-run: log the crop + the prompt that WOULD be sent, "
                              "never load or call the VLM (this is how the detection leg "
@@ -279,6 +301,14 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
         cfg.frames = args.frames
     if args.vlm_model_dir is not None:
         cfg.vlm_model_dir = args.vlm_model_dir
+    if args.udp_host is not None:
+        cfg.udp_host = args.udp_host
+    if args.udp_port is not None:
+        cfg.udp_port = args.udp_port
+    if args.bitrate is not None:
+        cfg.bitrate_kbps = args.bitrate
+    if args.no_video:
+        cfg.video_enabled = False
     return cfg, args.no_vlm
 
 
@@ -497,6 +527,132 @@ def list_images(cfg: Config) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Overlay + H.264/RTP UDP video output
+# (mirrors the sibling single-stream apps: draw on BGR, convert to NV12, send)
+# --------------------------------------------------------------------------- #
+WHITE = (255, 255, 255)   # BGR: every detection
+RED = (0, 0, 255)         # BGR: the box the VLM would caption this frame
+
+
+def draw_boxes(frame_bgr, boxes: list[dict], vlm_box, min_score: float) -> int:
+    """Draw every detection in white; draw the VLM-selected box in red.
+
+    `vlm_box` is the exact dict the commenter would hand to the VLM this frame
+    (VlmCommenter.gate_candidate) or None. Identity (`is`) ties the red highlight
+    to that one box.
+    """
+    height, width = frame_bgr.shape[:2]
+    visible = 0
+    for box in boxes:
+        if box["score"] < min_score:
+            continue
+        x1 = max(0, min(width - 1, int(round(box["x1"]))))
+        y1 = max(0, min(height - 1, int(round(box["y1"]))))
+        x2 = max(0, min(width - 1, int(round(box["x2"]))))
+        y2 = max(0, min(height - 1, int(round(box["y2"]))))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        is_vlm = box is vlm_box
+        color = RED if is_vlm else WHITE
+        thickness = 3 if is_vlm else 2
+        label = f"{label_for(box['class_id'])} {box['score']:.2f}"
+        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(frame_bgr, label, (x1, max(12, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        visible += 1
+    return visible
+
+
+def make_nv12_input_options(width: int, height: int, fps: int):
+    input_opt = pyneat.InputOptions()
+    input_opt.payload_type = pyneat.PayloadType.Image
+    input_opt.format = pyneat.Format.NV12
+    input_opt.width = width
+    input_opt.height = height
+    input_opt.depth = 1
+    input_opt.max_width = width
+    input_opt.max_height = height
+    input_opt.max_depth = 1
+    input_opt.fps_n = max(1, fps)
+    input_opt.fps_d = 1
+    input_opt.caps_override = (
+        f"video/x-raw,format=NV12,width={width},height={height},framerate={max(1, fps)}/1"
+    )
+    input_opt.use_simaai_pool = False
+    return input_opt
+
+
+def make_nv12_tensor(nv12, width: int, height: int):
+    tensor = pyneat.Tensor.from_numpy(
+        np.ascontiguousarray(nv12),
+        copy=True,
+        layout=pyneat.TensorLayout.HW,
+        memory=pyneat.TensorMemory.CPU,
+    )
+    tensor.shape = [height, width]
+    tensor.strides_bytes = [width, 1]
+    tensor.byte_offset = 0
+    image = pyneat.ImageSpec()
+    image.format = pyneat.PixelFormat.NV12
+    semantic = tensor.semantic
+    semantic.image = image
+    tensor.semantic = semantic
+
+    y = pyneat.Plane()
+    y.role = pyneat.PlaneRole.Y
+    y.shape = [height, width]
+    y.strides_bytes = [width, 1]
+    y.byte_offset = 0
+
+    uv = pyneat.Plane()
+    uv.role = pyneat.PlaneRole.UV
+    uv.shape = [height // 2, width]
+    uv.strides_bytes = [width, 1]
+    uv.byte_offset = width * height
+    tensor.planes = [y, uv]
+    return tensor
+
+
+def bgr_to_nv12(frame_bgr):
+    height, width = frame_bgr.shape[:2]
+    if height % 2 or width % 2:
+        raise RuntimeError(f"NV12 output requires even dimensions, got {width}x{height}")
+    i420 = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YUV_I420).reshape(-1)
+    y_size = width * height
+    uv_size = y_size // 4
+    y = i420[:y_size].reshape(height, width)
+    u = i420[y_size:y_size + uv_size].reshape(height // 2, width // 2)
+    v = i420[y_size + uv_size:y_size + uv_size * 2].reshape(height // 2, width // 2)
+    uv = np.empty((height // 2, width), dtype=np.uint8)
+    uv[:, 0::2] = u
+    uv[:, 1::2] = v
+    return np.ascontiguousarray(np.vstack((y, uv)))
+
+
+def build_video_run(cfg: Config, width: int, height: int, fps: int):
+    sender_opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(width, height, max(1, fps))
+    sender_opt.host = cfg.udp_host
+    sender_opt.channel = 0
+    sender_opt.video_port_base = cfg.udp_port or cfg.udp_port_base
+    sender_opt.encoder.bitrate_kbps = cfg.bitrate_kbps
+
+    graph = pyneat.Graph("video")
+    graph.add(pyneat.nodes.input(make_nv12_input_options(width, height, fps)))
+    graph.add(pyneat.groups.video_sender(sender_opt))
+    seed_nv12 = np.full((height * 3 // 2, width), 128, dtype=np.uint8)
+    seed_nv12[:height, :] = 16
+    seed = make_nv12_tensor(seed_nv12, width, height)
+    return graph, graph.build([seed]), sender_opt.video_port
+
+
+def push_video(video_run, frame_bgr) -> None:
+    nv12 = bgr_to_nv12(frame_bgr)
+    tensor = make_nv12_tensor(nv12, frame_bgr.shape[1], frame_bgr.shape[0])
+    if not video_run.push([tensor]):
+        raise RuntimeError("video push failed")
+
+
+# --------------------------------------------------------------------------- #
 # Main loops
 # --------------------------------------------------------------------------- #
 def run_image_mode(cfg: Config, commenter) -> int:
@@ -541,6 +697,23 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
     print(f"rtsp={cfg.rtsp_url} stream={width}x{height}@{fps}", flush=True)
     _src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
     _model, _graph, detector_run = build_detector_run(cfg, width, height)
+
+    video_run = None
+    if cfg.video_enabled and cfg.udp_host:
+        _video_graph, video_run, video_port = build_video_run(cfg, width, height, fps)
+        print(f"video=udp://{cfg.udp_host}:{video_port} "
+              f"(all boxes white, VLM pick red)", flush=True)
+        print(
+            "viewer: gst-launch-1.0 -v udpsrc port="
+            f"{video_port} caps=\"application/x-rtp,media=video,encoding-name=H264,"
+            "payload=96\" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
+            "autovideosink sync=false",
+            flush=True,
+        )
+    elif cfg.video_enabled:
+        print("video=disabled (set udp_host / --udp-host to stream boxes over UDP)",
+              flush=True)
+
     frame_id = 0
     run_start = time.perf_counter()
     try:
@@ -551,7 +724,13 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                 break
             frame_bgr = decoded_tensor_to_bgr(tensors[0])
             boxes = detect(cfg, detector_run, frame_bgr)
+            # Crop for the VLM from the CLEAN frame first, then draw the overlay so
+            # the crop sent to the VLM never contains the drawn boxes/labels.
             commenter.on_frame(frame_bgr, boxes)
+            if video_run is not None:
+                vlm_box = commenter.gate_candidate(boxes, frame_bgr.shape)
+                draw_boxes(frame_bgr, boxes, vlm_box, cfg.score_threshold)
+                push_video(video_run, frame_bgr)
             frame_id += 1
             if frame_id == 1 or frame_id % 30 == 0:
                 elapsed = time.perf_counter() - run_start
@@ -562,6 +741,8 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
     finally:
         detector_run.close()
         source_run.close()
+        if video_run is not None:
+            video_run.close()
 
 
 def run(cfg: Config, force_no_vlm: bool) -> int:

@@ -43,6 +43,54 @@ References: `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM),
 `pyneat.decode_bbox`), `core/include/genai/VisionLanguageModel.h`,
 `core/include/genai/GenAITypes.h`, `llima/02-run-llm-vlm/02_run_vlm.ipynb`.
 
+## Full Architecture
+
+Two decoupled legs share each frame. The **detector** runs every frame (cheap) and feeds
+both the **VLM leg** (gated / dedup'd / rate-limited, bounded background worker, never
+blocks the loop) and the **video leg** (overlay + UDP). The VLM leg and video leg agree on
+which box is "the subject" through the same `_passes_gate` logic — `on_frame` uses it for
+the real send, `gate_candidate` uses it (non-mutating) for the red highlight.
+
+```
+                          RTSP H.264 stream (camera / Insight RTSP source)
+                                        |
+                                        v
+             +----------------------------------------------------+
+             |  make_rtsp_source: pyneat.groups.rtsp_decoded_input |  NV12 out, Realtime/KeepLatest
+             +----------------------------------------------------+
+                                        |  source_run.pull_tensors()
+                                        v
+                        decoded_tensor_to_bgr()  -> clean BGR frame ----------------+
+                                        |                                           | (clean copy)
+                                        v                                           |
+     +-------------------------------------------------------+                      |
+     |  detect(): push([BGR]) -> pull("detections")          |  YOLO11n             |
+     |  -> pyneat.decode_bbox() -> boxes[x1,y1,x2,y2,score,c] |  (YoloV26 head)      |
+     +-------------------------------------------------------+                      |
+                                        |                                           |
+                 +----------------------+-----------------------+                   |
+                 v (every frame, cheap)                         v                   |
+   +------------------------------+          +-------------------------------------+-----------+
+   | VlmCommenter.on_frame(boxes) |          | gate_candidate(boxes) -> the ONE red box (viz)  |
+   |  rate-limit -> gate -> dedup |          +----------------------+--------------------------+
+   |  -> crop CLEAN frame -> queue|                                 v
+   +--------------+---------------+          +------------------------------------------------+
+                  v (bounded, background)    | draw_boxes(): white = all, red = gate_candidate |
+   +------------------------------+          +----------------------+--------------------------+
+   | worker thread:               |                                 v
+   |  dry-run -> log crop+prompt  |          +------------------------------------------------+
+   |  real    -> VisionLanguageModel         | bgr_to_nv12() -> make_nv12_tensor() -> push     |
+   |            .run(GenReq) caption          | VideoSender: H.264 encode -> RTP -> UDP :port  |
+   +------------------------------+          +----------------------+--------------------------+
+        stdout captions                                             v
+                                                     UDP H.264/RTP -> your gst viewer
+```
+
+Key point: the VLM crop is taken from the **clean** BGR frame inside `on_frame(...)`
+*before* `draw_boxes(...)` runs, so the white/red overlay never leaks into the image
+handed to the VLM. The video leg only runs in RTSP mode when `udp_host` is set; image
+mode is stdout-only.
+
 ## Split Validation — read this
 
 The two legs are validated differently on purpose:
@@ -182,6 +230,45 @@ across the platform carrying a bag.  (58 tok, 22.4 tok/s, ttft=0.34s)
 ```
 
 Exact wording depends on the image and the model's sampling; the shape is what to verify.
+
+## Visualization — boxes over UDP (H.264/RTP)
+
+Like the sibling single-stream apps, RTSP mode can draw the detections on each frame
+and stream the result as H.264/RTP over UDP. Colour convention:
+
+- **every detection is drawn white**, and
+- **the one box the VLM would caption this frame is drawn red** (highest-score box that
+  clears the trigger gate — see "How the VLM box is chosen" below).
+
+Enable it by pointing `udp_host` at your viewer machine (video is on by default; leave
+`udp_host` empty or pass `--no-video` for stdout-only detection):
+
+```bash
+dk ./main.py --config ./config/default.conf --udp-host 192.168.1.50 --udp-port 9000 --no-vlm
+```
+
+The app prints a ready-to-paste `gst-launch-1.0` viewer command on startup, e.g.:
+
+```bash
+gst-launch-1.0 -v udpsrc port=9000 \
+  caps="application/x-rtp,media=video,encoding-name=H264,payload=96" \
+  ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+```
+
+Config keys: `video_enabled`, `udp_host`, `udp_port` (or `udp_port_base`), `bitrate_kbps`.
+Implementation mirrors `single-stream-yolo-yolo11` (`VideoSenderOptions.h264_rtp_udp_from_raw`
++ `pyneat.groups.video_sender`); the frame is drawn in BGR, converted to NV12, and pushed.
+The VLM crop is always taken from the **clean** frame *before* the overlay is drawn, so the
+red/white boxes never leak into the image handed to the VLM.
+
+### How the VLM box is chosen (what the red box means)
+
+The red box is the highest-score detection that passes the trigger gate: class in
+`vlm_trigger_classes` (default `person`), `score >= vlm_trigger_min_score`, and area
+`>= vlm_trigger_min_area_frac` of the frame. The *actual* VLM send additionally applies
+the rate limit (`vlm_interval_seconds`), IoU/cooldown dedup (`vlm_dedup_iou`,
+`vlm_dedup_cooldown_s`), and the bounded queue (`vlm_max_pending`); the red overlay
+(`VlmCommenter.gate_candidate`) is non-mutating and shows the current subject every frame.
 
 ## Colour Correctness (a real trap)
 
