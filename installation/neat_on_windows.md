@@ -523,7 +523,7 @@ Reference: https://developer.sima.ai/software/compile-a-model/
 6. Minimal PyNeat smoke test (`hello_neat.py`):
 
    ```python
-   import neat
+   import pyneat
    print("PyNeat import successful")
    ```
 

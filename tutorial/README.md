@@ -63,6 +63,20 @@ Options and I/O. These are the knobs you will actually turn in an app.
 
 Notebook 7 pairs with [`installation/neat_insight.md`](../installation/neat_insight.md).
 
+## III — Advanced
+
+Composition patterns for stages that sit beside the rest of a graph.
+
+| # | Notebook | What you learn |
+| --- | --- | --- |
+| 1 | [`01_genai_model_in_graph.ipynb`](III-advance/01_genai_model_in_graph.ipynb) | `neat.genai.graphs.vision_language` — put a VLM/LLM in a `Graph` as a stage with named `prompt`/`image` inputs and streamed `tokens`/`done` outputs |
+
+Notebook 1 needs a deployed LLiMa VLM on the DevKit (`llima pull <model>`), and mirrors the core
+tutorial `022_compose_genai_into_graph` and the public
+[*Compose GenAI into a Graph*](https://developer.sima.ai/software/tutorials/compose-genai-into-graph)
+page. For a worked example of the direct-model-handle alternative, see the
+[`detection-vlm-assistant`](../apps/detection-vlm-assistant/README.md) app.
+
 ## Next
 
 Once the concepts land, move to a complete application in [`apps/`](../README.md#apps) — start with
