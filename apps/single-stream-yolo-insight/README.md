@@ -1,5 +1,23 @@
 # Single Stream YOLO11 Detection — Insight Metadata Output
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To Run With Python](#how-to-run-with-python)
+- [How To See The Output](#how-to-see-the-output)
+- [Appendix](#appendix)
+- [Appendix: Metadata Wire Format](#appendix-metadata-wire-format)
+- [Appendix: Decode Family](#appendix-decode-family)
+
+---
+
 ## Introduction
 
 This demo runs one RTSP stream through the SiMa Neat YOLO11 object detection model and publishes
@@ -86,7 +104,10 @@ host and set `video_port_base` / `metadata_port_base` if they differ.
 
 For a bounded smoke test, set `frames=30`.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `rtsp_url`: RTSP H.264 input stream consumed by the source graph.
 
@@ -125,6 +146,8 @@ your stream.
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
 `print_backend`: Print the generated backend pipeline when set to `true`.
+
+</details>
 
 ## How To Build
 
@@ -197,7 +220,10 @@ is below `score_threshold`.
 
 # Appendix
 
-## Appendix: Metadata Wire Format
+<details>
+<summary><h2>Appendix: Metadata Wire Format</h2></summary>
+
+<br>
 
 Each frame sends one `send_metadata("object-detection", data_json, timestamp_ms, frame_id)` call.
 An empty `{"objects":[]}` is sent when nothing is detected, so stale boxes never linger in the
@@ -221,10 +247,17 @@ viewer. `data_json` looks like:
 frame. Insight renders the types `object-detection`, `classification`, `pose-estimation`,
 `segmentation` and `tracking`; other types are delivered but not drawn.
 
-## Appendix: Decode Family
+</details>
+
+<details>
+<summary><h2>Appendix: Decode Family</h2></summary>
+
+<br>
 
 The zoo `yolo_11n` archive exposes raw 64-channel DFL heads and decodes with
 `BoxDecodeType.YoloV8`. A **self-compiled** YOLO11 archive (via
 [`model-compilation/`](../../model-compilation/README.md)) folds the DFL into the model and emits
 4-channel l/t/r/b heads — switch to `BoxDecodeType.YoloV26` in `make_model()`. Getting this wrong
 still runs and still produces boxes; they are just decoded from the wrong channels.
+
+</details>

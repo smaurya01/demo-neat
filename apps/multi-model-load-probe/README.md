@@ -1,5 +1,19 @@
 # Multi Model Load Probe
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Commands](#model-download-commands)
+- [Configure](#configure)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To See The Output](#how-to-see-the-output)
+- [Notes](#notes)
+
+---
+
 ## Introduction
 
 This demo loads multiple Neat model pipelines in one process, feeds all selected models from one
@@ -175,7 +189,10 @@ Expected mapping:
 5204 open_pose
 ```
 
-## Notes
+<details>
+<summary><h2>Notes</h2></summary>
+
+<br>
 
 - Each model gets its own output frame and UDP stream. This app does not create a single combined
   mosaic frame.
@@ -187,3 +204,5 @@ Expected mapping:
 ```bash
 dk shell 'for f in /tmp/rpmsg_lock_rpmsg*.owner; do [ -e "$f" ] || continue; echo "==== $f"; cat "$f"; done'
 ```
+
+</details>

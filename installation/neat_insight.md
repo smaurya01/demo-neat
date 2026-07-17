@@ -12,6 +12,18 @@ Run this on the host machine and you can check the insights on NEAT from a clean
 
 NEAT Insight is the browser-based inspection and test console for NEAT vision application development. Use it to verify output and isolate problems across the application, stream path, and device runtime layers.
 
+## Table of Contents
+
+- [1. Concepts](#1-concepts)
+- [2. Access NEAT Insight](#2-access-neat-insight)
+- [3. Install & upgrade](#3-install--upgrade)
+  - [(Optional) Install on a DevKit](#optional-install-on-a-devkit)
+  - [Upgrade](#upgrade)
+- [4. Insight UI overview](#4-insight-ui-overview)
+- [5. Create an RTSP stream using NEAT Insight](#5-create-an-rtsp-stream-using-neat-insight)
+- [6. Tips](#6-tips)
+- [References](#references)
+
 ---
 
 ## 1. Concepts

@@ -18,6 +18,15 @@ Otherwise, download.
 **Why any of this is necessary** — graph surgery, the INT8 calibration trap, what worked and what
 didn't: **[`MODEL-COMPILATION.md`](MODEL-COMPILATION.md)**.
 
+## Table of Contents
+
+- [Download the prebuilt archives](#download-the-prebuilt-archives)
+  - [Manifest](#manifest)
+- [Setup](#setup)
+- [The scripts](#the-scripts)
+- [Compile](#compile)
+- [If something goes wrong](#if-something-goes-wrong)
+
 ---
 
 ## Download the prebuilt archives

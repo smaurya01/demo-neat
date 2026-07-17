@@ -13,6 +13,16 @@ compile you cannot run yourself.
 > exact compile flags and specifics below as things to confirm against the current
 > official SiMa documentation before relying on them, rather than as tested truth.
 
+## Table of Contents
+
+- [Step 0 — Do you even need to compile?](#step-0--do-you-even-need-to-compile)
+- [Step 1 — Architecture family  → **hard gate**](#step-1--architecture-family---hard-gate)
+- [Step 2 — Source format  → **hard gate**](#step-2--source-format---hard-gate)
+- [Step 3 — Required companion files (HF path)  → **hard gate**](#step-3--required-companion-files-hf-path---hard-gate)
+- [Step 4 — Size & memory budget  → **soft gate (plan, don't block)**](#step-4--size--memory-budget---soft-gate-plan-dont-block)
+- [Step 5 — Output must satisfy the runtime contract  → **verify after compile**](#step-5--output-must-satisfy-the-runtime-contract---verify-after-compile)
+- [Decision summary](#decision-summary)
+
 ---
 
 ## Step 0 — Do you even need to compile?

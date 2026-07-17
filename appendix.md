@@ -6,6 +6,23 @@ DevKit when the MLA stops responding.
 
 ← Back to the [repo README](README.md)
 
+## Table of Contents
+
+- [1. Host: a local RTSP source](#1-host-a-local-rtsp-source)
+  - [1.1 Start the RTSP server](#11-start-the-rtsp-server)
+  - [1.2 Publish a video file into it, on a loop](#12-publish-a-video-file-into-it-on-a-loop)
+  - [1.3 Confirm it before blaming the app](#13-confirm-it-before-blaming-the-app)
+- [2. Host: viewing the UDP/RTP output](#2-host-viewing-the-udprtp-output)
+  - [2.1 One stream, with a live FPS readout](#21-one-stream-with-a-live-fps-readout)
+  - [2.2 Four streams at once, in a 2×2 grid](#22-four-streams-at-once-in-a-22-grid)
+- [3. DevKit: recovery when the MLA wedges](#3-devkit-recovery-when-the-mla-wedges)
+  - [3.1 The MLA is blocked / the app hangs on model load](#31-the-mla-is-blocked--the-app-hangs-on-model-load)
+  - [3.2 An LLiMa model stops loading after a few sessions](#32-an-llima-model-stops-loading-after-a-few-sessions)
+  - [3.3 NEAT install blocked by `simaai-memory-lib`](#33-neat-install-blocked-by-simaai-memory-lib)
+  - [3.4 Helper commands — find and clear what is holding the hardware](#34-helper-commands--find-and-clear-what-is-holding-the-hardware)
+  - [Suggested order](#suggested-order)
+- [4. Quick reference](#4-quick-reference)
+
 ---
 
 ## 1. Host: a local RTSP source

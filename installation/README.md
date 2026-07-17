@@ -7,6 +7,20 @@ Install the NEAT SDK on your host, pair it with a Modalix DevKit, and attach VS 
 **Also in this folder:** [`components.md`](components.md) (what each piece of the stack is) ·
 [`neat_insight.md`](neat_insight.md) (browser-based RTSP sources, viewer, runtime metrics)
 
+## Table of Contents
+
+- [1. Prerequisites](#1-prerequisites)
+- [2. Install](#2-install)
+- [3. The decisions you'll make](#3-the-decisions-youll-make)
+- [4. Attach VS Code](#4-attach-vs-code)
+- [5. Run something on the DevKit](#5-run-something-on-the-devkit)
+- [Troubleshooting](#troubleshooting)
+  - [Detailed walkthrough with screenshots](#detailed-walkthrough-with-screenshots)
+  - [VS Code, step by step](#vs-code-step-by-step)
+  - [Older SDKs: two-step install](#older-sdks-two-step-install)
+  - [Optional: Model Compiler](#optional-model-compiler)
+- [References](#references)
+
 ---
 
 ## 1. Prerequisites

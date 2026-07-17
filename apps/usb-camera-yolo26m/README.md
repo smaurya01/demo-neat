@@ -1,5 +1,33 @@
 # USB Camera YOLO26m Detection
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Command](#model-download-command)
+- [Configure](#configure)
+- [Config Parameters](#config-parameters)
+- [How To Build](#how-to-build)
+- [How To Run](#how-to-run)
+- [How To Run With Python](#how-to-run-with-python)
+- [How To See The Output](#how-to-see-the-output)
+- [Appendix: Camera Setup](#appendix-camera-setup)
+  - [Identify the right node](#identify-the-right-node)
+  - [MJPEG is mandatory at 1080p](#mjpeg-is-mandatory-at-1080p)
+- [Appendix: bf16 vs INT8 — which model](#appendix-bf16-vs-int8--which-model)
+  - [The INT8 score ceiling](#the-int8-score-ceiling)
+- [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile)
+  - [The live line](#the-live-line)
+  - [The exit summary](#the-exit-summary)
+  - [The bottleneck line](#the-bottleneck-line)
+  - [Tuning](#tuning)
+- [Appendix: Verifying It Works](#appendix-verifying-it-works)
+- [Appendix: Known Limitations](#appendix-known-limitations)
+- [Appendix: Learnings](#appendix-learnings)
+
+---
+
 ## Introduction
 
 This demo runs a USB (UVC) webcam through the SiMa YOLO26m detection model, draws labeled boxes, and
@@ -96,7 +124,10 @@ inverted scenes.
 
 For a bounded smoke test, set `frames=200` in `./config/default.conf`.
 
-## Config Parameters
+<details>
+<summary><h2>Config Parameters</h2></summary>
+
+<br>
 
 `camera_device`: The camera's *Video Capture* node, e.g. `/dev/video16`. Not the metadata node.
 
@@ -156,6 +187,8 @@ but it is the tool that explains what a model package is actually doing.
 `source_override`: Replace the camera with any GStreamer fragment that ends producing NV12 at
 `width x height`. Used to validate the model against a known image — see
 [Appendix: Verifying It Works](#appendix-verifying-it-works).
+
+</details>
 
 ## How To Build
 
@@ -244,7 +277,10 @@ Expected output: live video with YOLO26m labeled detection boxes.
 > this is a board decoder limitation, not a problem with the output. The stream itself is verified
 > well-formed (SPS + PPS + IDR keyframes, ~3.1 Mbps at 30 fps).
 
-## Appendix: Camera Setup
+<details>
+<summary><h2>Appendix: Camera Setup</h2></summary>
+
+<br>
 
 ### Identify the right node
 
@@ -270,7 +306,12 @@ Raw YUYV collapses above 640x360 — uncompressed 4:2:2 at 1080p does not fit in
 **The trap:** if you ask GStreamer for `video/x-raw` at 1080p, `v4l2src` silently hands you the 5 fps
 YUYV mode and the pipeline looks mysteriously broken. This app pins `image/jpeg` in its caps.
 
-## Appendix: bf16 vs INT8 — which model
+</details>
+
+<details>
+<summary><h2>Appendix: bf16 vs INT8 — which model</h2></summary>
+
+<br>
 
 Both packages can sit in `./assets/models/`; the `model_path` line switches between them.
 
@@ -313,7 +354,12 @@ into 0.0–0.50 and are *not* comparable with bf16's.
 
 There is **no** tessellated INT8 build — `yolo26m-det-int8-mla_tess-b1` returns HTTP 403.
 
-## Appendix: Reading The Time Profile
+</details>
+
+<details>
+<summary><h2>Appendix: Reading The Time Profile</h2></summary>
+
+<br>
 
 Both the C++ and the Python version print the same profile. `profile_interval` controls the cadence
 (default `1.0` s; `0` = live profile off, exit summary still prints).
@@ -374,7 +420,12 @@ compares that against what you are actually delivering and tells you which one i
 - `profile_interval=0` silences the live lines for a clean run; the exit summary still prints.
 - Python measures within ~1 fps of C++ and returns identical boxes — the language choice is free.
 
-## Appendix: Verifying It Works
+</details>
+
+<details>
+<summary><h2>Appendix: Verifying It Works</h2></summary>
+
+<br>
 
 `source_override` replaces the camera with a still image of known content, through the exact same
 graph. This separates *"is the model right"* from *"is the camera path right"* in one run.
@@ -398,7 +449,12 @@ boxes=15 person(0.88) chair(0.90) chair(0.89) chair(0.82) potted plant(0.57)
 **If you get high-confidence boxes here but few from the camera, the pipeline is fine** — your scene
 is just hard (dim, or no COCO objects in view). Run this before debugging weak detections.
 
-## Appendix: Known Limitations
+</details>
+
+<details>
+<summary><h2>Appendix: Known Limitations</h2></summary>
+
+<br>
 
 - **`pipeline_mode=graph` returns zero detections** on runtime 0.2.2. The zero-copy branch topology
   builds and runs at full speed, but the CVU reads system-memory buffers as black frames. The fix
@@ -412,9 +468,16 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
   non-standard JPEG APP0 header. Decoding is unaffected.
 - **nanobind leak warnings** print at Python exit. Cosmetic, from the pyneat bindings.
 
-## Appendix: Learnings
+</details>
+
+<details>
+<summary><h2>Appendix: Learnings</h2></summary>
+
+<br>
 
 [`LEARNING.md`](LEARNING.md) records how this app was built: what was tried, what the numbers said,
 and what did not work — including why the hardware MJPEG decoder was rejected (4 fps vs 27 fps for
 CPU `jpegdec`), why the zero-copy graph silently detects nothing, and the measurement mistakes that
 cost the most time.
+
+</details>

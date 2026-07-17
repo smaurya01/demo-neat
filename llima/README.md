@@ -8,6 +8,15 @@ Everything here is written to run on the **Modalix DevKit**. The notebooks follo
 style as `../tutorial/I-easy`: a markdown concept cell, then a short runnable code cell, then a brief
 interpretation.
 
+## Table of Contents
+
+- [Folder map](#folder-map)
+- [Models](#models)
+- [How to run these notebooks](#how-to-run-these-notebooks)
+- [Reference](#reference)
+
+---
+
 ## Folder map
 
 ```text

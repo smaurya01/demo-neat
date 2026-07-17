@@ -5,6 +5,21 @@ us the most time.
 
 For the commands, see **[`README.md`](README.md)**.
 
+## Table of Contents
+
+- [The target contract: one `.tar.gz`, one `.elf`, zero `.so`](#the-target-contract-one-targz-one-elf-zero-so)
+- [Why graph surgery is needed](#why-graph-surgery-is-needed)
+- [Calibration: the mistake that silently ruins a model](#calibration-the-mistake-that-silently-ruins-a-model)
+- [Proving it: contract **and** behaviour](#proving-it-contract-and-behaviour)
+- [What worked, what didn't](#what-worked-what-didnt)
+  - [✅ The 209× pose fix: padding 51 → 64 channels](#-the-209-pose-fix-padding-51--64-channels)
+  - [✅ Ultralytics head names are scale-invariant](#-ultralytics-head-names-are-scale-invariant)
+  - [✅ YOLO26 needs no DFL rebuild](#-yolo26-needs-no-dfl-rebuild)
+  - [❌ A green compile that was numerically garbage](#-a-green-compile-that-was-numerically-garbage)
+  - [❌ Synthetic calibration images](#-synthetic-calibration-images)
+- [Provenance](#provenance)
+- [Layout & what is committed](#layout--what-is-committed)
+
 ---
 
 ## The target contract: one `.tar.gz`, one `.elf`, zero `.so`

@@ -1,5 +1,19 @@
 # Model Benchmark
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [About Project](#about-project)
+- [Requirements](#requirements)
+- [Model Download Commands](#model-download-commands)
+- [Model Assets](#model-assets)
+- [Configure](#configure)
+- [How To Run](#how-to-run)
+- [How To Read The Output](#how-to-read-the-output)
+- [Notes And Caveats](#notes-and-caveats)
+
+---
+
 ## Introduction
 
 This project benchmarks compiled SiMa Neat model packages with `pyneat.Model.benchmark()`.
@@ -163,7 +177,10 @@ metrics.avg_power_watts
 metrics.energy_joules
 ```
 
-## Notes And Caveats
+<details>
+<summary><h2>Notes And Caveats</h2></summary>
+
+<br>
 
 - This is not an end-to-end application benchmark.
 - It does not include RTSP/camera frame acquisition.
@@ -172,3 +189,5 @@ metrics.energy_joules
 - Use this benchmark to compare compiled model packages under the same synthetic Neat benchmark
   conditions.
 - Use the single-stream demo applications when you need full pipeline FPS or latency.
+
+</details>
