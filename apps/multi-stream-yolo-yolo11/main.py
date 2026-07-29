@@ -26,11 +26,13 @@ Design notes (all APIs traceable to https://github.com/sima-neat/core):
 from __future__ import annotations
 
 import argparse
+import collections
 from dataclasses import dataclass, field
 import glob
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
 cv2 = None
@@ -86,10 +88,76 @@ class Config:
     # Frames per stream excluded from the reported FPS (graph build, model load,
     # RTSP jitter-buffer fill all land on the first few frames).
     warmup_frames: int = 20
+    # Seconds between live time-profile prints. 0 disables it and you get only the
+    # summary at exit.
+    profile_interval: float = 5.0
     print_backend: bool = False
+    # Decoder-admission lease inputs (Neat 0.3.0). Only take effect because every
+    # decoder can carry them. Inert unless a lease is granted (2 streams do not need one).
+    decoder_buffers: int = 16
+    decoder_input_buffers: int = 2
+    decoder_tuning: str = "auto"
 
     def rtsp_urls(self) -> list[str]:
         return [self.rtsp_url_0, self.rtsp_url_1]
+
+
+class FrameRing:
+    """Bounded hand-off between two threads. Newest wins; the oldest is dropped.
+
+    This replaces `queue.Queue`, deliberately.
+
+    `queue.Queue.put()` BLOCKS when the queue is full, and that is what deadlocked this
+    app: the puller is the only thread draining the shared model Run, so one slow output
+    worker filled its queue, the puller blocked in put() forever, nothing drained the
+    model graph, and the pusher died with "GraphRun::push timed out waiting for pipeline
+    input queue" after ~queue_depth frames. The drop policy was previously spelled out at
+    every call site as a try/except Full -> get_nowait -> retry dance, so it was easy to
+    get wrong and easy to reintroduce.
+
+    Here there is simply NO blocking put. A live pipeline must shed load rather than
+    stall the accelerator, and this makes that structural: `put()` always returns
+    immediately and reports whether it had to discard a frame.
+    """
+
+    __slots__ = ("_items", "_cap", "_cv", "_closed")
+
+    def __init__(self, capacity: int):
+        self._items = collections.deque()
+        self._cap = max(1, capacity)
+        self._cv = threading.Condition()
+        self._closed = False
+
+    def put(self, item) -> bool:
+        """Append, evicting the oldest if full. Returns True if a frame was dropped."""
+        dropped = False
+        with self._cv:
+            if self._closed:
+                return False
+            if len(self._items) >= self._cap:
+                self._items.popleft()
+                dropped = True
+            self._items.append(item)
+            self._cv.notify()
+        return dropped
+
+    def get(self, timeout: float):
+        """Pop the oldest, waiting up to `timeout` seconds. None if empty or closed."""
+        with self._cv:
+            if not self._items and not self._closed:
+                self._cv.wait(timeout)
+            if not self._items:
+                return None
+            return self._items.popleft()
+
+    def get_nowait(self):
+        with self._cv:
+            return self._items.popleft() if self._items else None
+
+    def close(self) -> None:
+        with self._cv:
+            self._closed = True
+            self._cv.notify_all()
 
 
 @dataclass
@@ -98,6 +166,8 @@ class StreamContext:
     stream_id: int
     rtsp_url: str
     source_run: object
+    # Endpoint name on the SHARED source Run (one Run now serves every stream).
+    source_endpoint: str
     video_run: object
     video_port: int
     width: int
@@ -205,6 +275,14 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.model_queue_depth = int(value)
     elif key == "stream_queue_depth":
         cfg.stream_queue_depth = int(value)
+    elif key == "decoder_buffers":
+        cfg.decoder_buffers = int(value)
+    elif key == "decoder_input_buffers":
+        cfg.decoder_input_buffers = int(value)
+    elif key == "decoder_tuning":
+        cfg.decoder_tuning = value
+    elif key == "profile_interval":
+        cfg.profile_interval = float(value)
     elif key == "warmup_frames":
         cfg.warmup_frames = int(value)
     elif key in {"only", "allow_missing", "load_only"}:
@@ -252,6 +330,8 @@ def parse_args(argv: list[str] | None) -> Config:
     parser.add_argument("--bitrate", type=int)
     parser.add_argument("--rtsp-udp", action="store_true")
     parser.add_argument("--print-backend", action="store_true")
+    parser.add_argument("--profile-interval", type=float,
+                        help="seconds between live profile prints; 0 = summary only")
     parser.add_argument("--warmup-frames", type=int,
                         help="frames per stream excluded from the reported FPS")
     parser.add_argument("--model-queue-depth", type=int,
@@ -302,6 +382,8 @@ def parse_args(argv: list[str] | None) -> Config:
         cfg.tcp = False
     if args.print_backend:
         cfg.print_backend = True
+    if args.profile_interval is not None:
+        cfg.profile_interval = args.profile_interval
     if args.warmup_frames is not None:
         cfg.warmup_frames = args.warmup_frames
     if args.model_queue_depth is not None:
@@ -343,26 +425,71 @@ def probe_rtsp(cfg: Config, url: str) -> tuple[int, int, int]:
     return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
 
 
-def make_source_options(cfg: Config, url: str, width: int, height: int, fps: int):
-    opt = pyneat.RtspDecodedInputOptions()
-    opt.url = url
-    opt.latency_ms = cfg.latency_ms
-    opt.tcp = cfg.tcp
-    opt.payload_type = 96
-    opt.insert_queue = True
-    opt.decoder_name = "decoder"
-    opt.decoder_raw_output = True
-    opt.auto_caps_from_stream = True
-    opt.fallback_h264_width = width
-    opt.fallback_h264_height = height
-    opt.fallback_h264_fps = fps
-    opt.output_caps.enable = True
-    opt.output_caps.format = pyneat.Format.NV12
-    opt.output_caps.width = width
-    opt.output_caps.height = height
-    opt.output_caps.fps = fps
-    opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
-    return opt
+def source_endpoint(stream_id: int) -> str:
+    """Per-stream output endpoint on the ONE shared source Run."""
+    return f"frame{stream_id}"
+
+
+def make_source_graph(cfg: Config, stream_id: int, url: str, width: int, height: int,
+                      fps: int):
+    """ONE graph per stream: rtsp -> decode -> Output("frame").
+
+    Deliberately one graph (and one Run) PER STREAM rather than one combined graph.
+
+    A combined graph is what unlocks decoder admission, and that matters at high stream
+    counts -- but only at high stream counts. Measured on this board with bare
+    gst-launch: un-admitted 720p decode runs at 60 fps each for 1 OR 2 concurrent
+    streams, and only collapses at 4 (43 fps each). This app runs two streams, so it
+    sits comfortably inside the un-admitted budget.
+
+    Combining them here actively breaks it: both streams use structurally identical
+    rtsp -> decode chains, and two `graph.connect(source_i, decoder_i)` calls inside one
+    Graph get MERGED -- the generated backend contained exactly one rtspsrc and one
+    neatdecoder, so stream 0 produced zero frames while stream 1 ran at full rate.
+    Making the subgraph names unique and giving each decoder a named input did not
+    change that. Keeping the graphs separate sidesteps it entirely.
+
+    If this app ever grows past ~3 streams, revisit: it will then need the combined
+    graph AND the branch()/realtime_link(stream_id) wiring the official
+    high-density-multi-stream-object-detector example uses to keep the chains distinct.
+    """
+    enc = pyneat.RtspEncodedInputOptions()
+    enc.url = url
+    enc.codec = pyneat.RtspCodec.H264
+    enc.latency_ms = cfg.latency_ms
+    enc.tcp = cfg.tcp
+    enc.drop_on_latency = True
+    enc.insert_queue = True
+    enc.h264_payload_type = 96
+    # Derive caps from the stream. Do NOT pin an integer framerate: the reference source
+    # is 59.94 fps (60000/1001) and pinning 60/1 makes rtspsrc fail negotiation outright
+    # ("streaming stopped, reason not-negotiated (-4)").
+    enc.auto_caps_from_stream = True
+    enc.fallback_h264_width = width
+    enc.fallback_h264_height = height
+    enc.fallback_h264_fps = fps
+
+    dec = pyneat.SimaDecodeOptions()
+    dec.type = pyneat.SimaDecodeType.H264
+    dec.sima_allocator_type = 2
+    dec.out_format = pyneat.Format.NV12
+    dec.raw_output = True
+    dec.dec_width = width
+    dec.dec_height = height
+    dec.dec_fps = fps
+    dec.num_buffers = cfg.decoder_buffers
+    dec.input_buffers = cfg.decoder_input_buffers
+    dec.decoder_tuning = cfg.decoder_tuning
+
+    graph = pyneat.Graph(f"source_{stream_id}")
+    graph.add(pyneat.groups.rtsp_encoded_input(enc))
+    graph.add(pyneat.nodes.sima_decode(dec))
+    graph.add(pyneat.nodes.caps_raw("NV12", width, height, fps, pyneat.CapsMemory.Any))
+    # 4 slots, not 1: a single slot leaves the decoder nowhere to put frame N+1 until the
+    # source thread has taken frame N, so every scheduling gap costs a frame.
+    graph.add(pyneat.nodes.output(source_endpoint(stream_id),
+                                  pyneat.OutputOptions.every_frame(cfg.stream_queue_depth)))
+    return graph
 
 
 def make_model(cfg: Config):
@@ -370,9 +497,9 @@ def make_model(cfg: Config):
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    opt.preprocess.input_max_width = cfg.fallback_width
-    opt.preprocess.input_max_height = cfg.fallback_height
-    opt.preprocess.input_max_depth = 1
+    # The input_max_* envelope is deliberately NOT set. Neat 0.3.0 enforces it only
+    # when set explicitly, so setting it can only go wrong: 1 aborts
+    # ("color_input_requires_input_shape_channels_3") and 3 mis-sizes the ingress.
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
     opt.preprocess.resize.height = cfg.model_height
@@ -408,23 +535,30 @@ def make_nv12_input_options(width: int, height: int, fps: int):
     input_opt.max_depth = 1
     input_opt.fps_n = max(1, fps)
     input_opt.fps_d = 1
-    input_opt.caps_override = f"video/x-raw,format=NV12,width={width},height={height},framerate={max(1, fps)}/1"
-    input_opt.use_simaai_pool = False
+    # No caps_override: it omitted `depth`, which the fields above DO set, and
+    # caps_override wins -- so the appsrc published caps with no depth and the CVU
+    # had nothing to size the ingress span from.
+    # No use_simaai_pool either: 0.3.0 maps False -> InputMemoryPolicy.SystemMemory,
+    # which made neatprocesscvu reject the staged buffer outright.
     return input_opt
-
-
-def build_source_graph(cfg: Config, url: str, width: int, height: int, fps: int):
-    graph = pyneat.Graph(f"source_{width}x{height}")
-    graph.add(pyneat.groups.rtsp_decoded_input(make_source_options(cfg, url, width, height, fps)))
-    graph.add(pyneat.nodes.output(pyneat.OutputOptions.every_frame(1)))
-    return graph
 
 
 def build_model_graph(cfg: Config, width: int, height: int, fps: int):
     graph = pyneat.Graph("model")
-    graph.add(pyneat.nodes.input(make_nv12_input_options(width, height, fps)))
-    graph.add(make_model(cfg))
-    graph.add(pyneat.nodes.output("detections", pyneat.OutputOptions.every_frame(1)))
+    model = make_model(cfg)
+    # Ask the MODEL for its ingress options. It knows its own caps, depth, memory
+    # policy and pool sizing; hand-built options produced depth-less caps and
+    # "raw GstMemory span overflow" from neatprocesscvu. Every official example
+    # does this (13 call sites) and none hand-builds the model appsrc.
+    input_opt = model.input_appsrc_options(False)
+    input_opt.block = True
+    graph.add(pyneat.nodes.input("image", input_opt))
+    graph.add(model)
+    # MUST be >= model_queue_depth: this is how many FINISHED results the sink may
+    # park while the Run keeps model_queue_depth frames in flight. every_frame(1)
+    # contradicts that and backs the graph up until push() times out.
+    graph.add(pyneat.nodes.output("detections",
+                                  pyneat.OutputOptions.every_frame(cfg.model_queue_depth)))
     return graph
 
 
@@ -627,6 +761,11 @@ class StageProfile:
     def _series(self, name: str) -> list:
         return self.latency if name == "latency" else self.samples[name]
 
+    def window_mean(self, name: str, lo: int, hi: int) -> float:
+        """Mean over samples[lo:hi] only -- the current reporting window."""
+        values = self._series(name)[lo:hi]
+        return sum(values) / len(values) if values else 0.0
+
     def mean(self, name: str) -> float:
         values = self._series(name)
         return sum(values) / len(values) if values else 0.0
@@ -680,10 +819,19 @@ class StageProfile:
 
 def source_worker(cfg, ctx, in_q, stop) -> None:
     """One per stream: RTSP frame -> NV12 -> model input tensor -> input queue."""
-    import queue as queue_mod
     while not stop.is_set():
         t_frame = time.perf_counter()
-        tensors = ctx.source_run.pull_tensors(timeout_ms=1000)
+        # Named pull: ONE Run now serves every stream, so the endpoint says which
+        # camera this frame belongs to. pull_tensors() takes no name and would
+        # hand back whichever stream happened to arrive first.
+        #
+        # SHORT timeout, not 1000 ms: every source thread shares one Run, and a long
+        # blocking pull on one endpoint starves the others. Measured with a 1000 ms
+        # timeout: stream 1 took 16510 frames while stream 0 got 8.
+        sample = ctx.source_run.pull(ctx.source_endpoint, 20)
+        if sample is None:
+            continue
+        tensors = extract_tensors(sample)
         if not tensors:
             continue
         nv12, w, h = tensor_nv12_from_decoded(tensors[0])
@@ -697,23 +845,12 @@ def source_worker(cfg, ctx, in_q, stop) -> None:
         # end-to-end latency and the input-queue wait.
         item = (ctx, nv12, tensor, w, h, t_frame, time.perf_counter(), rtsp_ms, prep_ms)
         # Live source: keep the newest frame rather than block the camera.
-        try:
-            in_q.put_nowait(item)
-        except queue_mod.Full:
-            try:
-                in_q.get_nowait()
-                ctx.dropped += 1
-            except queue_mod.Empty:
-                pass
-            try:
-                in_q.put_nowait(item)
-            except queue_mod.Full:
-                ctx.dropped += 1
+        if in_q.put(item):
+            ctx.dropped += 1
 
 
 def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) -> None:
     """Round-robin the per-stream input queues into the ONE shared model Run."""
-    import queue as queue_mod
     rr = 0
     try:
         while not stop.is_set():
@@ -721,11 +858,9 @@ def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) 
             for _ in range(len(in_queues)):          # round-robin => fairness
                 q = in_queues[rr]
                 rr = (rr + 1) % len(in_queues)
-                try:
-                    item = q.get_nowait()
+                item = q.get_nowait()
+                if item is not None:
                     break
-                except queue_mod.Empty:
-                    continue
             if item is None:
                 time.sleep(0.001)
                 continue
@@ -777,8 +912,23 @@ def puller_worker(cfg, model_run, pending, pending_cv, stop, errors, model_rate)
                 (ctx, nv12, w, h, t_frame, t_pushed,
                  rtsp_ms, prep_ms, qwait_ms, push_ms) = pending.popleft()
             infer_ms = (t_pulled - t_pushed) * 1000.0
-            ctx.result_q.put((nv12, sample, w, h, t_frame,
-                              rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms))
+            item = (nv12, sample, w, h, t_frame,
+                    rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms)
+
+            # NEVER block here. THIS WAS THE STALL. result_q is bounded and this is
+            # the ONLY thread draining the shared model Run, so a blocking put()
+            # deadlocks everything the moment one output worker falls behind:
+            #   result_q fills -> puller blocks in put() -> nothing drains the model
+            #   graph -> pusher's push() blocks -> after 5 s "GraphRun::push timed
+            #   out waiting for pipeline input queue" and the app dies having done
+            #   ~queue_depth frames.
+            # It survived every graph-level change (envelope, caps, every_frame,
+            # memory policy, model-derived appsrc options, Owned output, source
+            # ordering) because it is a Python deadlock, not a Neat misconfiguration.
+            # Drop the OLDEST pending result instead -- same rule the source mailbox
+            # already follows: shed load at a queue, never stall the accelerator.
+            if ctx.result_q.put(item):
+                ctx.dropped += 1
     except Exception as exc:
         errors.append(f"puller: {exc}")
         stop.set()
@@ -786,14 +936,13 @@ def puller_worker(cfg, model_run, pending, pending_cv, stop, errors, model_rate)
 
 def output_worker(cfg, ctx, stop, errors, on_frame) -> None:
     """One per stream: decode boxes, draw the overlay, push to this stream's UDP Run."""
-    import queue as queue_mod
     try:
         while not stop.is_set():
-            try:
-                (nv12, sample, w, h, t_frame,
-                 rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms) = ctx.result_q.get(timeout=0.2)
-            except queue_mod.Empty:
+            item = ctx.result_q.get(timeout=0.2)
+            if item is None:
                 continue
+            (nv12, sample, w, h, t_frame,
+             rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms) = item
 
             mark = time.perf_counter()
             boxes = decode_boxes(extract_tensors(sample), w, h, cfg.top_k)
@@ -850,29 +999,42 @@ def run(cfg: Config) -> int:
     run_options.preset = pyneat.RunPreset.Reliable
     run_options.queue_depth = cfg.model_queue_depth
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
-    run_options.output_memory = pyneat.OutputMemory.ZeroCopy
+    # Owned, NOT ZeroCopy. A ZeroCopy Sample points into the graph's own output
+    # buffer, and this app parks Samples in result_q until decode+overlay+encode is
+    # done -- up to stream_queue_depth per stream. Holding graph buffers that long
+    # starves the sink. The only output here is a small decoded BBOX payload, so the
+    # copy is cheap (quad-stream measured Owned as free for its detection stream).
+    run_options.output_memory = pyneat.OutputMemory.Owned
     model_run = model_graph.build(run_options)
 
     contexts: list[StreamContext] = []
     for stream_id, url in enumerate(urls):
         w, h, f = caps[stream_id]
-        source_graph = build_source_graph(cfg, url, w, h, f)
-        src_opts = pyneat.RunOptions()
-        src_opts.preset = pyneat.RunPreset.Realtime
-        src_opts.queue_depth = 3
-        src_opts.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-        src_opts.output_memory = pyneat.OutputMemory.Owned
-        source_run = source_graph.build(src_opts)
         video_graph, video_run, video_port = build_video_graph(cfg, stream_id, w, h, f)
         contexts.append(StreamContext(
-            stream_id=stream_id, rtsp_url=url, source_run=source_run,
+            stream_id=stream_id, rtsp_url=url, source_run=None,
+            source_endpoint=source_endpoint(stream_id),
             video_run=video_run, video_port=video_port, width=w, height=h, fps=f,
         ))
         if cfg.print_backend:
-            print(f"Stream {stream_id} source backend:\n{source_graph.describe_backend()}")
             print(f"Stream {stream_id} video backend:\n{video_graph.describe_backend()}")
     if cfg.print_backend:
         print(f"Shared model backend:\n{model_graph.describe_backend()}")
+
+    # Start the RTSP sources LAST. Graph.build() STARTS the pipeline, so building the
+    # sources before the ~2 s video graphs means the cameras stream with nobody
+    # pulling and the source edge queue fills before the app is ready.
+    src_opts = pyneat.RunOptions()
+    src_opts.preset = pyneat.RunPreset.Realtime
+    src_opts.queue_depth = 3
+    src_opts.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+    src_opts.output_memory = pyneat.OutputMemory.Owned
+    for ctx in contexts:
+        w, h, f = caps[ctx.stream_id]
+        g = make_source_graph(cfg, ctx.stream_id, ctx.rtsp_url, w, h, f)
+        if cfg.print_backend:
+            print(f"Stream {ctx.stream_id} source backend:\n{g.describe_backend()}")
+        ctx.source_run = g.build(src_opts)
 
     print(f"Shared model: {resolve_model_path(cfg)} (decode={cfg.model_name})")
     for ctx in contexts:
@@ -883,9 +1045,6 @@ def run(cfg: Config) -> int:
             f"! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false"
         )
 
-    import collections
-    import queue as queue_mod
-    import threading
 
     stop = threading.Event()
     errors: list[str] = []
@@ -893,9 +1052,9 @@ def run(cfg: Config) -> int:
     pending_cv = threading.Condition()
     # Written only by the single puller thread; read at the end.
     model_rate = {"last": None, "gaps": []}
-    in_queues = [queue_mod.Queue(maxsize=cfg.stream_queue_depth) for _ in contexts]
+    in_queues = [FrameRing(cfg.stream_queue_depth) for _ in contexts]
     for ctx in contexts:
-        ctx.result_q = queue_mod.Queue(maxsize=cfg.stream_queue_depth)
+        ctx.result_q = FrameRing(cfg.stream_queue_depth)
 
     # Steady-state window: exclude warmup (graph build, model load, RTSP fill).
     steady = {"start": None, "lock": threading.Lock()}
@@ -907,10 +1066,6 @@ def run(cfg: Config) -> int:
                 steady["start"] = time.perf_counter()
                 for c in contexts:
                     c.steady_base = c.processed
-        if ctx.processed % 60 == 0:
-            print(f"stream={ctx.stream_id} port={ctx.video_port} frame={ctx.processed} "
-                  f"detections={ctx.last_detections} visible={ctx.last_visible} "
-                  f"dropped={ctx.dropped}", flush=True)
         if cfg.frames > 0 and all(c.processed >= cfg.frames for c in contexts):
             stop.set()
 
@@ -928,6 +1083,10 @@ def run(cfg: Config) -> int:
         threads.append(threading.Thread(target=output_worker,
                                         args=(cfg, ctx, stop, errors, on_frame),
                                         name=f"out{ctx.stream_id}", daemon=True))
+    # One reporter for ALL streams: a single writer keeps the table intact on stdout.
+    threads.append(threading.Thread(target=run_reporter,
+                                    args=(cfg, contexts, stop, time.perf_counter()),
+                                    name="reporter", daemon=True))
 
     print(f"\n{len(contexts)} source threads -> 1 round-robin pusher -> shared model "
           f"(queue_depth={cfg.model_queue_depth}, Block) -> 1 puller -> "
@@ -943,6 +1102,12 @@ def run(cfg: Config) -> int:
         stop.set()
         with pending_cv:
             pending_cv.notify_all()
+        # Wake anyone parked in FrameRing.get() so join() does not wait out its timeout.
+        for q in in_queues:
+            q.close()
+        for c in contexts:
+            if c.result_q is not None:
+                c.result_q.close()
         wall = (time.perf_counter() - steady["start"]) if steady["start"] else 0.0
         snapshot = {c.stream_id: c.processed for c in contexts}
         for t in threads:
@@ -954,9 +1119,68 @@ def run(cfg: Config) -> int:
             print(f"[ERR] {err}", file=sys.stderr, flush=True)
         model_run.close()
         for ctx in contexts:
-            ctx.source_run.close()
             ctx.video_run.close()
+        for ctx in contexts:
+            ctx.source_run.close()
     return sum(c.processed for c in contexts)
+
+
+def print_live(cfg, contexts, cursors, started) -> None:
+    """One windowed profile table for all streams.
+
+    Every column is a mean over THIS window only, not since start: a cumulative mean
+    hides a pipeline that has started degrading. `fps` is likewise (frames this window /
+    seconds this window).
+    """
+    now = time.perf_counter()
+    rows = []
+    aggregate = 0.0
+    for ctx, cur in zip(contexts, cursors):
+        prof = ctx.profile
+        # Snapshot the sample count once. The output worker is still appending, and a
+        # window is [previous count, count-now) so no sample is counted twice or missed.
+        hi = len(prof.latency)
+        lo = min(cur["n"], hi)
+        processed = ctx.processed
+        dropped = ctx.dropped
+        dt = now - cur["t"]
+        fps = (processed - cur["processed"]) / dt if dt > 0 else 0.0
+        aggregate += fps
+        rows.append((
+            ctx.stream_id,
+            prof.window_mean("rtsp", lo, hi),
+            prof.window_mean("infer", lo, hi),
+            prof.window_mean("decode", lo, hi),
+            prof.window_mean("overlay", lo, hi),
+            prof.window_mean("send", lo, hi),
+            prof.window_mean("latency", lo, hi),
+            fps,
+            dropped - cur["dropped"],
+        ))
+        cur["n"], cur["processed"], cur["t"], cur["dropped"] = hi, processed, now, dropped
+
+    out = [f"\n-- t={now - started:6.1f}s -- ms/frame, mean over this window --",
+           f"{'stream':>6} {'decode':>8} {'infer':>8} {'boxdec':>8} {'overlay':>8} "
+           f"{'encode':>8} {'latency':>9} {'fps':>7} {'dropped':>8}"]
+    for sid, dec, inf, box, ovl, enc, lat, fps, drops in rows:
+        out.append(f"{sid:>6} {dec:>8.2f} {inf:>8.2f} {box:>8.2f} {ovl:>8.2f} "
+                   f"{enc:>8.2f} {lat:>9.2f} {fps:>7.1f} {drops:>8}")
+    out.append(f"{'':>6} {'':>8} {'':>8} {'':>8} {'':>8} {'':>8} {'aggregate':>9} "
+               f"{aggregate:>7.1f} fps")
+    # Assemble into ONE write: several threads share stdout and a table built from many
+    # print() calls gets sliced in half by a stray warning.
+    print("\n".join(out), flush=True)
+
+
+def run_reporter(cfg, contexts, stop, started) -> None:
+    """Print the live profile every cfg.profile_interval seconds until stopped."""
+    if cfg.profile_interval <= 0:
+        return
+    cursors = [{"n": 0, "processed": 0, "t": started, "dropped": 0} for _ in contexts]
+    # stop.wait() returns True the moment stop is set, so shutdown is not delayed by up
+    # to a whole interval the way time.sleep() would be.
+    while not stop.wait(cfg.profile_interval):
+        print_live(cfg, contexts, cursors, started)
 
 
 def print_summary(contexts: list[StreamContext], wall_s: float, model_rate: dict) -> None:
