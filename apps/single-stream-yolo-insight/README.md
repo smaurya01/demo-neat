@@ -213,8 +213,15 @@ gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-
 ```
 
 Expected output: live video in the Insight viewer with YOLO11 boxes drawn from metadata. If you
-see video but no boxes, video and metadata are usually on mismatched channels, or every detection
-is below `score_threshold`.
+see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadata` block:
+
+- `messages_received` flat at `0` — the datagrams never arrive: wrong `insight_host`,
+  wrong `metadata_port_base`, or a firewall.
+- `messages_received` climbing but `messages_forwarded` flat at `0` — vf is rejecting the
+  envelope. The usual cause is an integer `"timestamp"` field; see
+  [Metadata Wire Format](#appendix-metadata-wire-format).
+- `messages_forwarded` climbing but still no boxes — video and metadata are on mismatched
+  channels, or every detection is below `score_threshold`.
 
 ---
 
@@ -225,7 +232,7 @@ is below `score_threshold`.
 
 <br>
 
-Each frame sends one `send_metadata("object-detection", data_json, timestamp_ms, frame_id)` call.
+Each frame sends one `send_metadata("object-detection", data_json, -1, frame_id)` call.
 An empty `{"objects":[]}` is sent when nothing is detected, so stale boxes never linger in the
 viewer. `data_json` looks like:
 
@@ -246,6 +253,14 @@ viewer. `data_json` looks like:
 `decode_bbox` returns **corner** coordinates (`x1, y1, x2, y2`), so the app converts on every
 frame. Insight renders the types `object-detection`, `classification`, `pose-estimation`,
 `segmentation` and `tracking`; other types are delivered but not drawn.
+
+**Do not pass an epoch-millisecond timestamp to `send_metadata`.** Insight's vf ingest drops every
+metadata message whose top-level `"timestamp"` is a **JSON integer** — the datagram is counted in
+`/api/ingest/stats` under `metadata.messages_received` (and `invalid_json` stays `0`), but
+`metadata.messages_forwarded` never leaves `0`, so nothing reaches the browser DataChannel and no
+boxes are drawn. Passing `-1` makes `MetadataSender` omit the field entirely, vf forwards the
+message, and the viewer pairs metadata to frames by arrival order. A float timestamp (seconds, as
+`neat-insight-metadata-test` emits) is also forwarded; an integer of any magnitude is not.
 
 </details>
 

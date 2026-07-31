@@ -295,7 +295,9 @@ def make_model(cfg: Config) -> pyneat.Model:
     opt.preprocess.enable = pyneat.AutoFlag.On
     opt.preprocess.input_max_width = cfg.width
     opt.preprocess.input_max_height = cfg.height
-    opt.preprocess.input_max_depth = 1
+    # 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
+    # bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
+    opt.preprocess.input_max_depth = 3
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
     opt.preprocess.resize.height = cfg.model_height
@@ -610,7 +612,7 @@ def make_metadata_sender(cfg: Config):
 def run_push(cfg: Config) -> int:
     source_graph = pyneat.Graph("usb_camera_source")
     source_graph.add(pyneat.nodes.custom(camera_fragment(cfg), pyneat.InputRole.Source))
-    source_graph.add(pyneat.nodes.output("frame", pyneat.OutputOptions.latest()))
+    source_graph.add(pyneat.nodes.output("frame", pyneat.OutputOptions.every_frame(4)))
 
     model_graph = pyneat.Graph("usb_camera_model")
     model_graph.add(pyneat.nodes.input("image", make_nv12_input_options(cfg)))

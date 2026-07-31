@@ -72,9 +72,10 @@ double ms_since(Clock::time_point begin, Clock::time_point end) {
   return std::chrono::duration<double, std::milli>(end - begin).count();
 }
 
+// Frame 1 is reported separately as a startup latency, so windowed stats start
+// at the first multiple of 30.
 bool should_log_frame(int processed, int target_frames) {
-  return processed == 1 || (processed % 30) == 0 ||
-         (target_frames > 0 && processed == target_frames);
+  return (processed % 30) == 0 || (target_frames > 0 && processed == target_frames);
 }
 
 int to_int(const std::string& value) {
@@ -190,7 +191,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   opt.preprocess.enable = neat::AutoFlag::On;
   opt.preprocess.input_max_width = cfg.fallback_width;
   opt.preprocess.input_max_height = cfg.fallback_height;
-  opt.preprocess.input_max_depth = 1;
+  // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
+  // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
+  opt.preprocess.input_max_depth = 3;
   opt.preprocess.resize.width = cfg.model_width;
   opt.preprocess.resize.height = cfg.model_height;
   opt.preprocess.resize.mode = neat::ResizeMode::Letterbox;
@@ -325,11 +328,6 @@ std::string build_objects_json(const std::vector<neat::Box>& boxes, const Config
   return json.str();
 }
 
-int64_t now_epoch_ms() {
-  const auto now = std::chrono::system_clock::now().time_since_epoch();
-  return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
-}
-
 int run_app() {
   const Config cfg = read_config();
   validate_config(cfg);
@@ -368,10 +366,19 @@ int run_app() {
             << "Viewer:       Neat Insight Video Viewer channel " << cfg.channel
             << " draws boxes from metadata\n";
 
+  // Stats are windowed: each log line covers only the frames since the previous
+  // line. A cumulative average since run start would fold the one-off startup
+  // cost into every figure and converge on the true rate only as 1/n, which
+  // makes short runs (frames=30) read several times slower than they are.
   int processed = 0;
-  double pull_ms_sum = 0.0;
-  double send_ms_sum = 0.0;
+  int timeouts = 0;
+  int window_frames = 0;
+  double window_pull_ms = 0.0;
+  double window_send_ms = 0.0;
+  double startup_ms = 0.0;
   const auto run_start = Clock::now();
+  auto steady_start = run_start;
+  auto window_start = run_start;
   while (!g_stop.load() && (cfg.frames <= 0 || processed < cfg.frames)) {
     neat::Sample sample;
     neat::PullError pull_error;
@@ -379,7 +386,15 @@ int run_app() {
     const auto status = run.pull("detections", 20000, sample, &pull_error);
     const auto pull_end = Clock::now();
     if (status == neat::PullStatus::Timeout) {
+      ++timeouts;
       std::cerr << "[warn] timed out waiting for detections\n";
+      // Drop the stalled interval instead of folding it into the window, so one
+      // stall shows up as a timeout count rather than silently biasing this line
+      // and every line after it.
+      window_start = Clock::now();
+      window_frames = 0;
+      window_pull_ms = 0.0;
+      window_send_ms = 0.0;
       continue;
     }
     if (status == neat::PullStatus::Closed) {
@@ -398,30 +413,61 @@ int run_app() {
     // Send every frame, including an empty list, so stale boxes never linger
     // in the viewer. UDP is fire-and-forget; success only proves the datagram
     // left this host.
+    //
+    // timestamp = -1 omits the "timestamp" field from the envelope. Do not pass
+    // an epoch-ms value here: Insight's vf ingest drops every metadata message
+    // whose "timestamp" is a JSON integer (messages_received climbs while
+    // messages_forwarded stays at 0), so the boxes never reach the viewer.
+    // Without the field, vf forwards and the viewer pairs metadata to frames by
+    // arrival order.
     std::string send_err;
-    if (!metadata_sender.send_metadata("object-detection", data_json, now_epoch_ms(),
+    if (!metadata_sender.send_metadata("object-detection", data_json, -1,
                                        std::to_string(frame_id), &send_err)) {
       std::cerr << "[warn] metadata send failed: " << send_err << "\n";
     }
     const auto send_end = Clock::now();
 
     ++processed;
-    pull_ms_sum += ms_since(pull_start, pull_end);
-    send_ms_sum += ms_since(send_start, send_end);
-    if (should_log_frame(processed, cfg.frames)) {
-      const double elapsed_s =
-          std::chrono::duration<double>(Clock::now() - run_start).count();
-      const double fps_now = elapsed_s > 0.0 ? processed / elapsed_s : 0.0;
+    if (processed == 1) {
+      // RTSP connect, jitter-buffer fill, decoder init and model load all land
+      // inside the first pull. Report that once as a latency and start the
+      // steady-state clock after it.
+      startup_ms = ms_since(run_start, pull_end);
+      steady_start = send_end;
+      window_start = send_end;
+      std::cout << "frame=1 detections=" << boxes.size() << " published=" << published
+                << " startup_ms=" << startup_ms << "\n"
+                << std::flush;
+      continue;
+    }
+
+    ++window_frames;
+    window_pull_ms += ms_since(pull_start, pull_end);
+    window_send_ms += ms_since(send_start, send_end);
+    if (should_log_frame(processed, cfg.frames) && window_frames > 0) {
+      const auto now = Clock::now();
+      const double window_s = std::chrono::duration<double>(now - window_start).count();
+      const double fps_now = window_s > 0.0 ? window_frames / window_s : 0.0;
       std::cout << "frame=" << processed << " detections=" << boxes.size()
                 << " published=" << published << " fps=" << fps_now
-                << " avg_ms(pull=" << pull_ms_sum / processed
-                << ", metadata_send=" << send_ms_sum / processed << ")\n"
+                << " avg_ms(pull=" << window_pull_ms / window_frames
+                << ", metadata_send=" << window_send_ms / window_frames << ")\n"
                 << std::flush;
+      window_start = now;
+      window_frames = 0;
+      window_pull_ms = 0.0;
+      window_send_ms = 0.0;
     }
   }
 
   run.close();
-  std::cout << "processed=" << processed << " video=" << cfg.insight_host << ":" << video_port
+  // Frames 2..N over the post-startup interval. Any timeout stall is still in
+  // that interval, which is why timeouts are reported alongside it.
+  const double steady_s = std::chrono::duration<double>(Clock::now() - steady_start).count();
+  const double avg_fps = (processed > 1 && steady_s > 0.0) ? (processed - 1) / steady_s : 0.0;
+  std::cout << "processed=" << processed << " timeouts=" << timeouts
+            << " startup_ms=" << startup_ms << " avg_fps=" << avg_fps
+            << " video=" << cfg.insight_host << ":" << video_port
             << " metadata=" << cfg.insight_host << ":" << metadata_sender.metadata_port()
             << "\n";
   return 0;

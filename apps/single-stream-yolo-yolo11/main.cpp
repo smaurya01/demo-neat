@@ -184,7 +184,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   opt.preprocess.enable = neat::AutoFlag::On;
   opt.preprocess.input_max_width = cfg.fallback_width;
   opt.preprocess.input_max_height = cfg.fallback_height;
-  opt.preprocess.input_max_depth = 1;
+  // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
+  // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
+  opt.preprocess.input_max_depth = 3;
   opt.preprocess.resize.width = cfg.model_width;
   opt.preprocess.resize.height = cfg.model_height;
   opt.preprocess.color_convert.input_format = neat::PreprocessColorFormat::NV12;
@@ -227,7 +229,7 @@ neat::Graph make_source_pipeline(const Config& cfg) {
 
   neat::Graph app("single_stream_yolo_yolo11_source");
   app.add(source);
-  app.add(neat::nodes::Output("frame", neat::OutputOptions::Latest()));
+  app.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
   return app;
 }
 

@@ -166,6 +166,39 @@ struct Config {
   bool no_overlay = false;
   std::string cvu_pre_target = "EV74";
   std::string cvu_post_target = "EV74";
+
+  // ── decoder admission (Neat 0.3.0) ─────────────────────────────────────────
+  //
+  // These three feed the decoder-admission LEASE, not plain GStreamer element properties.
+  // They only take effect because every stream's decoder now lives in ONE graph/Run: Neat
+  // requests an admission plan from the decoder daemon only when a single graph contains
+  // more than one H.264 decoder (RunCoreGraphStart.cpp returns early on
+  // `auto_h264_decoders <= 1`). Four separate source Runs -- the pre-0.3.0 layout -- never
+  // asked, so every decoder grabbed an uncoordinated default and they collectively
+  // saturated well below the hardware's real capacity.
+  //
+  // Values follow apps/examples/object-detection/high-density-multi-stream-object-detector,
+  // whose validated profiles decode 400-480 fps of 720p aggregate.
+  int decoder_buffers = 16;        // per-stream decoder OUTPUT pool  -> SimaDecodeOptions::num_buffers
+  int decoder_input_buffers = 2;   // per-stream compressed-INPUT pool -> ::input_buffers
+  // auto | default | low-memory | throughput-low-latency
+  std::string decoder_tuning = "auto";
+  // Ask rtspsrc to drop late buffers instead of preserving stale ones. Correct for a live
+  // source and what the high-density profiles use.
+  bool rtsp_drop_on_latency = true;
+  // Pin the H.264 parser caps to the configured width/height/fps instead of deriving them
+  // from the stream.
+  //
+  // OFF by default, and that is deliberate: it pins an INTEGER framerate, and this app's
+  // reference source is 59.94 fps (60000/1001). Pinning `framerate=(fraction)60/1` makes
+  // rtspsrc fail negotiation outright -- `streaming stopped, reason not-negotiated (-4)`,
+  // every stream at 0.0 fps. Only enable it for a source whose rate really is an integer
+  // (SiMa's high-density profiles use 25/20/10 fps, which is why they can).
+  //
+  // Turning it off costs nothing that matters here: decoder admission needs the decoded
+  // shape from SimaDecodeOptions (dec_width/dec_height/dec_fps), which this app always
+  // sets explicitly, so the lease is granted either way.
+  bool skip_rtsp_probe = false;
 };
 
 std::string trim(std::string v) {
@@ -221,6 +254,11 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   else if (key == "print_backend") cfg.print_backend = to_bool(value);
   else if (key == "cvu_pre_target") cfg.cvu_pre_target = value;
   else if (key == "cvu_post_target") cfg.cvu_post_target = value;
+  else if (key == "decoder_buffers") cfg.decoder_buffers = std::stoi(value);
+  else if (key == "decoder_input_buffers") cfg.decoder_input_buffers = std::stoi(value);
+  else if (key == "decoder_tuning") cfg.decoder_tuning = value;
+  else if (key == "drop_on_latency") cfg.rtsp_drop_on_latency = to_bool(value);
+  else if (key == "skip_rtsp_probe") cfg.skip_rtsp_probe = to_bool(value);
   // Unknown keys are ignored on purpose: config/default.conf is shared with main.py,
   // which understands a few extra Python-only knobs (pipeline_depth, serial, ...).
 }
@@ -233,8 +271,22 @@ Config read_config(const std::string& path) {
   }
   std::string line;
   while (std::getline(in, line)) {
+    // Strip a trailing `# comment` BEFORE parsing, exactly as main.py does
+    // (`raw.split("#", 1)[0].strip()`). This file is shared between the two
+    // implementations, so they have to agree on what a value is.
+    //
+    // Without this the two parsers disagree and the C++ side fails in two different
+    // ways, neither obvious:
+    //   decoder_tuning=auto   # ...   -> the comment ends up INSIDE the gst pipeline
+    //                                    string: "gst_parse_launch failed: syntax error"
+    //   drop_on_latency=true  # ...   -> to_bool() compares the whole string to "true",
+    //                                    gets false, and the option silently flips off.
+    // The int keys survived by luck (std::stoi stops at the first non-digit), which is
+    // exactly the kind of partial success that hides the bug.
+    const auto hash = line.find('#');
+    if (hash != std::string::npos) line.erase(hash);
     line = trim(line);
-    if (line.empty() || line[0] == '#') continue;
+    if (line.empty()) continue;
     const auto eq = line.find('=');
     if (eq == std::string::npos) continue;
     set_config_value(cfg, trim(line.substr(0, eq)), trim(line.substr(eq + 1)));
@@ -272,9 +324,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  opt.preprocess.input_max_width = cfg.fallback_width;
-  opt.preprocess.input_max_height = cfg.fallback_height;
-  opt.preprocess.input_max_depth = 1;
+  // opt.preprocess.input_max_width = cfg.fallback_width;
+  // opt.preprocess.input_max_height = cfg.fallback_height;
+  // opt.preprocess.input_max_depth = 3;
   opt.preprocess.resize.enable = neat::AutoFlag::On;
   opt.preprocess.resize.width = cfg.model_width;
   opt.preprocess.resize.height = cfg.model_height;
@@ -323,27 +375,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   return std::make_unique<neat::Model>(spec.model_path, opt);
 }
 
-groups::RtspDecodedInputOptions make_rtsp_options(const Config& cfg, const StreamSpec& spec) {
-  groups::RtspDecodedInputOptions opt;
-  opt.url = spec.rtsp_url;
-  opt.latency_ms = cfg.latency_ms;
-  opt.tcp = cfg.tcp;
-  opt.payload_type = 96;
-  opt.insert_queue = true;
-  opt.out_format = neat::FormatTag::NV12;
-  opt.decoder_raw_output = true;
-  opt.auto_caps_from_stream = true;
-  opt.fallback_h264_width = cfg.fallback_width;
-  opt.fallback_h264_height = cfg.fallback_height;
-  opt.fallback_h264_fps = cfg.fallback_fps;
-  opt.output_caps.enable = true;
-  opt.output_caps.format = neat::FormatTag::NV12;
-  opt.output_caps.width = cfg.fallback_width;
-  opt.output_caps.height = cfg.fallback_height;
-  opt.output_caps.fps = cfg.fallback_fps;
-  opt.output_caps.memory = neat::CapsMemory::Any;
-  return opt;
-}
+// (The all-in-one groups::RtspDecodedInput helper that used to live here is gone. The source
+// layer now builds RtspEncodedInput + an explicit SimaDecode so the decoder can carry the
+// admission-lease fields -- see make_combined_source_graph below.)
 
 neat::InputOptions make_nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
@@ -360,10 +394,117 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   return opt;
 }
 
-neat::Graph make_source_graph(const Config& cfg, const StreamSpec& spec) {
-  neat::Graph g("qsqm_source_" + std::to_string(spec.id));
-  g.add(groups::RtspDecodedInput(make_rtsp_options(cfg, spec)));
-  g.add(neat::nodes::Output("frame", neat::OutputOptions::Latest()));
+// How many decoded frames the source appsink may hold for the source thread.
+//
+// DO NOT use OutputOptions::Latest() here. Its meaning CHANGED between Neat 0.2.2 and
+// 0.3.0 and the change is silent -- it needs no app edit and raises no warning:
+//
+//   0.2.2:  Latest() { return OutputOptions{}; }          -> max_buffers=4, drop=false
+//   0.3.0:  Latest() { max_buffers=1; drop=true; }        -> max_buffers=1, drop=true
+//
+// In 0.2.2 the preset was a no-op that handed back the struct defaults, so this graph
+// silently got a 4-deep NON-dropping appsink. 0.3.0 made the preset do what its name says.
+// The result on this app: the decoder gets exactly one slot, so every frame that lands
+// while the source thread is between pulls is thrown away inside GStreamer.
+//
+// EveryFrame(4) is byte-for-byte the options 0.2.2's Latest() produced
+// (max_buffers=4, drop=false, sync=false), so this restores the old behaviour exactly
+// rather than papering over it with a bigger number.
+//
+// MEASURED: this alone changed nothing (151.6 vs 153.9 fps aggregate) -- the limiter was
+// upstream, in the decoder. Keep it anyway: it stops discarding frames the decoder already
+// paid for. It is a correctness fix, not the throughput fix. The throughput fix is the
+// single-Run source graph below.
+//
+// Non-dropping is deliberate and is NOT a latency risk here: this app already sheds load
+// at its own drop-oldest mailbox (see run_source/FrameMailbox), which is where a live
+// pipeline should drop.
+constexpr int kSourceOutputBuffers = 4;
+
+// Per-stream endpoint name on the ONE shared source Run.
+std::string source_endpoint(int stream_id) {
+  return "frame" + std::to_string(stream_id);
+}
+
+// ── the source layer: ONE Graph, ONE Run, ALL decoders ───────────────────────
+//
+// This is the shape that unlocks the hardware decoder, and it is not optional on 0.3.0.
+//
+// Neat asks the decoder daemon (/tmp/dec-admission-v2.sock) for a coordinated admission
+// plan ONLY when a single graph contains more than one H.264 decoder --
+// `apply_decoder_admission_if_needed()` returns early on `auto_h264_decoders <= 1`. The
+// previous layout built one source Graph and one Run PER STREAM, so each of the four
+// decoders looked like a lone decoder, never requested a lease, and picked an
+// uncoordinated default. They then collectively saturated far below the hardware's real
+// capacity:
+//
+//   4 separate un-admitted decoders    ~43 fps each   (~172 fps aggregate)
+//   SiMa's high-density example        24x20 / 48x10  (~480 fps aggregate)
+//
+// The example (apps/examples/object-detection/high-density-multi-stream-object-detector)
+// puts every decoder in one graph and one build(), which is what this now does.
+//
+// Two further points copied from that example:
+//   * The source is RtspEncodedInput (depay + parse only) followed by an explicit
+//     SimaDecode, rather than the all-in-one RtspDecodedInput group. Splitting them is what
+//     lets the decoder carry the admission-lease fields below.
+//   * num_buffers / input_buffers / decoder_tuning are LEASE properties. Setting the
+//     equivalent GStreamer property on a lone un-admitted decoder does nothing useful
+//     (measured: num-buffers 8 and 16 were both *worse* than the default).
+neat::Graph make_rtsp_encoded_graph(const Config& cfg, const StreamSpec& spec) {
+  groups::RtspEncodedInputOptions enc;
+  enc.url = spec.rtsp_url;
+  enc.codec = groups::RtspCodec::H264;
+  enc.latency_ms = cfg.latency_ms;
+  enc.tcp = cfg.tcp;
+  enc.drop_on_latency = cfg.rtsp_drop_on_latency;
+  enc.insert_queue = true;
+  enc.h264_payload_type = 96;
+  // With skip_rtsp_probe the configured caps ARE the source contract: pin them on the
+  // parser instead of probing each stream at startup.
+  enc.auto_caps_from_stream = !cfg.skip_rtsp_probe;
+  if (cfg.skip_rtsp_probe) {
+    enc.h264_width = cfg.fallback_width;
+    enc.h264_height = cfg.fallback_height;
+    enc.h264_fps = cfg.fallback_fps;
+  }
+  enc.fallback_h264_width = cfg.fallback_width;
+  enc.fallback_h264_height = cfg.fallback_height;
+  enc.fallback_h264_fps = cfg.fallback_fps;
+  return groups::RtspEncodedInput(enc);
+}
+
+neat::Graph make_decoder_graph(const Config& cfg, const StreamSpec& spec) {
+  neat::Graph g("qsqm_decoder_" + std::to_string(spec.id));
+
+  neat::SimaDecodeOptions dec;
+  dec.type = neat::SimaDecodeType::H264;
+  dec.sima_allocator_type = 2;
+  dec.out_format = neat::FormatTag::NV12;
+  dec.raw_output = true;
+  dec.dec_width = cfg.fallback_width;
+  dec.dec_height = cfg.fallback_height;
+  dec.dec_fps = cfg.fallback_fps;
+  dec.num_buffers = cfg.decoder_buffers;
+  dec.input_buffers = cfg.decoder_input_buffers;
+  dec.decoder_tuning = cfg.decoder_tuning;
+  g.add(neat::nodes::SimaDecode(std::move(dec)));
+
+  g.add(neat::nodes::CapsRaw("NV12", cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps,
+                             neat::CapsMemory::Any));
+  g.add(neat::nodes::Output(source_endpoint(spec.id),
+                            neat::OutputOptions::EveryFrame(kSourceOutputBuffers)));
+  return g;
+}
+
+// One Graph holding every stream's `rtsp -> decode -> Output("frame<i>")` chain. The
+// branches are independent -- they share the graph, not any data path -- so each stream
+// still pulls its own frames by its own endpoint name.
+neat::Graph make_combined_source_graph(const Config& cfg, const std::vector<StreamSpec>& specs) {
+  neat::Graph g("qsqm_sources");
+  for (const auto& spec : specs) {
+    g.connect(make_rtsp_encoded_graph(cfg, spec), make_decoder_graph(cfg, spec));
+  }
   return g;
 }
 
@@ -908,8 +1049,13 @@ private:
 struct StreamRuntime {
   StreamSpec spec;
   std::unique_ptr<neat::Model> model;
-  neat::Graph source_graph, model_graph, video_graph;
-  neat::Run source_run, model_run, video_run;
+  neat::Graph model_graph, video_graph;
+  neat::Run model_run, video_run;
+  // The source Run is SHARED by every stream (one Graph, one build(), all decoders) so
+  // Neat requests a decoder-admission lease. Each stream still pulls only its own
+  // endpoint, `source_endpoint(spec.id)`. Non-owning: main() owns the Run.
+  neat::Run* source_run = nullptr;
+  std::string source_endpoint_name;
   FrameMailbox mailbox;
 
   // FIX 1: model side -> output side.
@@ -961,7 +1107,7 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
     neat::Sample frame_sample;
     neat::PullError err;
     const auto wait_begin = Clock::now();
-    auto st = rt.source_run.pull("frame", 20000, frame_sample, &err);
+    auto st = rt.source_run->pull(rt.source_endpoint_name, 20000, frame_sample, &err);
     const auto wait_end = Clock::now();
     if (st == neat::PullStatus::Timeout) { ++rt.pull_timeouts; continue; }
     if (st == neat::PullStatus::Closed) break;
@@ -1631,7 +1777,7 @@ int main(int argc, char** argv) {
       auto rt = std::make_unique<StreamRuntime>();
       rt->spec = spec;
       rt->model = make_model(cfg, spec);
-      rt->source_graph = make_source_graph(cfg, spec);
+      rt->source_endpoint_name = source_endpoint(spec.id);
       rt->model_graph = make_model_graph(cfg, spec, *rt->model);
       rt->video_graph = make_video_graph(cfg, spec);
 
@@ -1662,8 +1808,18 @@ int main(int argc, char** argv) {
     // yet, so its 256-frame edge queue filled and it was already dead on arrival with a
     // "sink backpressure timeout". The symptom was diagnostic: stream 3 — built last, and
     // so idle for the shortest time — was the only one that survived.
+    //
+    // ONE graph, ONE build() for every stream's decoder. That is what makes Neat request a
+    // decoder-admission lease (see make_combined_source_graph). Building four separate
+    // source Runs here instead silently costs ~60% of the decode rate.
+    neat::Graph source_graph = make_combined_source_graph(cfg, specs);
+    if (cfg.print_backend) {
+      std::cout << "--- combined source graph (" << specs.size() << " decoders)\n"
+                << source_graph.describe_backend() << "\n";
+    }
+    neat::Run source_run = source_graph.build(run_options);
     for (auto& rt : rts) {
-      rt->source_run = rt->source_graph.build(run_options);
+      rt->source_run = &source_run;
     }
 
     std::cout << "build " << __DATE__ << " " << __TIME__ << "\n"
@@ -1716,8 +1872,8 @@ int main(int argc, char** argv) {
     for (auto& rt : rts) {
       rt->video_run.close();
       rt->model_run.close();
-      rt->source_run.close();
     }
+    source_run.close();   // shared by every stream, so closed once, last.
     return g_stop.load() ? 130 : 0;
   } catch (const neat::NeatError& e) {
     std::cerr << "NEAT error: " << e.what() << "\n";
