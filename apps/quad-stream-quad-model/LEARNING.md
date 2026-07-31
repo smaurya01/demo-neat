@@ -27,6 +27,9 @@ Every API is cited to <https://github.com/sima-neat/core>.
 - [Lesson 9: A live source must be drained, or it kills itself](#lesson-9-a-live-source-must-be-drained-or-it-kills-itself)
 - [Lesson 10: Measure with `--duration`, never `--frames`, on a shared resource](#lesson-10-measure-with---duration-never---frames-on-a-shared-resource)
 - [Lesson 11: The three rates, and the one that is a lie](#lesson-11-the-three-rates-and-the-one-that-is-a-lie)
+- [Lesson 12: A non-dropping sink turns a slow consumer into a DEAD pipeline](#lesson-12-a-non-dropping-sink-turns-a-slow-consumer-into-a-dead-pipeline)
+- [Lesson 13: Batch the cv2 calls — the count is the cost, not the pixels](#lesson-13-batch-the-cv2-calls--the-count-is-the-cost-not-the-pixels)
+- [Lesson 14: Things that sounded right and measured wrong](#lesson-14-things-that-sounded-right-and-measured-wrong)
 - [What is still slow, and why](#what-is-still-slow-and-why)
 - [Where to look next](#where-to-look-next)
 
@@ -178,9 +181,14 @@ Historically `AUTO` was far worse — it once placed `yolo26s-pose`'s post stage
 ## Lesson 7: `1000 / infer` is NOT a frame rate — and this once fooled us badly
 
 > **This lesson previously said "on a saturated MLA, deeper pipelining makes things worse."
-> That was wrong, and the error is worth preserving.** The MLA was never saturated (Lesson 12),
-> and deeper pipelining later took this app from 165 → 236 fps. What actually happened is that
-> we read a *latency* as if it were a *rate*.
+> That was wrong, and the error is worth preserving.** The MLA was never saturated (see
+> [What is still slow](#what-is-still-slow-and-why), and the per-model cycle counts in
+> `README.md`), and deeper pipelining later took the **C++** app from 165 → 236 fps. What
+> actually happened is that we read a *latency* as if it were a *rate*.
+>
+> The nuance, added later: deeper pipelining helps the C++ and **hurts the Python**, where
+> `pipeline_depth=4` cost 20 fps aggregate. Same principle, opposite sign — measure per port,
+> and see [Lesson 14](#lesson-14-things-that-sounded-right-and-measured-wrong).
 
 `infer` measures `push` → `pull` for one frame. With N frames in flight, a frame waits behind
 the others, so `infer` is that frame's **in-graph latency**, not its service period. Little's
@@ -315,8 +323,113 @@ The lie is any rate you *derive* from `infer` (Lesson 7). There is deliberately 
 
 **And a rate above the source rate is always a bug.** A 59.94 fps camera makes 239.8 the hard
 ceiling for four streams. We once printed **261 fps aggregate**, with one stream "delivering"
-85 fps from a 60 fps source. That was not throughput — it was a backlog draining (Lesson 13).
+85 fps from a 60 fps source. That was not throughput — it was a backlog draining (see
+"The backpressure bound is the app's own, not Neat's" in `README.md`).
 The impossibility is what exposed the bug. Always sanity-check against the source rate.
+
+---
+
+## Lesson 12: A non-dropping sink turns a slow consumer into a DEAD pipeline
+
+This is the Python port's most expensive bug, and the shape of it is worth memorising.
+
+**Symptom.** All four streams ran for ~7 s at 4.7 fps aggregate, then went to **0.0 fps and stayed
+there**, every stream reporting `no RTSP frame` forever. The `dropped` counters froze too — the
+source threads were not shedding frames, they were receiving *nothing*. Restarting made no
+difference; the collapse was reproducible to the second.
+
+**Cause.** One default:
+
+```python
+pyneat.OutputOptions.every_frame(SOURCE_OUTPUT_BUFFERS)   # max_buffers=4, drop=FALSE
+```
+
+`every_frame()` leaves `drop=False` (`core/include/nodes/common/Output.h`), i.e. a **non-dropping**
+appsink. When the consumer falls behind, the sink fills and back-pressures the decoder — and the
+decoder here is an *admitted* hardware decoder holding a lease. It stalls and never recovers.
+
+`main.cpp` uses the identical `EveryFrame(4)` and is fine, because it drains at 61 fps/stream and
+sheds at its own mailbox (238–418 frames/stream dropped in a healthy 60 s run). The Python drains far
+slower, so the same setting is fatal. **The safety of `drop=False` is a property of the consumer, not
+of the graph.** Copying it across from the C++ twin is exactly how this got in.
+
+**Fix** — two lines in `make_decoder_graph()`:
+
+```python
+src_out = pyneat.OutputOptions.every_frame(SOURCE_OUTPUT_BUFFERS)
+src_out.drop = True
+g.add(pyneat.nodes.output(source_endpoint(spec.stream_id), src_out))
+```
+
+| | before | after |
+| --- | --- | --- |
+| behaviour | 4.7 fps → **0.0 permanently**, dead in ~7 s | **95.6 fps, stable over 3 min, exit 0** |
+| stall warnings | all 4 streams, every 5 s | **0** |
+
+**How it was actually found, after five wrong guesses.** The diagnosis that worked was not reading
+the Python — it was **running `./build/quad_stream_quad_model` on the same board, minutes apart, and
+reading its `dropped` column.** The C++ delivered 233–240 fps while the Python sat at 0, which
+eliminated the board, the RTSP server, the decoder daemon and the models in one measurement, and its
+healthy `dropped` counts of 238–418/stream said plainly that a working pipeline *sheds frames here*.
+The Python's frozen `dropped` counter was the same fact in the negative.
+
+> **When you have a working twin, run it first.** Five hypotheses were spent on the model layer
+> (`input_max_depth`, run-option presets, `OverflowPolicy::Block`, a stale process, zero-copy loan
+> credits) before anyone ran the C++ side by side. Every one of them was downstream of a source that
+> had already gone silent.
+
+---
+
+## Lesson 13: Batch the cv2 calls — the count is the cost, not the pixels
+
+Lesson 8 established that OpenCV releases the GIL and NumPy does not. The second half of that story is
+that **the number of Python→C calls matters more than the pixels touched**.
+
+Pose was drawing, per frame, at 13 objects: 13 boxes × 4 `_fill_rect` + 13 labels + **17 `_fill_rect`
+per skeleton** + **19 `cv2.line` per skeleton** ≈ **470 calls**. Measured on the DevKit at 13
+objects/frame with 4 concurrent threads (the real configuration):
+
+| task | before | after | change |
+| --- | --- | --- | --- |
+| detection | 5.04 ms | **2.63 ms** | 1.9× |
+| **pose** | **64.51 ms** | **18.21 ms** | **3.5×** |
+| segmentation | 9.13 ms | **6.52 ms** | 1.4× |
+
+Three changes, all in `annotate()`:
+
+1. **Box outline: 4 `_fill_rect` → 1 `cv2.rectangle`.** The slice writes held the GIL; `cv2.rectangle`
+   does not, and clips out-of-frame coordinates itself.
+2. **Skeleton: 247 `cv2.line` → 1 `cv2.polylines`.** The edge selection was a 19-iteration Python loop
+   per detection doing `vis[a] and vis[b]` — each of those is a boxed `np.bool_` read, ~250 per frame.
+   Precomputed index arrays (`_SKEL_A`/`_SKEL_B`) make it three vectorised ops, and every segment goes
+   out in one call as an `(N,2,2)` array.
+3. **Keypoint dots: 221 thick polyline segments → 1 indexed write.** This was the single biggest item.
+
+That third one only surfaced because of a **mid-optimisation measurement**. Batching the dots into one
+`cv2.polylines(..., thickness=5)` looked like the obvious win — and it was still **24.6 ms of pose's
+34.4 ms**, because OpenCV renders every thick segment as a filled polygon. `_draw_dots()` expands the
+joints to their pixel offsets and does one fancy-index assignment (~5.5 KB). It *holds* the GIL, which
+sounds wrong after Lesson 8 — but for tens of microseconds instead of milliseconds.
+
+> **A GIL-holding NumPy op is not automatically worse than a GIL-releasing cv2 op.** Compare the work,
+> not the label. One vectorised write beat 221 C calls.
+
+End to end this took the app from **42.5 → 95.6 fps aggregate** with no change to any model.
+
+---
+
+## Lesson 14: Things that sounded right and measured wrong
+
+Kept deliberately, because the wrong turns cost more time than the fixes.
+
+| hypothesis | why it sounded right | measured result |
+| --- | --- | --- |
+| `_fill_rect` box drawing dominates the overlay | 4 GIL-held slice writes per box, every stream pays it | **Wrong.** Detection (boxes only) was 1.4 ms single-threaded. Pose was 10× everything else, and inside pose the *dots* were 3× the skeleton. |
+| `cv2.setNumThreads(1)` will help | 16 cores, cv2 defaults to 16 threads, 4 overlay threads = 64-way oversubscription | **No effect at all**: 5.00 / 4.89 / 4.94 ms at 16 / 4 / 1. These ops are too small to parallelise internally. |
+| `pipeline_depth=4` will overlap more frames | Python's `mdl fps` was exactly `1/infer` — no overlap — while C++ kept 4 in flight and beat `1/latency` | **Worse.** 95.2 → 75.6 fps; `infer` 24 → 56 ms; `mdl fps` 41 → 18. More frames queued on a *shared* MLA adds latency without adding throughput. **Keep `pipeline_depth=2`.** |
+| `np.from_dlpack()` will remove the frame copies | `Tensor` exposes `__dlpack__` | **Unavailable**: `RuntimeError: __dlpack__ only supports dense tensors`. NV12 is planar. |
+| `CapsMemory.SystemMemory` will fix the stall | the pre-refactor build used it, and it bypasses the zero-copy holder-loan gate entirely | **No change**: 3.9 fps → 0.0, identical to `CapsMemory.Any`. |
+| the source `decode` column is ~12 ms of memcpy | Python showed 14 ms vs the C++'s 1.75 ms | **Wrong comparison.** Python's `decode` includes the blocking wait; the C++ reports that separately as `src wait`. Real split: **12.29 ms wait + 3.58 ms copy**. The true copy gap is ~1.8 ms/frame. |
 
 ---
 
@@ -331,9 +444,25 @@ like. Do not predict multi-model capacity by adding service times: the preproces
 dequantize stages of *different* streams overlap, so the aggregate beats `1 / Σ(service)`.
 Measure it.
 
-**2. In Python, the overlay round-trip still dominates.** Burning boxes/masks/skeletons into
-the video means pulling the full NV12 frame to the A65 and drawing on it — and NumPy holds
-the GIL while it does. That is the ~2.2× gap, and it is why the C++ build exists.
+**2. In Python, the overlay round-trip still dominates** — but by less than it did. Burning
+boxes/masks/skeletons into the video means pulling the full NV12 frame to the A65 and drawing
+on it, and the GIL serialises the four overlay threads while it happens. Lesson 13 cut that
+roughly in half (42.5 → **95.6 fps aggregate**), and the remaining per-stage picture is:
+
+| stage | Python (now) | C++ | note |
+| --- | --- | --- | --- |
+| `infer` | 24 ms | 21.7 ms | parity — the MLA path is not the problem |
+| overlay, detection | 58 ms | 0.51 ms | 13 `rectangle` + 13 `putText`, GIL-contended |
+| overlay, segmentation | 87 ms | 10.4 ms | per-object `cv2.resize` + masked add |
+| source copy | 3.58 ms | 1.75 ms | `copy_payload_bytes` + one writable `.copy()` |
+| source **wait** | 12.29 ms | 14.63 ms | the 60 fps frame period — **irreducible** |
+
+The overlay is still the gap, and it is still why the C++ build exists. Note `infer` reached
+parity: any remaining difference is host-side drawing, not the accelerator.
+
+The `.copy()` in `tensor_nv12_from_decoded()` looks removable and is not: `copy_payload_bytes()`
+returns immutable `bytes`, and `annotate()` mutates the frame in place. Dropping it would alias
+the model's in-flight input and draw boxes into a frame the MLA is still reading.
 
 If you need in-graph rendering (no host frame at all), Neat has
 `nodes::SimaRender` (`core/include/nodes/sima/SimaRender.h`): it consumes the BoxDecode

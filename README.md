@@ -85,7 +85,7 @@ config key that does not exist: [`usb-camera-yolo26m`](apps/usb-camera-yolo26m/R
 | --- | --- |
 | [`single-stream-yolo-yolo11`](apps/single-stream-yolo-yolo11/README.md) | The baseline: one RTSP stream → YOLO11 → one UDP output. **Read this first.** |
 | [`multi-stream-yolo-yolo11`](apps/multi-stream-yolo-yolo11/README.md) | 2× RTSP → **one shared** YOLO11 model stage → per-stream UDP out. Sustains the full 60 fps source rate on both streams. |
-| [`quad-stream-quad-model`](apps/quad-stream-quad-model/README.md) | 4 streams × 4 **different** models (detection / segmentation / pose / YOLOX), all decoded on-device. Deep dive: [`LEARNING.md`](apps/quad-stream-quad-model/LEARNING.md). |
+| [`quad-stream-quad-model`](apps/quad-stream-quad-model/README.md) | 4 streams × 4 **different** models (detection / segmentation / pose / YOLOX), all decoded on-device. |
 | [`detection-vlm-assistant`](apps/detection-vlm-assistant/README.md) | YOLO detection → trigger-gated crops → VLM captions. |
 | [`pcb-defect-detection-yolo26n`](apps/pcb-defect-detection-yolo26n/README.md) | A custom-trained YOLO26n on a non-COCO domain, compiled end to end. |
 | [`single-stream-yolo-yolov8n`](apps/single-stream-yolo-yolov8n/README.md) · [`-yolov8m`](apps/single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](apps/single-stream-yolo26n/README.md) | The same single-stream shape with other detectors. |
