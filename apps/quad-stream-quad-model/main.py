@@ -151,6 +151,19 @@ class Config:
     bitrate_kbps: int = 4000
     tcp: bool = True
     queue_depth: int = 3
+    # --- decoder admission (Neat 0.3.0), mirroring main.cpp ---
+    # These feed the decoder-admission LEASE, not plain GStreamer element properties.
+    # They only take effect because every stream's decoder now lives in ONE graph/Run:
+    # Neat requests an admission plan only when a single graph holds more than one
+    # H.264 decoder. Four separate source Runs -- the old layout -- never asked, and
+    # un-admitted decoders collectively saturate around 43 fps each.
+    decoder_buffers: int = 16        # per-stream decoder OUTPUT pool
+    decoder_input_buffers: int = 2   # per-stream compressed-INPUT pool
+    decoder_tuning: str = "auto"     # auto | default | low-memory | throughput-low-latency
+    rtsp_drop_on_latency: bool = True
+    # Leave False for a 59.94 fps source: skip_rtsp_probe pins an INTEGER framerate and
+    # 60/1 against a 60000/1001 stream fails negotiation outright (0 fps everywhere).
+    skip_rtsp_probe: bool = False
     frames: int = 0
     num_streams: int = 4
     print_backend: bool = False
@@ -254,18 +267,32 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         "pipeline_depth": ("pipeline_depth", int), "pull_timeout_ms": ("pull_timeout_ms", int),
         "cvu_pre_target": ("cvu_pre_target", str), "cvu_post_target": ("cvu_post_target", str),
         "duration_s": ("duration_s", float),
+        "decoder_buffers": ("decoder_buffers", int),
+        "decoder_input_buffers": ("decoder_input_buffers", int),
+        "decoder_tuning": ("decoder_tuning", str),
     }
     if key in simple:
         attr, cast = simple[key]
         setattr(cfg, attr, cast(value))
     elif key == "rtsp_transport":
         cfg.tcp = value.strip().lower() == "tcp"
+    elif key == "drop_on_latency":
+        cfg.rtsp_drop_on_latency = parse_bool(value)
+    elif key == "skip_rtsp_probe":
+        cfg.skip_rtsp_probe = parse_bool(value)
     elif key == "print_backend":
         cfg.print_backend = parse_bool(value)
     elif key == "serial":
         cfg.serial = parse_bool(value)
     elif key == "no_overlay":
         cfg.no_overlay = parse_bool(value)
+    elif key in {"model_queue_depth", "output_queue_depth"}:
+        # C++-ONLY knobs. config/default.conf is shared with main.cpp, which splits
+        # the in-flight bound into model_queue_depth (frames inside the model graph)
+        # and output_queue_depth (frames parked before the output thread). This
+        # implementation uses one `queue_depth` for both, so these are accepted and
+        # ignored rather than raising -- a shared config must not fail one twin.
+        pass
     else:
         raise ValueError(f"unknown config key: {key}")
 
@@ -512,6 +539,8 @@ def print_live_profile(contexts, cursors, start: float) -> None:
 class StreamContext:
     spec: StreamSpec
     source_run: object
+    # Endpoint name on the SHARED source Run (one Run serves every stream now).
+    source_endpoint: str
     model_run: object
     video_run: object
     width: int
@@ -531,26 +560,140 @@ class StreamContext:
 
 
 # ── graph builders (NV12 shuttle; mirrors multi-stream-yolo-yolo11) ───────────
-def make_source_options(cfg: Config, url: str, w: int, h: int, fps: int):
-    opt = pyneat.RtspDecodedInputOptions()
-    opt.url = url
-    opt.latency_ms = cfg.latency_ms
-    opt.tcp = cfg.tcp
-    opt.payload_type = 96
-    opt.insert_queue = True
-    opt.decoder_name = "decoder"
-    opt.decoder_raw_output = True
-    opt.auto_caps_from_stream = True
-    opt.fallback_h264_width = w
-    opt.fallback_h264_height = h
-    opt.fallback_h264_fps = fps
-    opt.output_caps.enable = True
-    opt.output_caps.format = pyneat.Format.NV12
-    opt.output_caps.width = w
-    opt.output_caps.height = h
-    opt.output_caps.fps = fps
-    opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
-    return opt
+# How many decoded frames the source appsink may hold for the source thread.
+#
+# DO NOT use OutputOptions.latest() here. Its meaning CHANGED between Neat 0.2.2 and
+# 0.3.0 and the change is silent -- no app edit, no warning:
+#   0.2.2:  latest() returned the struct defaults -> max_buffers=4, drop=False
+#   0.3.0:  latest() -> max_buffers=1, drop=True
+# every_frame(4) is byte-for-byte what 0.2.2's latest() produced. This app already
+# sheds load at its own drop-oldest queues, which is where a live pipeline should drop.
+SOURCE_OUTPUT_BUFFERS = 4
+
+
+# Short, NOT multi-second.
+#
+# Every stream's source thread now pulls from the SAME Run (one combined source graph
+# is what earns the decoder-admission lease). A long blocking named pull on a shared
+# Run starves the other endpoints: with a 5000 ms timeout the four streams collapsed to
+# ~1.6 fps aggregate and then to 0. A short timeout lets each thread take its turn.
+#
+# With a short timeout an empty return is NORMAL (that endpoint simply had nothing
+# ready), not an error -- so callers must not warn on every miss.
+SOURCE_PULL_TIMEOUT_MS = 20
+# Consecutive empty pulls that add up to ~5 s before we call it a real stall.
+SOURCE_STALL_MISSES = max(1, 5000 // SOURCE_PULL_TIMEOUT_MS)
+
+
+def _pull_source_tensors(ctx, timeout_ms: int):
+    """Pull THIS stream's frame from the shared source Run, by endpoint name.
+
+    One Run now serves every stream, so the endpoint identifies which camera the frame
+    came from; the unnamed pull_tensors() would hand back whichever stream arrived first.
+
+    Use the NAMED pull_tensors overload rather than pull()+extract_tensors: the runtime
+    does the extraction itself and handles every Sample kind the decoder can emit.
+    Hand-rolling it with extract_tensors() silently returned [] for the decoder's sample
+    kind, which this app then reported as "RTSP frame timeout" -- a real failure wearing
+    the wrong label.
+    """
+    return ctx.source_run.pull_tensors(ctx.source_endpoint, timeout_ms)
+
+
+def source_endpoint(stream_id: int) -> str:
+    """Per-stream output endpoint on the ONE shared source Run."""
+    return f"frame{stream_id}"
+
+
+def make_rtsp_encoded_graph(cfg: Config, spec: StreamSpec):
+    """RTSP receive + depay + parse only. The decode is a separate, explicit node.
+
+    Returns the group's OWN graph, not a wrapper. Wrapping it in an extra
+    `pyneat.Graph(...)` and `.add()`-ing the group adds a nesting level that makes two
+    structurally identical source chains merge inside one combined Graph -- exactly the
+    failure that left one stream with zero frames in multi-stream-yolo-yolo11. main.cpp
+    returns `groups::RtspEncodedInput(enc)` directly for the same reason.
+    """
+    enc = pyneat.RtspEncodedInputOptions()
+    enc.url = spec.rtsp_url
+    enc.codec = pyneat.RtspCodec.H264
+    enc.latency_ms = cfg.latency_ms
+    enc.tcp = cfg.tcp
+    enc.drop_on_latency = cfg.rtsp_drop_on_latency
+    enc.insert_queue = True
+    enc.h264_payload_type = 96
+    # With skip_rtsp_probe the configured caps ARE the source contract: pin them on the
+    # parser instead of probing each stream at startup.
+    enc.auto_caps_from_stream = not cfg.skip_rtsp_probe
+    if cfg.skip_rtsp_probe:
+        enc.h264_width = cfg.fallback_width
+        enc.h264_height = cfg.fallback_height
+        enc.h264_fps = cfg.fallback_fps
+    enc.fallback_h264_width = cfg.fallback_width
+    enc.fallback_h264_height = cfg.fallback_height
+    enc.fallback_h264_fps = cfg.fallback_fps
+    return pyneat.groups.rtsp_encoded_input(enc)
+
+
+def make_decoder_graph(cfg: Config, spec: StreamSpec):
+    g = pyneat.Graph(f"qsqm_decoder_{spec.stream_id}")
+
+    dec = pyneat.SimaDecodeOptions()
+    dec.type = pyneat.SimaDecodeType.H264
+    dec.sima_allocator_type = 2
+    dec.out_format = pyneat.Format.NV12
+    dec.raw_output = True
+    dec.dec_width = cfg.fallback_width
+    dec.dec_height = cfg.fallback_height
+    dec.dec_fps = cfg.fallback_fps
+    # Admission-lease inputs. Setting the equivalent GStreamer property on a lone
+    # un-admitted decoder does nothing useful; the lease is what matters.
+    dec.num_buffers = cfg.decoder_buffers
+    dec.input_buffers = cfg.decoder_input_buffers
+    dec.decoder_tuning = cfg.decoder_tuning
+    g.add(pyneat.nodes.sima_decode(dec))
+
+    g.add(pyneat.nodes.caps_raw("NV12", cfg.fallback_width, cfg.fallback_height,
+                                cfg.fallback_fps, pyneat.CapsMemory.Any))
+    # 4 slots, not 1: with a single slot the decoder has nowhere to put frame N+1 until
+    # the source thread has taken frame N, so every scheduling gap costs a frame.
+    #
+    # BISECT: drop=True. every_frame() leaves drop=False, i.e. a NON-dropping appsink
+    # that back-pressures the hardware decoder when the consumer falls behind. main.cpp
+    # can afford that because it drains at 61 fps/stream and sheds at its own mailbox
+    # (it dropped 238-418 frames/stream in a healthy 60 s run). This Python drains far
+    # slower -- three ~1.4 MB copies per frame, much of it under the GIL -- so the sink
+    # fills, the admitted decoder stalls, and every stream goes to 0 permanently.
+    # Dropping here lets the decoder keep running and the app simply miss frames.
+    src_out = pyneat.OutputOptions.every_frame(SOURCE_OUTPUT_BUFFERS)
+    src_out.drop = True
+    g.add(pyneat.nodes.output(source_endpoint(spec.stream_id), src_out))
+    return g
+
+
+def make_combined_source_graph(cfg: Config, specs):
+    """ONE Graph holding every stream's `rtsp -> decode -> Output("frame<i>")` chain.
+
+    This is what unlocks 60 fps per stream and it is not optional at four streams.
+
+    Neat requests a coordinated plan from the decoder daemon (/tmp/dec-admission-v2.sock)
+    ONLY when a single graph contains more than one H.264 decoder. One source graph per
+    stream -- the old layout -- never asks, so each decoder picks an uncoordinated default
+    without zero-copy output. Measured on this board with the C++ twin:
+
+        4 separate un-admitted source Runs   dec 38.5 fps/stream   152 fps aggregate
+        1 shared admitted source Run         dec 60.0 fps/stream   235 fps aggregate
+
+    Verify with SIMA_DECODER_ADMISSION_DEBUG=1 -> "admission_accepted streams=4"; the
+    admitted decoder also gains `zero-copy-output=true` in the backend dump.
+
+    The branches are independent -- they share the graph, not any data path -- so each
+    stream still pulls its own frames by its own endpoint name.
+    """
+    g = pyneat.Graph("qsqm_sources")
+    for spec in specs:
+        g.connect(make_rtsp_encoded_graph(cfg, spec), make_decoder_graph(cfg, spec))
+    return g
 
 
 def make_nv12_input_options(w: int, h: int, fps: int):
@@ -560,8 +703,16 @@ def make_nv12_input_options(w: int, h: int, fps: int):
     o.width = w; o.height = h; o.depth = 1
     o.max_width = w; o.max_height = h; o.max_depth = 1
     o.fps_n = max(1, fps); o.fps_d = 1
-    o.caps_override = f"video/x-raw,format=NV12,width={w},height={h},framerate={max(1, fps)}/1"
-    o.use_simaai_pool = False
+    # NO caps_override and NO use_simaai_pool -- main.cpp sets neither, and both break
+    # this app on Neat 0.3.0:
+    #   caps_override omitted `depth`, and it WINS over the fields above, so the appsrc
+    #     published caps with no depth and the CVU had nothing to size the ingress from.
+    #   use_simaai_pool=False maps to InputMemoryPolicy.SystemMemory in 0.3.0, which
+    #     makes neatprocesscvu reject the staged buffer:
+    #     "Staged input 'input_image' raw GstMemory span overflow from 'sink_pad_0'"
+    # Leaving both unset lets Neat build caps carrying depth=1 and pick a SiMa-visible
+    # target; the CPU->EV74 copy is already permitted by
+    # SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY (set in main).
     return o
 
 
@@ -569,9 +720,19 @@ def make_model(cfg: Config, spec: StreamSpec):
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    opt.preprocess.input_max_width = cfg.fallback_width
-    opt.preprocess.input_max_height = cfg.fallback_height
-    opt.preprocess.input_max_depth = 1
+    # The input_max_* envelope is NOT set, matching main.cpp. Neat 0.3.0 enforces the
+    # bound only when it is set explicitly, so setting it can only go wrong: 1 aborts
+    # ("color_input_requires_input_shape_channels_3", because color_convert publishes
+    # RGB) and 3 mis-sizes the ingress. Let the runtime infer it from the caps.
+    # opt.preprocess.input_max_width = cfg.fallback_width
+    # opt.preprocess.input_max_height = cfg.fallback_height
+    # 3, not 1. This is the ingress CAPACITY bound (max channels the preproc stage will
+    # accept), not a statement about the NV12 transport layout. Neat 0.3.0 started
+    # enforcing it -- Preproc throws "input depth 3 exceeds max_input_depth 1" -- because
+    # color_convert publishes RGB (3 channels) toward normalize/quant/tess. 0.2.2 accepted
+    # the 1 silently. Enforcement only triggers when the bound is set EXPLICITLY, which is
+    # why main.cpp (where these three lines are commented out) runs unmodified on 0.3.0.
+    opt.preprocess.input_max_depth = 3
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
     opt.preprocess.resize.height = cfg.model_height
@@ -601,11 +762,9 @@ def make_model(cfg: Config, spec: StreamSpec):
     return pyneat.Model(spec.model_path, opt)
 
 
-def build_source_graph(cfg: Config, url: str, w: int, h: int, fps: int):
-    g = pyneat.Graph(f"source_{w}x{h}")
-    g.add(pyneat.groups.rtsp_decoded_input(make_source_options(cfg, url, w, h, fps)))
-    g.add(pyneat.nodes.output(pyneat.OutputOptions.every_frame(1)))
-    return g
+# (build_source_graph removed. It built ONE rtsp_decoded_input graph -- and therefore
+# one Run -- PER STREAM, the layout that never gets a decoder-admission lease.
+# Replaced by make_combined_source_graph, matching main.cpp.)
 
 
 def build_model_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):
@@ -614,7 +773,12 @@ def build_model_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):
     g.add(make_model(cfg, spec))
     # One endpoint for all four tasks: the model graph ends in an on-device BoxDecode
     # stage, so what comes out is always a decoded BBOX payload, never raw heads.
-    g.add(pyneat.nodes.output(MODEL_ENDPOINT, pyneat.OutputOptions.every_frame(1)))
+    # EveryFrame(max_buffers) = how many FINISHED results the sink may park for the
+    # puller. MUST be >= queue_depth or the two settings contradict: the Run is told to
+    # keep queue_depth frames in flight, and a 1-slot sink backs the graph up until
+    # push() times out. main.cpp uses max(1, model_queue_depth) for the same reason.
+    out_buffers = max(1, cfg.queue_depth)
+    g.add(pyneat.nodes.output(MODEL_ENDPOINT, pyneat.OutputOptions.every_frame(out_buffers)))
     return g, MODEL_ENDPOINT
 
 
@@ -675,6 +839,44 @@ def extract_tensors(sample) -> list:
 
 
 # ── annotation on the NV12 Y plane ────────────────────────────────────────────
+# COCO_SKELETON as two index arrays, built once. Indexing a NumPy array with a Python
+# int returns a boxed np.bool_/np.float32 scalar, so the old `vis[a] and vis[b]` test
+# inside a 19-iteration loop per detection cost ~250 boxed scalar reads per frame.
+# With these, the whole edge selection is three vectorised ops.
+_SKEL_A = None
+_SKEL_B = None
+
+
+def _skeleton_index():
+    global _SKEL_A, _SKEL_B
+    if _SKEL_A is None:
+        pairs = np.asarray(ov.COCO_SKELETON, dtype=np.intp)
+        _SKEL_A, _SKEL_B = pairs[:, 0], pairs[:, 1]
+    return _SKEL_A, _SKEL_B
+
+
+# Pixel offsets of one (2r+1)^2 dot, built once.
+_DOT_OFF = None
+
+
+def _draw_dots(y, pts, h, w, val=255, r=2):
+    """Stamp a square dot at every point in `pts` with ONE indexed write.
+
+    Drawing these as thick cv2.polylines segments was measured at 24.6 ms of the
+    34.4 ms pose overlay (13 objects x 17 joints = 221 segments, each rendered as a
+    filled polygon). Expanding the joints to their pixel offsets and doing a single
+    fancy-index assignment turns that into one vectorised write of ~5.5k bytes. It
+    holds the GIL, but for tens of microseconds rather than milliseconds.
+    """
+    global _DOT_OFF
+    if _DOT_OFF is None:
+        _DOT_OFF = np.mgrid[-r:r + 1, -r:r + 1].reshape(2, -1)
+    yy = (pts[:, 1:2] + _DOT_OFF[0]).ravel()
+    xx = (pts[:, 0:1] + _DOT_OFF[1]).ravel()
+    ok = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)
+    y[yy[ok], xx[ok]] = val
+
+
 def _fill_rect(y, x1, y1, x2, y2, val):
     hh, ww = y.shape
     x1 = max(0, min(ww, x1)); x2 = max(0, min(ww, x2))
@@ -684,18 +886,35 @@ def _fill_rect(y, x1, y1, x2, y2, val):
 
 
 def annotate(nv12, w, h, result, task, banner) -> int:
+    """Draw on the NV12 Y plane with as few Python->OpenCV calls as possible.
+
+    Call count is what costs, not pixels. Every _fill_rect is a NumPy slice write that
+    HOLDS the GIL, and every cv2 call pays Python->C marshalling; with four overlay
+    threads the GIL-held ones serialise across streams. Measured on the DevKit at 13
+    objects/frame, 4 concurrent threads (the real configuration):
+
+        detection      5.04 ms      (4 fill_rect + 1 putText per box)
+        segmentation   9.13 ms      (+ resize + masked add per box)
+        pose          64.51 ms      (+ 17 fill_rect + 19 cv2.line per box  == ~470 calls)
+
+    So pose is the whole problem. The fix is batching: the skeleton segments and the
+    keypoint dots are accumulated across ALL detections and drawn with ONE
+    cv2.polylines each, and the box outline is one cv2.rectangle instead of four
+    fill_rect. cv2.polylines/rectangle release the GIL; fill_rect does not.
+    """
     y = nv12[:h, :]
     th = 3
     drawn = 0
+    # Batched across every detection in this frame -> one cv2 call each at the end.
+    skel_segs = []
+    dot_pts = []
     for d in result.detections:
         x1, y1, x2, y2 = int(d.x1), int(d.y1), int(d.x2), int(d.y2)
         if x2 <= x1 or y2 <= y1:
             continue
-        # box (bright edges on Y plane)
-        _fill_rect(y, x1, y1, x2, y1 + th, 235)
-        _fill_rect(y, x1, y2 - th, x2, y2, 235)
-        _fill_rect(y, x1, y1, x1 + th, y2, 235)
-        _fill_rect(y, x2 - th, y1, x2, y2, 235)
+        # ONE cv2.rectangle instead of four _fill_rect. cv2 clips out-of-frame
+        # coordinates itself, so the manual clamping _fill_rect did is not needed.
+        cv2.rectangle(y, (x1, y1), (x2 - 1, y2 - 1), 235, th, cv2.LINE_8)
         if task in ("detection", "segmentation", "yolox"):
             label = ov.class_label(d.class_id)
         else:
@@ -719,17 +938,27 @@ def annotate(nv12, w, h, result, task, banner) -> int:
                     #      four, so its cost showed up multiplied in wall-clock.
                     cv2.add(region, 60, dst=region, mask=m)
         if d.keypoints is not None:
-            for kx, ky, kv in d.keypoints:
-                if kv < 0.3:
-                    continue
-                cx, cy = int(kx), int(ky)
-                _fill_rect(y, cx - 2, cy - 2, cx + 3, cy + 3, 255)
-            for a, b in ov.COCO_SKELETON:
-                if a < len(d.keypoints) and b < len(d.keypoints):
-                    if d.keypoints[a, 2] >= 0.3 and d.keypoints[b, 2] >= 0.3:
-                        cv2.line(y, (int(d.keypoints[a, 0]), int(d.keypoints[a, 1])),
-                                 (int(d.keypoints[b, 0]), int(d.keypoints[b, 1])), 200, 1, cv2.LINE_8)
+            kp = d.keypoints
+            # Vectorised visibility test: one NumPy pass instead of a per-keypoint
+            # Python loop with float unpacking.
+            vis = kp[:, 2] >= 0.3
+            if vis.any():
+                pts = kp[:, :2].astype(np.int32)
+                # Joints are stamped in one indexed write at the end of the frame.
+                dot_pts.append(pts[vis])
+                # Whole skeleton selected at once: no Python loop over the 19 edges.
+                ia, ib = _skeleton_index()
+                ok = vis[ia] & vis[ib]
+                if ok.any():
+                    skel_segs.append(np.stack([pts[ia[ok]], pts[ib[ok]]], axis=1))
         drawn += 1
+    # Two calls for every skeleton and every joint in the frame, however many there are.
+    # One concatenate per frame, then a single (N,2,2) array straight into cv2 — no
+    # per-segment Python list of arrays.
+    if skel_segs:
+        cv2.polylines(y, np.concatenate(skel_segs), False, 200, 1, cv2.LINE_8)
+    if dot_pts:
+        _draw_dots(y, np.concatenate(dot_pts), h, w)
     cv2.putText(y, banner, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 235, 2, cv2.LINE_8)
     return drawn
 
@@ -818,7 +1047,13 @@ def service_stream(cfg, ctx: StreamContext) -> bool:
     endpoint = MODEL_ENDPOINT
 
     mark = time.perf_counter()
-    frames = ctx.source_run.pull_tensors(timeout_ms=20000)
+    # Same shared-Run fairness rule as the pipelined path: poll briefly, many times,
+    # instead of one long blocking pull that would starve the other streams.
+    frames = []
+    for _ in range(SOURCE_STALL_MISSES):
+        frames = _pull_source_tensors(ctx, SOURCE_PULL_TIMEOUT_MS)
+        if frames:
+            break
     if not frames:
         print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout", file=sys.stderr)
         return False
@@ -963,18 +1198,31 @@ def run(cfg: Config) -> int:
     contexts: list[StreamContext] = []
     for s in specs:
         w, h, fps = probe_rtsp(cfg, s.rtsp_url)
-        source_run = build_source_graph(cfg, s.rtsp_url, w, h, fps).build(build_run_options(cfg))
         model_graph, _ = build_model_graph(cfg, s, w, h, fps)
         model_run = model_graph.build(build_run_options(cfg))
         _, video_run, port = build_video_graph(cfg, s, w, h, fps)
         contexts.append(StreamContext(
-            spec=s, source_run=source_run, model_run=model_run, video_run=video_run,
+            spec=s, source_run=None, source_endpoint=source_endpoint(s.stream_id),
+            model_run=model_run, video_run=video_run,
             width=w, height=h, fps=fps))
         print(f"Stream {s.stream_id}: {s.task:12s} {Path(s.model_path).name}")
         print(f"  RTSP {s.rtsp_url} -> udp://{cfg.udp_host}:{port}")
         print(f"  Viewer: gst-launch-1.0 -v udpsrc port={port} "
               f'caps="application/x-rtp,media=video,encoding-name=H264,payload=96" '
               f"! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false")
+
+    # Start the RTSP sources LAST, after every model is loaded and immediately before
+    # the threads that drain them. Graph.build() STARTS the pipeline: building sources
+    # inside the loop above meant stream 0's camera streamed while streams 1-3 were
+    # still loading their MLA archives (seconds each), nobody pulling, and its edge
+    # queue filled -- dead on arrival. main.cpp carries the same rule.
+    source_graph = make_combined_source_graph(cfg, specs)
+    if cfg.print_backend:
+        print(f"--- combined source graph ({len(specs)} decoders)\n"
+              f"{source_graph.describe_backend()}")
+    source_run = source_graph.build(build_run_options(cfg))
+    for c in contexts:
+        c.source_run = source_run
 
     warmup = min(cfg.warmup_frames, cfg.frames - 1) if cfg.frames > 0 else cfg.warmup_frames
     warmup = max(0, warmup)
@@ -984,7 +1232,8 @@ def run(cfg: Config) -> int:
         return run_pipelined(cfg, contexts, warmup)
     finally:
         for c in contexts:
-            c.model_run.close(); c.source_run.close(); c.video_run.close()
+            c.model_run.close(); c.video_run.close()
+        source_run.close()   # shared by every stream, so closed once, last.
 
 
 def run_serial(cfg, contexts: list, warmup: int) -> int:
@@ -1079,16 +1328,23 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                     c.steady_base = c.processed
 
     def source_thread(ctx: StreamContext) -> None:
+        misses = 0
         try:
             while not stop.is_set():
                 mark = time.perf_counter()
-                frames = ctx.source_run.pull_tensors(timeout_ms=5000)
+                frames = _pull_source_tensors(ctx, SOURCE_PULL_TIMEOUT_MS)
                 if not frames:
                     if stop.is_set():
                         return
-                    print(f"[warn] stream {ctx.spec.stream_id}: RTSP frame timeout",
-                          file=sys.stderr)
+                    # Empty is normal at this timeout; only a long unbroken run of
+                    # misses means the source has actually stalled.
+                    misses += 1
+                    if misses % SOURCE_STALL_MISSES == 0:
+                        print(f"[warn] stream {ctx.spec.stream_id}: no RTSP frame for "
+                              f"{misses * SOURCE_PULL_TIMEOUT_MS / 1000:.0f}s",
+                              file=sys.stderr)
                     continue
+                misses = 0
                 nv12, fw, fh = tensor_nv12_from_decoded(frames[0])
                 decode_ms = (time.perf_counter() - mark) * 1000.0
 

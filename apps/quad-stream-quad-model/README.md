@@ -19,7 +19,7 @@
   - [Measured behaviour](#appendix-measured-behaviour)
     - [C++ — current](#c-buildquad_stream_quad_model--current)
     - [How it got there](#how-it-got-there)
-    - [Python (`./main.py`)](#python-mainpy--same-models-same-config-single-threaded-per-stream)
+    - [Python (`./main.py`)](#python-mainpy--same-models-same-config-threaded-per-stream)
   - [`tools/pose_probe.py` — study one model on its own](#appendix-toolspose_probepy--study-one-model-on-its-own)
   - [Known limitations](#appendix-known-limitations)
 
@@ -56,7 +56,7 @@ the GIL. Prefer C++ for throughput; the Python version is the more readable refe
 
 The decode family is chosen by the **shape of the archive's detection head**, not by the model's
 version number — this is the thing most worth understanding before you change anything here. There
-is no `YoloV11` family; zoo YOLO11 decodes as `YoloV8`. See [`LEARNING.md`](LEARNING.md).
+is no `YoloV11` family; zoo YOLO11 decodes as `YoloV8`.
 
 ## Requirements
 
@@ -172,7 +172,7 @@ on the accelerator and the host never sees a sub-threshold box.
 `queue_depth`: Bounded per-graph queue depth (Realtime preset, KeepLatest overflow).
 
 `cvu_pre_target`, `cvu_post_target`: Where the model's pre/post CVU stages run — `AUTO` | `EV74` |
-`A65`. Defaults to `EV74`; `AUTO` measured ~12% slower (see [`LEARNING.md`](LEARNING.md) Lesson 6).
+`A65`. Defaults to `EV74`; `AUTO` measured ~12% slower.
 
 **Run control**
 
@@ -410,21 +410,38 @@ Two changes did it, and neither touched a model:
 contradiction: with frames in flight, `infer` is a **latency**, not a period. See the Time Profile
 section.
 
-### Python (`./main.py`) — same models, same config, single-threaded per stream
+### Python (`./main.py`) — same models, same config, threaded per stream
+
+Measured over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile windows, zero
+stalls, zero errors, no degradation across the run.
 
 | stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
 | --- | --- | --- | --- | --- | --- |
-| 0 detection | `yolo_11s` (zoo) | 24 – 27 | 0.7 | ~63 | ~15 |
-| 1 segmentation | `yolo_11s_seg` (zoo) | 28 – 35 | 6.6 | ~138 | ~7 |
-| 2 pose | `yolo26s-pose` | 24 – 31 | 0.8 | ~60 | ~15 – 18 |
-| 3 yolox | `yolox_s` | 24 – 31 | 0.5 | ~26 | ~34 – 39 |
-| | | | | | **aggregate 71 – 80 fps** |
+| 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 | ~17 |
+| 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 | ~10 |
+| 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 | ~24 |
+| 3 yolox | `yolox_s` | 24 | 0.4 | ~10 | ~56 |
+| | | | | | **aggregate ~95 fps** |
 
-The C++ app delivers **~3x** the aggregate throughput for identical models and identical config. The
-difference is entirely host-side: the overlay drops **~63 ms → 0.60 ms** (detection) and **~138 ms →
-13.9 ms** (segmentation). Python's NumPy overlay holds the GIL, so the four stream threads serialise;
-the C++ overlay is a plain memory write on four real OS threads (16 A65 cores). See
-[`LEARNING.md`](LEARNING.md) Lesson 8.
+Two changes got it here from a build that **did not run at all** (4.7 fps, then 0.0 fps permanently
+with every stream reporting `no RTSP frame`):
+
+1. **The source sink must drop.** `OutputOptions.every_frame()` leaves `drop=False`, and a
+   non-dropping sink back-pressures the *admitted* hardware decoder into a permanent stall as soon as
+   the Python consumer falls behind. `main.cpp` survives the same setting only because it drains at
+   61 fps/stream.
+2. **`annotate()` batches its OpenCV calls.** One `cv2.rectangle` per box, the whole skeleton in one
+   `cv2.polylines`, and all keypoint dots in one indexed write — 3.5× on pose, and 42.5 → 95.6 fps
+   aggregate.
+
+`infer` is now at **parity with the C++** (24 ms vs 21.7 ms), so the remaining gap to the C++'s
+~236 fps is entirely the host-side overlay: **58 ms vs 0.51 ms** (detection) and **87 ms vs 10.4 ms**
+(segmentation). Python's per-frame drawing serialises on the GIL; the C++ overlay runs on four real
+OS threads with no interpreter lock.
+
+> **Do not raise `pipeline_depth` to chase this.** It is 2 for a reason: at 4 the aggregate *falls*
+> to 75.6 fps and `infer` doubles to 56 ms. Queueing more frames on a shared MLA buys latency, not
+> throughput. Lesson 14 lists the other optimisations that measured worse than they sounded.
 
 **Post-processing is not a cost in either.** It used to be: segmentation, pose and YOLOX were decoded
 in NumPy on the A65, costing **~340 ms** and **~143 ms** per frame. Every model now box-decodes
@@ -476,7 +493,7 @@ Because it is lock-step, its `infer` is the real model service time, not graph l
 
 <br>
 
-1. **The host overlay gates the delivered rate.** See the measured table above and `LEARNING.md`.
+1. **The host overlay gates the delivered rate.** See the measured table above.
    Burning masks and skeletons into the stream requires the frame on the CPU; Neat's in-graph
    `sima_render` draws boxes only.
 

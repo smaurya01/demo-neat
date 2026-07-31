@@ -159,7 +159,9 @@ std::unique_ptr<neat::Model> make_open_pose_model(const Config& cfg) {
   opt.preprocess.enable = neat::AutoFlag::On;
   opt.preprocess.input_max_width = cfg.fallback_width;
   opt.preprocess.input_max_height = cfg.fallback_height;
-  opt.preprocess.input_max_depth = 1;
+  // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
+  // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
+  opt.preprocess.input_max_depth = 3;
   opt.preprocess.color_convert.input_format = neat::PreprocessColorFormat::NV12;
   opt.preprocess.color_convert.output_format = neat::PreprocessColorFormat::RGB;
   opt.preprocess.resize.enable = neat::AutoFlag::On;
@@ -219,7 +221,12 @@ groups::RtspDecodedInputOptions rtsp_options(const Config& cfg) {
 neat::Graph make_source_graph(const Config& cfg) {
   neat::Graph graph("single_stream_open_pose_source");
   graph.add(groups::RtspDecodedInput(rtsp_options(cfg)));
-  graph.add(neat::nodes::Output("frame", neat::OutputOptions::Latest()));
+  // EveryFrame(4), not Latest(). OutputOptions::Latest() CHANGED MEANING in Neat 0.3.0:
+// 0.2.2 returned the struct defaults (max_buffers=4, drop=false); 0.3.0 makes it do what the
+// name says (max_buffers=1, drop=true). The decoder then gets a single slot and every frame
+// arriving while this thread is between pulls is discarded inside GStreamer.
+// Measured on single-stream-yolo-yolo11 vs a 59.94 fps source: Latest() 55.1 fps, EveryFrame(4) 60.8 fps.
+  graph.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
   return graph;
 }
 

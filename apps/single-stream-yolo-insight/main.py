@@ -256,7 +256,9 @@ def make_model(cfg: Config, width: int, height: int):
     opt.preprocess.enable = pyneat.AutoFlag.On
     opt.preprocess.input_max_width = width
     opt.preprocess.input_max_height = height
-    opt.preprocess.input_max_depth = 1
+    # 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
+    # bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
+    opt.preprocess.input_max_depth = 3
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
     opt.preprocess.resize.height = cfg.model_height
@@ -362,7 +364,9 @@ def build_metadata_objects(boxes: list[dict], width: int, height: int,
 
 
 def should_log_frame(processed: int, target_frames: int) -> bool:
-    return processed == 1 or processed % 30 == 0 or (target_frames > 0 and processed == target_frames)
+    """Frame 1 is reported separately as a startup latency, so windowed stats
+    start at the first multiple of 30."""
+    return processed % 30 == 0 or (target_frames > 0 and processed == target_frames)
 
 
 def run(cfg: Config) -> int:
@@ -395,17 +399,34 @@ def run(cfg: Config) -> int:
           f"(object-detection JSON, channel={cfg.channel})")
     print(f"Viewer:      Neat Insight Video Viewer channel {cfg.channel} draws boxes from metadata")
 
+    # Stats are windowed: each log line covers only the frames since the previous
+    # line. A cumulative average since run start would fold the one-off startup
+    # cost into every figure and converge on the true rate only as 1/n, which
+    # makes short runs (frames=30) read several times slower than they are.
     processed = 0
-    pull_ms_sum = 0.0
-    send_ms_sum = 0.0
+    timeouts = 0
+    window_frames = 0
+    window_pull_ms = 0.0
+    window_send_ms = 0.0
+    startup_ms = 0.0
     run_start = time.perf_counter()
+    steady_start = run_start
+    window_start = run_start
     try:
         while cfg.frames <= 0 or processed < cfg.frames:
             pull_start = time.perf_counter()
             sample = run_handle.pull("detections", 20000)
             pull_end = time.perf_counter()
             if sample is None:
+                timeouts += 1
                 print("[warn] timed out waiting for detections", file=sys.stderr)
+                # Drop the stalled interval instead of folding it into the
+                # window, so one stall shows up as a timeout count rather than
+                # silently biasing this line and every line after it.
+                window_start = time.perf_counter()
+                window_frames = 0
+                window_pull_ms = 0.0
+                window_send_ms = 0.0
                 continue
 
             tensors = extract_tensors(sample)
@@ -419,30 +440,62 @@ def run(cfg: Config) -> int:
             # Send every frame, including an empty list, so stale boxes never
             # linger in the viewer. UDP is fire-and-forget; True only proves
             # the datagram left this host.
+            #
+            # timestamp_ms = -1 omits the "timestamp" field from the envelope.
+            # Do not pass an epoch-ms value here: Insight's vf ingest drops
+            # every metadata message whose "timestamp" is a JSON integer
+            # (messages_received climbs while messages_forwarded stays at 0),
+            # so the boxes never reach the viewer. Without the field, vf
+            # forwards and the viewer pairs metadata to frames by arrival order.
             metadata_sender.send_metadata(
                 "object-detection",
                 json.dumps({"objects": objects}, separators=(",", ":")),
-                int(time.time() * 1000),
+                -1,
                 str(frame_id),
             )
             send_end = time.perf_counter()
 
             processed += 1
-            pull_ms_sum += (pull_end - pull_start) * 1000.0
-            send_ms_sum += (send_end - send_start) * 1000.0
-            if should_log_frame(processed, cfg.frames):
-                elapsed = time.perf_counter() - run_start
-                fps_now = processed / elapsed if elapsed > 0 else 0.0
+            if processed == 1:
+                # RTSP connect, jitter-buffer fill, decoder init and model load
+                # all land inside the first pull. Report that once as a latency
+                # and start the steady-state clock after it.
+                startup_ms = (pull_end - run_start) * 1000.0
+                steady_start = send_end
+                window_start = send_end
+                print(
+                    f"frame=1 detections={len(boxes)} published={len(objects)} "
+                    f"startup_ms={startup_ms:.1f}",
+                    flush=True,
+                )
+                continue
+
+            window_frames += 1
+            window_pull_ms += (pull_end - pull_start) * 1000.0
+            window_send_ms += (send_end - send_start) * 1000.0
+            if should_log_frame(processed, cfg.frames) and window_frames > 0:
+                now = time.perf_counter()
+                window_s = now - window_start
+                fps_now = window_frames / window_s if window_s > 0 else 0.0
                 print(
                     f"frame={processed} detections={len(boxes)} published={len(objects)} "
                     f"fps={fps_now:.2f} "
-                    f"avg_ms(pull={pull_ms_sum / processed:.2f}, "
-                    f"metadata_send={send_ms_sum / processed:.2f})",
+                    f"avg_ms(pull={window_pull_ms / window_frames:.2f}, "
+                    f"metadata_send={window_send_ms / window_frames:.2f})",
                     flush=True,
                 )
+                window_start = now
+                window_frames = 0
+                window_pull_ms = 0.0
+                window_send_ms = 0.0
     finally:
         run_handle.close()
-    print(f"processed={processed} video={cfg.insight_host}:{video_port} "
+    # Frames 2..N over the post-startup interval. Any timeout stall is still in
+    # that interval, which is why timeouts are reported alongside it.
+    steady_s = time.perf_counter() - steady_start
+    avg_fps = (processed - 1) / steady_s if processed > 1 and steady_s > 0 else 0.0
+    print(f"processed={processed} timeouts={timeouts} startup_ms={startup_ms:.1f} "
+          f"avg_fps={avg_fps:.2f} video={cfg.insight_host}:{video_port} "
           f"metadata={cfg.insight_host}:{metadata_sender.metadata_port()}")
     return processed
 
