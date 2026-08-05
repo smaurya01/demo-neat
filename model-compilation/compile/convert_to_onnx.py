@@ -14,6 +14,7 @@ Output: work/<id>/onnx/<id>.onnx
 from __future__ import annotations
 
 import argparse
+import sys
 import urllib.request
 
 from common import ensure_dirs, model_cfg, all_model_ids, paths
@@ -57,6 +58,21 @@ def export_ultralytics(cfg: dict, project: dict, out_path) -> None:
     shutil.move(str(produced), str(out_path))
 
 
+def export_ultralytics_world(cfg: dict, project: dict, out_path) -> None:
+    """YOLO-World: bake a fixed vocabulary (set_classes) before export so the CLIP text
+    encoder drops out of the graph. Delegates to compile/_export_world.py."""
+    import subprocess
+    from pathlib import Path
+    here = Path(__file__).resolve().parent
+    model_id = cfg["id"]
+    subprocess.run([sys.executable, str(here / "_export_world.py"),
+                    "--model-id", model_id, "--weights", cfg["arch"],
+                    "--imgsz", str(cfg["input_shape"][2]),
+                    "--opset", str(project.get("default_opset", 17)), "--force"],
+                   check=True)
+    # _export_world writes straight to work/<id>/onnx/<id>.onnx (== out_path); nothing to move.
+
+
 def export_megvii(cfg: dict, project: dict, out_path) -> None:
     """YOLOX ships an official pre-exported ONNX -- no need to install the yolox package."""
     url = cfg["source"]
@@ -68,6 +84,7 @@ EXPORTERS = {
     "torchvision": export_torch,
     "timm": export_torch,
     "ultralytics": export_ultralytics,
+    "ultralytics_world": export_ultralytics_world,
     "megvii": export_megvii,
 }
 

@@ -184,6 +184,33 @@ models:
     std: [1.0, 1.0, 1.0]
     enabled: true
 
+  # ----------------------------------------------------------------- open-vocabulary (YOLO-World)
+  # YOLO-World is open-vocabulary: it needs text prompts + a CLIP text encoder at runtime. A SiMa
+  # archive is a fixed graph, so the vocabulary is BAKED at export time (set_classes -> COCO-80),
+  # which drops the CLIP text encoder. worldv2's head (BNContrastiveHead) is then just BatchNorm +
+  # a fixed-weight einsum; surgery folds that einsum into a 1x1 Conv so the whole graph is MLA-native.
+  # Export step: compile/_export_world.py ; surgery step: compile/_surgery_world.py.
+  - id: yolov8s-worldv2
+    task: detection
+    family: ultralytics_world
+    arch: yolov8s-worldv2.pt
+    source: https://docs.ultralytics.com/models/yolo-world/
+    license_note: Ultralytics AGPL-3.0; YOLO-World weights (Tencent) — review before redistribution.
+    surgery: world
+    decode: yolo_raw_heads
+    vocabulary: coco80
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    # COMPILE IN BF16 (not INT8): the 4D attn rewrite exposes the text-similarity score
+    # maps as intermediate tensors; in INT8 they saturate and the MLA sim-check fails.
+    # bf16 places identically (MLA:1 EV74:16 A65:0, 1 elf / 0 so) and is numerically clean.
+    #   python compile/compiler.py --model-id yolov8s-worldv2 --bf16-weights --bf16-activations
+    precision: bf16
+    enabled: true
+
   # Non-Ultralytics head (decoupled, anchor-free, numeric node names) -> its own surgery path.
   - id: yolox_s
     task: detection

@@ -3,14 +3,15 @@
 Take a public model → get a **single `.tar.gz` containing a single `.elf`** that runs entirely on the
 MLA → prove it works on real images.
 
-Ten models are covered: 4 classification CNNs, 4 YOLO detectors, 1 segmentation, 1 pose.
+Twelve models are covered: 4 classification CNNs, 5 YOLO detectors, 1 open-vocabulary detector,
+1 segmentation, 1 pose.
 
 **Two ways to get them:**
 
 | | | |
 | --- | --- | --- |
 | **Download** the prebuilt archives | ~5 min | [→ jump](#download-the-prebuilt-archives) |
-| **Compile** from source | ~2 h for all ten | [→ jump](#setup) |
+| **Compile** from source | ~2 h for all twelve | [→ jump](#setup) |
 
 Compile from source when you want to change a model, try a different size, or understand the chain.
 Otherwise, download.
@@ -31,9 +32,10 @@ didn't: **[`MODEL-COMPILATION.md`](MODEL-COMPILATION.md)**.
 
 ## Download the prebuilt archives
 
-All ten models have already been compiled from their **upstream original weights** through this
-repo's own export → surgery → INT8 → compile chain. Nothing is pulled pre-compiled from the SiMa
-model zoo.
+Ten of the twelve models have already been compiled from their **upstream original weights** through
+this repo's own export → surgery → INT8 → compile chain. Nothing is pulled pre-compiled from the SiMa
+model zoo. `yolov8s` and `yolov8s-worldv2` were added after that zip was built — compile them with
+the [four steps](#the-scripts).
 
 > **📦 [Models-v1.zip](https://drive.google.com/file/d/10zOUhD56VrZaY3urSHgqpjGZjIY3jEKt/view?usp=sharing)**
 
@@ -62,12 +64,14 @@ Every archive is verified: **1 `.elf`, 0 `.so`, `A65: 0`** — the whole graph r
 | `densenet169` | classification | *(torchvision)* | `densenet169_mpk.tar.gz` |
 | `convnext_tiny` | classification | *(torchvision)* | `convnext_tiny_mpk.tar.gz` |
 | `efficientnet_v2_s` | classification | *(torchvision)* | `efficientnet_v2_s_mpk.tar.gz` |
+| `yolov8s` | detection | `.pt` | `yolov8s.compile_ready_mpk.tar.gz` — **not in the zip**, [compile it](COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) |
 | `yolo11n` | detection | `.pt` | `yolo11n.compile_ready_mpk.tar.gz` |
 | `yolo11s` | detection | `.pt` | `yolo11s.compile_ready_mpk.tar.gz` |
 | `yolo26n` | detection | `.pt` | `yolo26n.compile_ready_mpk.tar.gz` |
 | `yolo11s-seg` | segmentation | `.pt` | `yolo11s-seg.compile_ready_mpk.tar.gz` |
 | `yolo26s-pose` | pose | `.pt` | `yolo26s-pose.compile_ready_mpk.tar.gz` |
 | `yolox_s` | detection | *(Megvii ONNX)* | `yolox_s.compile_ready_mpk.tar.gz` |
+| `yolov8s-worldv2` | open-vocabulary detection | `.pt` | `yolov8s-worldv2.compile_ready_mpk.tar.gz` — **bf16, not in the zip**, [compile it](COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |
 
 
 ---
@@ -88,8 +92,9 @@ will fail at export:
 pip install ultralytics
 ```
 
-Steps 1–3 run on the **host** (SDK container). Step 4's inference runs on the **DevKit** —
-`/workspace` is NFS-mounted there at the same path, so nothing is copied.
+Steps 1–3 and `test_model.py --validate-only` use `python` here in the SDK container. Step 4's real
+inference and step 4b run on the DevKit with `dk` — `/workspace` is NFS-mounted there at the same
+path, so nothing is copied.
 
 > ⚠️ **Compile strictly ONE model at a time.** The compiler is memory-hungry; concurrent compiles
 > OOM. This is the single most common way to waste an hour here.
@@ -107,6 +112,7 @@ compile/
   graph_surgery.py     # 2. make it MLA-ready          -> work/<id>/surgery/<id>.compile_ready.onnx
   compiler.py          # 3. INT8 quantize + compile    -> work/<id>/compile_int8/<...>_mpk.tar.gz
   test_model.py        # 4. validate contract + run on REAL images
+  test_box_decode.py   # 4b. can Neat decode the heads ON-DEVICE?  (detection models)
 ```
 
 Every script takes `--model-id <id>` for one model, or `--all` for every enabled model.
@@ -117,13 +123,18 @@ Every script takes `--model-id <id>` for one model, or `--all` for every enabled
 python compile/convert_to_onnx.py --model-id <ID>    # downloads the weights automatically
 python compile/graph_surgery.py   --model-id <ID>    # no-op for CNNs (surgery: none)
 python compile/compiler.py        --model-id <ID>    # the long step
-python compile/test_model.py      --model-id <ID> --validate-only   # host: contract check
-
-# then on the DevKit, for the behavioural check:
-ssh sima@<devkit-ip>
-source ~/pyneat/bin/activate && cd model-compilation
-python compile/test_model.py --model-id <ID>
+python compile/test_model.py      --model-id <ID> --validate-only   # contract check, no board
 ```
+
+The behavioural check runs on the DevKit, with `dk`:
+
+```bash
+source /usr/local/bin/devkit.sh <devkit-ip> sima 22   # dk is a bash function, once per shell
+dk compile/test_model.py --model-id <ID>
+```
+
+`dk` needs a real terminal — in a non-TTY context (CI, an agent) it hangs; there, ssh in and call
+`/home/sima/pyneat/bin/python` directly instead.
 
 Useful flags on `compiler.py`: `--num-calib-samples N`, `--calib-dir <dir>`. Anything else passes
 straight through to the compiler (e.g. `--calib_method min_max`).
@@ -132,12 +143,39 @@ straight through to the compiler (e.g. `--calib_method min_max`).
 accuracy. Only the DevKit run on real images catches a model that compiled perfectly and is
 numerically wrong — see [what didn't work](MODEL-COMPILATION.md#what-worked-what-didnt).
 
+### Step 4b — on-device box decode (detection models)
+
+`test_model.py` prints the raw head **shapes**. It does not tell you whether Neat can turn those
+heads into boxes itself. That is worth knowing: an app that host-decodes raw heads pays 143–337
+ms/frame, while Neat's on-device `neatobjectdecode` stage costs ~0.6 ms.
+
+```bash
+dk compile/test_box_decode.py --all               # every detection model
+dk compile/test_box_decode.py --model-id yolov8s
+```
+
+It tries each candidate `BoxDecodeType` against the archive and reports which one works, because
+**the decode type does not follow the model's name**:
+
+| Archive | Works | Rejected |
+| --- | --- | --- |
+| `yolov8s`, `yolo11n`, `yolo11s`, `yolo26n`, `yolov8s-worldv2` | `BoxDecodeType.YoloV26` | `YoloV8` — *"failed to issue model-managed boxdecode contract"* |
+| `yolox_s` | `BoxDecodeType.YoloX` (`Split3Interleaved`) | — |
+
+A decode type that builds but returns **zero boxes on every image** is a failure, not a pass — that
+is exactly how a wrong layout presents, so the script runs real images and counts detections.
+
+Pose and segmentation are excluded from `--all`: their archives carry the same 6 detection heads,
+so they would pass on box heads alone while their real contract (`YoloV26Pose` + `decode_pose`,
+`YoloV26Seg` + `decode_segmentation`) went untested.
+
 ---
 
 ## Compile
 
 **→ [`COMPILE-COMMANDS.md`](COMPILE-COMMANDS.md)** — the copy-paste commands: `compile_all.sh` for
-all ten (~2 h, serial), or a per-model block for each of the ten with its exact expected output.
+all eleven (~2 h, serial), or a per-model block for each of the twelve with its exact expected
+output. `yolov8s-worldv2` is excluded from `compile_all.sh` — it needs bf16 flags.
 
 ---
 
