@@ -92,6 +92,21 @@ models:
   # These need surgery: the CPU decode/NMS tail is cut and the raw per-scale heads are exposed,
   # which is what lets the whole graph stay on the MLA (one ELF, no .so).
   # Preprocess is handled by Neat (COCO_YOLO preset), so mean=0 / std=1 here.
+  - id: yolov8s
+    task: detection
+    family: ultralytics
+    arch: yolov8s.pt
+    source: https://docs.ultralytics.com/models/yolov8/
+    license_note: Ultralytics license must be reviewed before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    enabled: true
+
   - id: yolo11n
     task: detection
     family: ultralytics

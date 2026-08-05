@@ -17,7 +17,7 @@ OUT="$ROOT/assets/models"
 LOG="$ROOT/compile_all.log"
 
 MODELS=(resnet50 densenet169 convnext_tiny efficientnet_v2_s
-        yolo11n yolo11s yolo26n yolo11s-seg yolo26s-pose yolox_s)
+        yolov8s yolo11n yolo11s yolo26n yolo11s-seg yolo26s-pose yolox_s)
 
 mkdir -p "$OUT"
 : > "$LOG"

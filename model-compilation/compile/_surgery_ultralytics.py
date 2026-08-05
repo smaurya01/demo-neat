@@ -44,6 +44,26 @@ SCALES = [("0", 80, 80), ("1", 40, 40), ("2", 20, 20)]
 # dfl_bins=16 -> YOLO11 DFL bbox heads (cv2.*.2 emit 64 = 4*16 channels).
 # dfl_bins=0  -> YOLO26 one2one heads already emit 4 distance channels.
 YOLO_SPECS = {
+    # YOLOv8: Detect sits at model.22 (YOLO11 moved it to model.23) and the backbone has NO
+    # attention block at all -- 0 MatMul nodes in the export -- so attention_blocks is empty and
+    # the Einsum rewrite is a no-op. The cv2.*/cv3.* head layout and the 64-channel (4 x 16 bins)
+    # DFL bbox heads are identical to YOLO11, so the same DFL reconstruction applies.
+    "yolov8s": {
+        "attention_blocks": [],
+        "bbox_sources": [
+            "/model.22/cv2.0/cv2.0.2/Conv_output_0",
+            "/model.22/cv2.1/cv2.1.2/Conv_output_0",
+            "/model.22/cv2.2/cv2.2.2/Conv_output_0",
+        ],
+        "class_sources": [
+            "/model.22/cv3.0/cv3.0.2/Conv_output_0",
+            "/model.22/cv3.1/cv3.1.2/Conv_output_0",
+            "/model.22/cv3.2/cv3.2.2/Conv_output_0",
+        ],
+        "dfl_bins": 16,
+        "extra_scale_heads": [],
+        "passthrough_outputs": [],
+    },
     # yolo11n shares byte-for-byte the same head node names as yolo11s (scale-invariant).
     "yolo11n": {
         "attention_blocks": ["/model.10/m/m.0/attn"],
