@@ -15,6 +15,8 @@ For the commands, see **[`README.md`](README.md)**.
   - [✅ The 209× pose fix: padding 51 → 64 channels](#-the-209-pose-fix-padding-51--64-channels)
   - [✅ Ultralytics head names are scale-invariant](#-ultralytics-head-names-are-scale-invariant)
   - [✅ YOLO26 needs no DFL rebuild](#-yolo26-needs-no-dfl-rebuild)
+  - [✅ YOLO-World: bake the vocabulary, then flatten the 5-D attention](#-yolo-world-bake-the-vocabulary-then-flatten-the-5-d-attention)
+  - [❌ INT8 for YOLO-World — passes placement, fails the sim check](#-int8-for-yolo-world--passes-placement-fails-the-sim-check)
   - [❌ A green compile that was numerically garbage](#-a-green-compile-that-was-numerically-garbage)
   - [❌ Synthetic calibration images](#-synthetic-calibration-images)
 - [Provenance](#provenance)
@@ -70,6 +72,7 @@ Neat then box-decodes itself (`BoxDecodeType`), or the app decodes the raw heads
 | `none` | CNNs — nothing to do; they already compile to a single ELF. |
 | `yolo_ultralytics` | attention `MatMul`→`Einsum`; expose `cv2.*`=bbox / `cv3.*`=class (YOLO26 uses `one2one_cv*`); **YOLO11 only**: rebuild DFL as `Split(64→16×4)→Softmax→Conv(arange)→Concat` (YOLO26 heads are already 4-ch, so DFL is skipped). Seg adds mask-coeff + proto; pose adds 51-ch keypoint heads. |
 | `yolox` | decoupled anchor-free head, numeric node names, no DFL/attention. Trace back from the output to the three `[1,85,H,W]` heads and cut the flatten/transpose tail. |
+| `world` | YOLO-World. Vocabulary is baked at **export** time (`compile/_export_world.py`), then surgery folds the now-constant contrastive head into a 1×1 Conv, rebuilds DFL and exposes the same 6 raw heads (`compile/_surgery_world.py`). |
 
 ---
 
@@ -145,6 +148,38 @@ compile** — the same surgery spec works untouched. This is why adding a model 
 YOLO11 heads are 64-channel and need DFL reconstructed as
 `Split(64→16×4)→Softmax→Conv(arange)→Concat`. YOLO26's heads are **already 4-channel**, so the whole
 DFL step is skipped. Same surgery kind, different path through it.
+
+### ✅ YOLO-World: bake the vocabulary, then flatten the 5-D attention
+
+YOLO-World is open-vocabulary — it normally needs text prompts and a CLIP text encoder at runtime,
+which a fixed SiMa graph cannot host. Two changes made it a single ELF:
+
+1. **Bake the vocabulary.** `set_classes(COCO-80)` precomputes the text embeddings as constants and
+   the CLIP text encoder drops out of the graph entirely. The `WorldDetect` head is then
+   `einsum(embed, fixed_text) * scale + bias` — and with the text now constant that is *exactly* a
+   1×1 Conv (`W = text·exp(logit_scale)`, `b = bias`). Surgery folds it; verified equal to the
+   original contrastive output to **max|Δ| ≈ 7.6e-6**.
+2. **Flatten the neck attention to 4-D.** This is what actually fragmented the graph — the first
+   compile came out **A65:8, 9 elf / 8 so**. `MaxSigmoidAttnBlock` (×4) reshapes to **5-D** and runs
+   a 5-D einsum `bmchw,bnmc->bmhwn` plus a 5-D broadcast. **SiMa's Einsum supports 2-D spatial only**,
+   so all four blocks spilled to the host. Rewriting `forward` per-head and fully 4-D — the
+   einsum-then-max becomes a 1×1 Conv plus a channel-wise `ReduceMax`, the broadcast becomes
+   Slice·Mul·Concat — put every op back on the MLA. The rewrite is **bit-exact** (output0 max|Δ| = 0).
+
+Worth generalising: *fragmentation is usually about tensor RANK and placement, not about an
+unsupported op.* Nothing here was unsupported — 5-D was.
+
+### ❌ INT8 for YOLO-World — passes placement, fails the sim check
+
+With the 4-D rewrite the graph places as a single MLA segment in **both** INT8 and bf16. INT8 still
+fails, at the compiler's sim/bit-accuracy check: the per-head decomposition exposes the wide-range
+text-similarity score maps as intermediate INT8 tensors (saturation warnings on the attn
+`proj_conv` bias), which the original fused einsum never did. bf16 has no quantization step, passes
+at `rc=0`, and is the format the official yolo26 archives ship in. So `yolov8s-worldv2` is the one
+model here compiled with `--bf16-weights --bf16-activations`.
+
+**A trap this leaves behind:** `models.yaml` records `precision: bf16`, but `compiler.py` **does not
+read that field** — the flags must be passed by hand. `compiler.py --all` would silently try INT8.
 
 ### ❌ A green compile that was numerically garbage
 

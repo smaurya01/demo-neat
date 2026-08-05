@@ -16,8 +16,13 @@ ROOT="$(pwd)"
 OUT="$ROOT/assets/models"
 LOG="$ROOT/compile_all.log"
 
+# NOTE: yolov8s-worldv2 is intentionally NOT in this list. It must be compiled with
+#   --bf16-weights --bf16-activations
+# (INT8 places fine but fails the compiler's sim/bit-accuracy check), and this script has no way to
+# pass per-model compiler flags. Build it on its own -- see COMPILE-COMMANDS.md section 12.
+# Do not "fix" this by adding it here.
 MODELS=(resnet50 densenet169 convnext_tiny efficientnet_v2_s
-        yolo11n yolo11s yolo26n yolo11s-seg yolo26s-pose yolox_s)
+        yolov8s yolo11n yolo11s yolo26n yolo11s-seg yolo26s-pose yolox_s)
 
 mkdir -p "$OUT"
 : > "$LOG"
