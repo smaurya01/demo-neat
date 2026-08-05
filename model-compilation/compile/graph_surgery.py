@@ -55,7 +55,8 @@ def run(model_id: str, force: bool = False) -> int:
         print(f"[surgery] {model_id}: {p['surgery'].name} already exists; use --force to redo")
         return 0
 
-    impl = {"yolo_ultralytics": "_surgery_ultralytics.py", "yolox": "_surgery_yolox.py"}.get(kind)
+    impl = {"yolo_ultralytics": "_surgery_ultralytics.py", "yolox": "_surgery_yolox.py",
+            "world": "_surgery_world.py"}.get(kind)
     if impl is None:
         raise SystemExit(f"[surgery] unknown surgery kind '{kind}' for {model_id}")
 
