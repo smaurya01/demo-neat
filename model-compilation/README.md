@@ -37,7 +37,7 @@ this repo's own export → surgery → INT8 → compile chain. Nothing is pulled
 model zoo. `yolov8s` and `yolov8s-worldv2` were added after that zip was built — compile them with
 the [four steps](#the-scripts).
 
-> **📦 [Models-v1.zip](https://drive.google.com/file/d/10zOUhD56VrZaY3urSHgqpjGZjIY3jEKt/view?usp=sharing)**
+> **📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**
 
 Unpack it into `model-compilation/assets/models/`. Nothing there is committed to git — `.pt`,
 `.onnx` and `.tar.gz` are all ignored.

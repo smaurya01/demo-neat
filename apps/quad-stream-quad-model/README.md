@@ -86,7 +86,7 @@ cd ../..
 ```
 
 The zoo publishes **no YOLO-pose and no YOLOX**. The quickest option is to grab the prebuilt
-archives — **📦 [Models-v1.zip](https://drive.google.com/file/d/10zOUhD56VrZaY3urSHgqpjGZjIY3jEKt/view?usp=sharing)** —
+archives — **📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)** —
 and copy `yolo26s-pose` and `yolox_s`'s `*_mpk.tar.gz` into `./assets/models/`.
 
 Otherwise, build those two yourself with the graph-surgery flow in
