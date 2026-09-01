@@ -93,9 +93,9 @@ Expected model path (`assets/models/` is git-ignored):
 Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
-rtsp_url=rtsp://<rtsp-server-ip>:8555/stream
+rtsp_url=<rtsp-url>
 model_path=./assets/models/yolo_11n_mpk.tar.gz
-insight_host=<insight-host-ip>
+insight_host=<host-ip>
 channel=0
 ```
 
@@ -127,7 +127,7 @@ or overlays land on the wrong viewer tile.
 
 `model_width` / `model_height`: Model input size used by Neat preprocessing.
 
-`fallback_width` / `fallback_height` / `fallback_fps`: Decoded frame geometry used when RTSP caps
+`width` / `height` / `fps`: Decoded frame geometry used when RTSP caps
 are incomplete. The C++ demo also sizes the encoder contract from these, so set them to match
 your stream.
 
@@ -195,9 +195,23 @@ dk ./main.py --config ./config/default.conf --frames 30
 
 ## How To See The Output
 
-Open Neat Insight on the receiving host (`https://localhost:9900`) → **Video Viewer** → select the
-channel configured as `channel` (default 0). The viewer decodes the video stream and draws the
-boxes from the `object-detection` metadata arriving on the paired metadata port.
+Open **`https://192.168.131.12:9900`** in a browser → **Video Viewer** tab → select the channel
+configured as `channel` (default 0). *It is **HTTPS**, not HTTP; the SDK uses a local mkcert
+certificate, so accept the browser warning the first time.* Replace the IP with your own host if
+Insight runs elsewhere.
+
+Unlike the other apps, this one sends **two** streams per channel, and both must line up:
+
+| | port | config key |
+|---|---|---|
+| video (H.264/RTP) | `9000 + channel` | `video_port_base` (default `9000`) |
+| metadata (JSON) | `9100 + channel` | `metadata_port_base` (default `9100`) |
+
+So for the default `channel=0`, set the viewer's **Port** to **9000**. The viewer decodes the video
+and draws the boxes from the `object-detection` metadata arriving on the paired metadata port —
+the frames themselves are clean by design. `insight_host` must point at the machine running
+Insight. The SDK exposes **4 video channels (9000-9003)**; if the defaults are taken, read the real
+ports from `neat --json` (`exposedPorts[*].hostPortStart`).
 
 Verify delivery in order (both are UDP — fire-and-forget):
 

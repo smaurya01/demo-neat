@@ -178,7 +178,7 @@ Edit `./config/default.conf`. At minimum for the RTSP demo:
 
 ```text
 source=rtsp
-rtsp_url=rtsp://<rtsp-server-ip>:8555/stream
+rtsp_url=<rtsp-url>
 model_path=./assets/models/yolo_11n_mpk.tar.gz
 vlm_trigger_classes=person
 ```
@@ -248,13 +248,43 @@ timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
    python main.py --no-vlm --frames 40'
 ```
 
+## How To See The Output
+
+### Neat Insight (recommended)
+
+When `video_enabled=true` the app publishes an annotated H.264/RTP stream (all boxes white, the
+VLM-selected one red).
+
+1. Open **`https://192.168.131.12:9900`** in a browser.
+   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
+   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+2. Go to the **Video Viewer** tab.
+3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
+   Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
+
+`udp_host` must point at the machine running Insight. The SDK exposes **4 video channels
+(9000-9003)**; read the real ports from `neat --json` (`exposedPorts[*].hostPortStart`) if the
+defaults are taken.
+
+The VLM captions are **not** drawn on the video — they go to stdout, as shown below.
+
+### gst-launch (alternative, no Insight needed)
+
+```bash
+gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+```
+
+> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop.
+
+Set `video_enabled=false` (or pass `--no-video`) to run detection-only on stdout.
+
 ## Expected Output
 
 Detection (live) — per-frame log lines and, when a person clears the gate, a dry-run block:
 
 ```text
 detector=yolo_11n_mpk.tar.gz decode=yolo11 vlm=DRY-RUN (crop+prompt logged, VLM not called)
-rtsp=rtsp://<rtsp-server-ip>:8555/stream stream=1280x720@60
+rtsp=<rtsp-url> stream=1280x720@60
 frame=1 detections=13 fps=14.57
 vlm[dry-run] WOULD send crop -> VLM
   class   : PERSON score=0.81
@@ -352,7 +382,7 @@ browser UI or a separate service that should not link the Neat runtime. The upst
   - Still-image mode over `model-compilation/assets/yolo_calibration`: real detections,
     e.g. `000000000885.jpg detections=4 [PERSON:0.92, PERSON:0.85, PERSON:0.66, TENNIS RACKET:0.81]`;
     the dry-run trigger logged the PERSON crop + exact prompt.
-  - RTSP mode `rtsp://<rtsp-server-ip>:8555/stream` (1280x720@60): `frame=1 detections=13`,
+  - RTSP mode `<rtsp-url>` (1280x720@60): `frame=1 detections=13`,
     `frame=30 detections=12 fps=53.65`; dry-run trigger fired on `PERSON:0.81`.
 - **VLM leg: code-complete, API-checked, NOT executed.** Owner runs it manually after
   confirming the VLM directory.

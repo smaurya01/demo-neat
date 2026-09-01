@@ -42,9 +42,9 @@ class Config:
     rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
     model_path: str = ""
     models_dir: str = ""
-    fallback_width: int = 1280
-    fallback_height: int = 720
-    fallback_fps: int = 25
+    width: int = 1280
+    height: int = 720
+    fps: int = 25
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
@@ -150,12 +150,12 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.model_path = value
     elif key == "models_dir":
         cfg.models_dir = value
-    elif key == "fallback_width":
-        cfg.fallback_width = int(value)
-    elif key == "fallback_height":
-        cfg.fallback_height = int(value)
-    elif key == "fallback_fps":
-        cfg.fallback_fps = int(value)
+    elif key == "width":
+        cfg.width = int(value)
+    elif key == "height":
+        cfg.height = int(value)
+    elif key == "fps":
+        cfg.fps = int(value)
     elif key == "model_width":
         cfg.model_width = int(value)
     elif key == "model_height":
@@ -181,7 +181,10 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
     elif key == "bitrate_kbps":
         cfg.bitrate_kbps = int(value)
     elif key == "rtsp_transport":
-        cfg.tcp = value.strip().lower() == "tcp"
+        transport = value.strip().lower()
+        if transport not in {"tcp", "udp"}:
+            raise ValueError(f"rtsp_transport must be tcp or udp, got: {value}")
+        cfg.tcp = transport == "tcp"
     elif key == "print_backend":
         cfg.print_backend = parse_bool(value)
     elif key in {"only", "allow_missing", "load_only"}:
@@ -230,7 +233,9 @@ def parse_args(argv: list[str] | None) -> Config:
     args = parser.parse_args(argv)
 
     cfg = Config()
-    load_config_file(cfg, args.config, required=args.config.exists())
+    # required=True: deriving it from .exists() made a mistyped --config path silently fall back
+    # to the dataclass defaults, and the user got a misleading "UDP port must be in 1..65535".
+    load_config_file(cfg, args.config, required=True)
     if args.rtsp is not None:
         cfg.rtsp_url = args.rtsp
     if args.model is not None:
@@ -238,11 +243,11 @@ def parse_args(argv: list[str] | None) -> Config:
     if args.models_dir is not None:
         cfg.models_dir = args.models_dir
     if args.width is not None:
-        cfg.fallback_width = args.width
+        cfg.width = args.width
     if args.height is not None:
-        cfg.fallback_height = args.height
+        cfg.height = args.height
     if args.fps is not None:
-        cfg.fallback_fps = args.fps
+        cfg.fps = args.fps
     if args.model_width is not None:
         cfg.model_width = args.model_width
     if args.model_height is not None:
@@ -285,7 +290,9 @@ def validate_config(cfg: Config) -> None:
         raise ValueError("RTSP URL must not be empty")
     if not cfg.udp_host:
         raise ValueError("UDP host must not be empty")
-    port = cfg.udp_port or cfg.udp_port_base
+    # udp_port wins only when it was actually set. `cfg.udp_port or cfg.udp_port_base` made a
+    # truthy config value beat an explicit --udp-port-base flag, silently.
+    port = cfg.udp_port if cfg.udp_port > 0 else cfg.udp_port_base
     if port <= 0 or port > 65535:
         raise ValueError("UDP port must be in 1..65535")
     model_path = Path(resolve_model_path(cfg))
@@ -294,15 +301,13 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
-    cap = cv2.VideoCapture(cfg.rtsp_url)
-    if cap.isOpened():
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
-        cap.release()
-        if width > 0 and height > 0:
-            return width, height, fps if fps > 0 else cfg.fallback_fps
-    return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
+    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init, and OpenCV's
+    # capture backend calls gst_init() itself -- so probing tripped the guard and the app died with
+    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
+    # probe FAILED to open the URL (the case the probe exists for), which is why a working URL
+    # hid it entirely. Same fix as detection-vlm-assistant.
+    # It also leaked the capture on that path and opened a second RTSP session to the same URL.
+    return cfg.width, cfg.height, cfg.fps
 
 
 def make_source_options(cfg: Config, width: int, height: int, fps: int):
@@ -327,13 +332,17 @@ def make_source_options(cfg: Config, width: int, height: int, fps: int):
     return opt
 
 
-def make_model(cfg: Config):
+def make_model(cfg: Config, source_width: int = 0, source_height: int = 0):
     name, _filename = model_spec()
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    opt.preprocess.input_max_width = cfg.fallback_width
-    opt.preprocess.input_max_height = cfg.fallback_height
+    # Capacity must cover the frame the pipeline actually carries. Binding it to fallback_*
+    # while every other node was built from the PROBED stream size made one graph declare two
+    # geometries -- a 1080p source against the shipped 720p fallbacks either failed to build or
+    # preprocessed a truncated frame.
+    opt.preprocess.input_max_width = max(cfg.width, source_width)
+    opt.preprocess.input_max_height = max(cfg.height, source_height)
     # 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
     # bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
     opt.preprocess.input_max_depth = 3
@@ -395,21 +404,28 @@ def make_nv12_input_options(width: int, height: int, fps: int):
     input_opt.fps_n = max(1, fps)
     input_opt.fps_d = 1
     input_opt.caps_override = f"video/x-raw,format=NV12,width={width},height={height},framerate={max(1, fps)}/1"
-    input_opt.use_simaai_pool = False
+    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
+    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
+    # Ev74 was A/B'd here and showed no gain (55.8 vs 56.1 fps mean over 3 samples each).
+    input_opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
     return input_opt
 
 
 def build_source_graph(cfg: Config, width: int, height: int, fps: int):
     graph = pyneat.Graph("source")
     graph.add(pyneat.groups.rtsp_decoded_input(make_source_options(cfg, width, height, fps)))
-    graph.add(pyneat.nodes.output(pyneat.OutputOptions.every_frame(1)))
+    # 4 slots, not 1: one slot means the decoder waits on the source thread every gap.
+    # drop=True: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+    src_out = pyneat.OutputOptions.every_frame(4)
+    src_out.drop = True
+    graph.add(pyneat.nodes.output(src_out))
     return graph
 
 
 def build_model_graph(cfg: Config, width: int, height: int, fps: int):
     graph = pyneat.Graph("model")
     graph.add(pyneat.nodes.input(make_nv12_input_options(width, height, fps)))
-    graph.add(make_model(cfg))
+    graph.add(make_model(cfg, width, height))
     graph.add(pyneat.nodes.output("detections", pyneat.OutputOptions.every_frame(4)))
     return graph
 
@@ -418,7 +434,7 @@ def build_video_graph(cfg: Config, width: int, height: int, fps: int):
     sender_opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(width, height, max(1, fps))
     sender_opt.host = cfg.udp_host
     sender_opt.channel = 0
-    sender_opt.video_port_base = cfg.udp_port or cfg.udp_port_base
+    sender_opt.video_port_base = cfg.udp_port if cfg.udp_port > 0 else cfg.udp_port_base
     sender_opt.encoder.bitrate_kbps = cfg.bitrate_kbps
 
     graph = pyneat.Graph("video")
@@ -821,13 +837,26 @@ def run(cfg: Config) -> int:
     run_start = time.perf_counter()
     steady_start = run_start
     try:
+        # Bound the FAILURE path too. Every `continue` below skips `processed += 1`, so on a dead
+        # source the loop never advanced toward cfg.frames and `--frames 30` (the README's smoke
+        # test) warned every 20 s forever instead of exiting.
+        consecutive_source_timeouts = 0
+        max_source_timeouts = 3
         while cfg.frames <= 0 or processed < cfg.frames:
             decoder_start = time.perf_counter()
             frame_tensors = source_run.pull_tensors(timeout_ms=20000)
             decoder_end = time.perf_counter()
             if not frame_tensors:
-                print("[warn] timed out waiting for RTSP frame", file=sys.stderr)
+                consecutive_source_timeouts += 1
+                print(f"[warn] timed out waiting for RTSP frame "
+                      f"({consecutive_source_timeouts}/{max_source_timeouts})", file=sys.stderr)
+                if consecutive_source_timeouts >= max_source_timeouts:
+                    print("[err] no RTSP frame after "
+                          f"{max_source_timeouts} consecutive timeouts; giving up",
+                          file=sys.stderr)
+                    break
                 continue
+            consecutive_source_timeouts = 0
             frame_tensor = frame_tensors[0]
             nv12, frame_width, frame_height = tensor_nv12_from_decoded(frame_tensor)
             model_tensor = make_nv12_tensor(nv12, frame_width, frame_height)

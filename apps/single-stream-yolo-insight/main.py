@@ -41,9 +41,9 @@ class Config:
     channel: int = 0
     video_port_base: int = 9000
     metadata_port_base: int = 9100
-    fallback_width: int = 1280
-    fallback_height: int = 720
-    fallback_fps: int = 60
+    width: int = 1280
+    height: int = 720
+    fps: int = 60
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
@@ -109,12 +109,12 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.video_port_base = int(value)
     elif key == "metadata_port_base":
         cfg.metadata_port_base = int(value)
-    elif key == "fallback_width":
-        cfg.fallback_width = int(value)
-    elif key == "fallback_height":
-        cfg.fallback_height = int(value)
-    elif key == "fallback_fps":
-        cfg.fallback_fps = int(value)
+    elif key == "width":
+        cfg.width = int(value)
+    elif key == "height":
+        cfg.height = int(value)
+    elif key == "fps":
+        cfg.fps = int(value)
     elif key == "model_width":
         cfg.model_width = int(value)
     elif key == "model_height":
@@ -217,15 +217,13 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
-    cap = cv2.VideoCapture(cfg.rtsp_url)
-    if cap.isOpened():
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
-        cap.release()
-        if width > 0 and height > 0:
-            return width, height, fps if fps > 0 else cfg.fallback_fps
-    return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
+    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init, and OpenCV's
+    # capture backend calls gst_init() itself -- so probing tripped the guard and the app died with
+    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
+    # probe FAILED to open the URL (the case the probe exists for), which is why a working URL
+    # hid it entirely. Same fix as detection-vlm-assistant.
+    # It also leaked the capture on that path and opened a second RTSP session to the same URL.
+    return cfg.width, cfg.height, cfg.fps
 
 
 def make_source_options(cfg: Config, width: int, height: int, fps: int):
@@ -391,6 +389,11 @@ def run(cfg: Config) -> int:
     metadata_options.channel = cfg.channel
     metadata_options.metadata_port_base = cfg.metadata_port_base
     metadata_sender = pyneat.MetadataSender(metadata_options)
+    # main.cpp throws on !ok(); Python silently printed its banner and streamed video with no
+    # metadata at all when the sender failed to bind.
+    if hasattr(metadata_sender, "ok") and not metadata_sender.ok():
+        raise RuntimeError(f"metadata sender failed to start on port {cfg.metadata_port_base}")
+    metadata_failures = 0
 
     print(f"RTSP input:  {cfg.rtsp_url} ({width}x{height}@{fps})")
     print(f"Model:       {resolve_model_path(cfg)}")
@@ -399,10 +402,7 @@ def run(cfg: Config) -> int:
           f"(object-detection JSON, channel={cfg.channel})")
     print(f"Viewer:      Neat Insight Video Viewer channel {cfg.channel} draws boxes from metadata")
 
-    # Stats are windowed: each log line covers only the frames since the previous
-    # line. A cumulative average since run start would fold the one-off startup
-    # cost into every figure and converge on the true rate only as 1/n, which
-    # makes short runs (frames=30) read several times slower than they are.
+    # Windowed stats: a cumulative average would fold startup cost into every figure.
     processed = 0
     timeouts = 0
     window_frames = 0
@@ -437,22 +437,21 @@ def run(cfg: Config) -> int:
             if frame_id is None or frame_id < 0:
                 frame_id = processed
             send_start = time.perf_counter()
-            # Send every frame, including an empty list, so stale boxes never
-            # linger in the viewer. UDP is fire-and-forget; True only proves
-            # the datagram left this host.
-            #
-            # timestamp_ms = -1 omits the "timestamp" field from the envelope.
-            # Do not pass an epoch-ms value here: Insight's vf ingest drops
-            # every metadata message whose "timestamp" is a JSON integer
-            # (messages_received climbs while messages_forwarded stays at 0),
-            # so the boxes never reach the viewer. Without the field, vf
-            # forwards and the viewer pairs metadata to frames by arrival order.
-            metadata_sender.send_metadata(
+            # Send every frame, even empty, so stale boxes never linger in the viewer.
+            # timestamp_ms = -1 OMITS the field on purpose: an integer "timestamp" makes vf drop every
+            # message (messages_received climbs, messages_forwarded stays 0).
+            # Check the return, as main.cpp does. Discarding it made sustained UDP send failures
+            # completely invisible: the app streamed video forever with no metadata and no warning.
+            if not metadata_sender.send_metadata(
                 "object-detection",
                 json.dumps({"objects": objects}, separators=(",", ":")),
                 -1,
                 str(frame_id),
-            )
+            ):
+                metadata_failures += 1
+                if metadata_failures in (1, 10, 100) or metadata_failures % 1000 == 0:
+                    print(f"[warn] metadata send failed ({metadata_failures} so far)",
+                          file=sys.stderr, flush=True)
             send_end = time.perf_counter()
 
             processed += 1

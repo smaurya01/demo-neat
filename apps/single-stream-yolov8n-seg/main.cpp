@@ -38,9 +38,9 @@ void handle_signal(int) {
 struct Config {
   std::string rtsp_url;
   std::string model_path;
-  int fallback_width = 1280;
-  int fallback_height = 720;
-  int fallback_fps = 25;
+  int width = 1280;
+  int height = 720;
+  int fps = 25;
   int model_width = 640;
   int model_height = 640;
   int latency_ms = 200;
@@ -98,8 +98,30 @@ bool should_log_frame(int processed, int target_frames) {
          (target_frames > 0 && processed == target_frames);
 }
 
-int to_int(const std::string& value) { return std::stoi(value); }
-float to_float(const std::string& value) { return std::stof(value); }
+int to_int(const std::string& key, const std::string& value) {
+  try {
+    std::size_t used = 0;
+    const int parsed = std::stoi(value, &used);
+    if (used != value.size()) {
+      throw std::invalid_argument("trailing characters");
+    }
+    return parsed;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("config key '" + key + "': invalid integer '" + value + "'");
+  }
+}
+float to_float(const std::string& key, const std::string& value) {
+  try {
+    std::size_t used = 0;
+    const float parsed = std::stof(value, &used);
+    if (used != value.size()) {
+      throw std::invalid_argument("trailing characters");
+    }
+    return parsed;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("config key '" + key + "': invalid number '" + value + "'");
+  }
+}
 bool to_bool(const std::string& value) {
   return value == "1" || value == "true" || value == "yes" || value == "on";
 }
@@ -118,34 +140,34 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
     cfg.rtsp_url = value;
   } else if (key == "model_path") {
     cfg.model_path = value;
-  } else if (key == "fallback_width") {
-    cfg.fallback_width = to_int(value);
-  } else if (key == "fallback_height") {
-    cfg.fallback_height = to_int(value);
-  } else if (key == "fallback_fps") {
-    cfg.fallback_fps = to_int(value);
+  } else if (key == "width") {
+    cfg.width = to_int(key, value);
+  } else if (key == "height") {
+    cfg.height = to_int(key, value);
+  } else if (key == "fps") {
+    cfg.fps = to_int(key, value);
   } else if (key == "model_width") {
-    cfg.model_width = to_int(value);
+    cfg.model_width = to_int(key, value);
   } else if (key == "model_height") {
-    cfg.model_height = to_int(value);
+    cfg.model_height = to_int(key, value);
   } else if (key == "latency_ms") {
-    cfg.latency_ms = to_int(value);
+    cfg.latency_ms = to_int(key, value);
   } else if (key == "score_threshold") {
-    cfg.score_threshold = to_float(value);
+    cfg.score_threshold = to_float(key, value);
   } else if (key == "nms_iou") {
-    cfg.nms_iou = to_float(value);
+    cfg.nms_iou = to_float(key, value);
   } else if (key == "top_k") {
-    cfg.top_k = to_int(value);
+    cfg.top_k = to_int(key, value);
   } else if (key == "num_classes") {
-    cfg.num_classes = to_int(value);
+    cfg.num_classes = to_int(key, value);
   } else if (key == "frames") {
-    cfg.frames = to_int(value);
+    cfg.frames = to_int(key, value);
   } else if (key == "udp_host") {
     cfg.udp_host = value;
   } else if (key == "udp_port_base") {
-    cfg.udp_port_base = to_int(value);
+    cfg.udp_port_base = to_int(key, value);
   } else if (key == "bitrate_kbps") {
-    cfg.bitrate_kbps = to_int(value);
+    cfg.bitrate_kbps = to_int(key, value);
   } else if (key == "rtsp_transport") {
     cfg.tcp = value != "udp";
   } else if (key == "print_backend") {
@@ -162,17 +184,34 @@ Config read_config() {
     throw std::runtime_error(std::string("config file not found: ") + kConfigPath);
   }
   std::string line;
+  int line_no = 0;
   while (std::getline(file, line)) {
-    const auto comment = line.find('#');
-    if (comment != std::string::npos) {
-      line.erase(comment);
+    ++line_no;
+    // Strip a comment only when '#' starts the line or follows whitespace; stripping it
+    // unconditionally truncated any value legitimately containing '#' (e.g. an RTSP password).
+    for (std::size_t i = 0; i < line.size(); ++i) {
+      if (line[i] == '#' && (i == 0 || std::isspace(static_cast<unsigned char>(line[i - 1])))) {
+        line.erase(i);
+        break;
+      }
     }
     line = trim(line);
     if (line.empty()) {
       continue;
     }
     const auto equal = line.find('=');
-    set_config_value(cfg, trim(line.substr(0, equal)), trim(line.substr(equal + 1)));
+    // A line with no '=' used to make both halves the whole line, so `udp_host` silently became
+    // udp_host="udp_host" and the app streamed nowhere with no diagnostic.
+    if (equal == std::string::npos) {
+      throw std::runtime_error(std::string(kConfigPath) + ":" + std::to_string(line_no) +
+                               ": expected key=value, got '" + line + "'");
+    }
+    const std::string key = trim(line.substr(0, equal));
+    if (key.empty()) {
+      throw std::runtime_error(std::string(kConfigPath) + ":" + std::to_string(line_no) +
+                               ": empty config key");
+    }
+    set_config_value(cfg, key, trim(line.substr(equal + 1)));
   }
   return cfg;
 }
@@ -260,8 +299,8 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const ModelSpec& spec
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  opt.preprocess.input_max_width = cfg.fallback_width;
-  opt.preprocess.input_max_height = cfg.fallback_height;
+  opt.preprocess.input_max_width = cfg.width;
+  opt.preprocess.input_max_height = cfg.height;
   // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
   // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
   opt.preprocess.input_max_depth = 3;
@@ -301,14 +340,14 @@ groups::RtspDecodedInputOptions make_rtsp_options(const Config& cfg) {
   opt.decoder_name = "decoder";
   opt.decoder_raw_output = true;
   opt.auto_caps_from_stream = true;
-  opt.fallback_h264_width = cfg.fallback_width;
-  opt.fallback_h264_height = cfg.fallback_height;
-  opt.fallback_h264_fps = cfg.fallback_fps;
+  opt.fallback_h264_width = cfg.width;
+  opt.fallback_h264_height = cfg.height;
+  opt.fallback_h264_fps = cfg.fps;
   opt.output_caps.enable = true;
   opt.output_caps.format = neat::FormatTag::NV12;
-  opt.output_caps.width = cfg.fallback_width;
-  opt.output_caps.height = cfg.fallback_height;
-  opt.output_caps.fps = cfg.fallback_fps;
+  opt.output_caps.width = cfg.width;
+  opt.output_caps.height = cfg.height;
+  opt.output_caps.fps = cfg.fps;
   opt.output_caps.memory = neat::CapsMemory::Any;
   return opt;
 }
@@ -318,12 +357,12 @@ neat::Graph make_source_pipeline(const Config& cfg) {
 
   neat::Graph app("multi_model_load_probe_source");
   app.add(source);
-  // EveryFrame(4), not Latest(). OutputOptions::Latest() CHANGED MEANING in Neat 0.3.0:
-// 0.2.2 returned the struct defaults (max_buffers=4, drop=false); 0.3.0 makes it do what the
-// name says (max_buffers=1, drop=true). The decoder then gets a single slot and every frame
-// arriving while this thread is between pulls is discarded inside GStreamer.
-// Measured on single-stream-yolo-yolo11 vs a 59.94 fps source: Latest() 55.1 fps, EveryFrame(4) 60.8 fps.
-  app.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
+  // EveryFrame(4), not Latest(): Latest() changed meaning in 0.3.0 (max_buffers=1, drop=true)
+  // and measured 55.1 vs 60.8 fps here.
+  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+  auto frame_out = neat::OutputOptions::EveryFrame(4);
+  frame_out.drop = true;
+  app.add(neat::nodes::Output("frame", frame_out));
   return app;
 }
 
@@ -331,18 +370,20 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
   opt.payload_type = neat::PayloadType::Image;
   opt.format = neat::FormatTag::NV12;
-  opt.width = cfg.fallback_width;
-  opt.height = cfg.fallback_height;
+  opt.width = cfg.width;
+  opt.height = cfg.height;
   opt.depth = 1;
-  opt.max_width = cfg.fallback_width;
-  opt.max_height = cfg.fallback_height;
+  opt.max_width = cfg.width;
+  opt.max_height = cfg.height;
   opt.max_depth = 1;
-  opt.fps_n = cfg.fallback_fps;
+  opt.fps_n = cfg.fps;
   opt.fps_d = 1;
-  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.fallback_width) +
-                      ",height=" + std::to_string(cfg.fallback_height) + ",framerate=" +
-                      std::to_string(cfg.fallback_fps) + "/1";
-  opt.use_simaai_pool = false;
+  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.width) +
+                      ",height=" + std::to_string(cfg.height) + ",framerate=" +
+                      std::to_string(cfg.fps) + "/1";
+  // Was `use_simaai_pool = false`, deprecated in NEAT 0.4.0. Input.h documents the exact
+  // mapping: false -> InputMemoryPolicy::SystemMemory. Behaviour-identical.
+  opt.memory_policy = neat::InputMemoryPolicy::SystemMemory;
   return opt;
 }
 
@@ -357,7 +398,7 @@ neat::Graph make_model_pipeline(const Config& cfg, const neat::Model& model,
 
 neat::Graph make_udp_pipeline(const Config& cfg, int udp_port, const std::string& name) {
   auto video_options = groups::VideoSenderOptions::H264RtpUdpFromRaw(
-      cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps);
+      cfg.width, cfg.height, cfg.fps);
   video_options.host = cfg.udp_host;
   video_options.channel = 0;
   video_options.video_port_base = udp_port;
@@ -694,7 +735,7 @@ std::vector<neat::Box> boxes_from_decoded_tensor(const neat::Tensor& tensor) {
 
 std::vector<neat::Box> decode_boxes_from_sample(const neat::Sample& sample, int width, int height,
                                                 int top_k) {
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return {};
   }
@@ -707,16 +748,29 @@ std::uint8_t blend_u8(std::uint8_t base, std::uint8_t overlay, float alpha) {
   return static_cast<std::uint8_t>(std::max(0.0f, std::min(255.0f, v)));
 }
 
-void blend_nv12_mask_pixel(neat::Tensor& frame, int width, int height, int x, int y,
-                           const Nv12Color& color, float alpha) {
+// Luma and chroma are blended SEPARATELY on purpose. NV12 chroma is half resolution in both
+// axes, so all four pixels of a 2x2 luma block share one UV byte pair. Blending inside a
+// per-pixel helper therefore applied alpha to that pair four times -- 1 - (1-0.55)^4 = 0.96
+// instead of 0.55 -- so masks rendered as flat, near-opaque colour, and an object visibly
+// changed shade when it moved one pixel horizontally (odd x1 => only 2 hits, not 4).
+void blend_nv12_luma(neat::Tensor& frame, int width, int height, int x, int y,
+                     const Nv12Color& color, float alpha) {
   if (x < 0 || y < 0 || x >= width || y >= height) {
     return;
   }
   auto* y_plane = nv12_y_plane(frame, width, height);
-  auto* uv_plane = nv12_uv_plane(frame, width, height);
   const std::size_t y_offset = static_cast<std::size_t>(y) * width + x;
   y_plane[y_offset] = blend_u8(y_plane[y_offset], color.y, alpha);
+}
 
+/// Blend the single UV pair covering the 2x2 luma block whose top-left is (x, y). Call ONCE
+/// per block, never once per pixel.
+void blend_nv12_chroma(neat::Tensor& frame, int width, int height, int x, int y,
+                       const Nv12Color& color, float alpha) {
+  if (x < 0 || y < 0 || x >= width || y >= height) {
+    return;
+  }
+  auto* uv_plane = nv12_uv_plane(frame, width, height);
   const int uv_x = x & ~1;
   const int uv_y = y / 2;
   if (uv_x + 1 < width && uv_y >= 0 && uv_y < height / 2) {
@@ -734,9 +788,13 @@ struct MaskRect {
 };
 
 MaskRect mask_rect_for_frame_box(int x1, int y1, int x2, int y2, int frame_w, int frame_h,
-                                 int mask_w, int mask_h) {
-  const int model_w = mask_w * 4;
-  const int model_h = mask_h * 4;
+                                 int mask_w, int mask_h, int model_w, int model_h) {
+  // model_w/h is the LETTERBOX canvas the mask was produced under, i.e. cfg.model_width/height.
+  // It was derived as mask_w * 4, which is only correct for the default 640x640: with
+  // model_width=320 the scale and padding were both wrong and masks landed offset from their
+  // (correct) boxes -- a confusing thing to debug.
+  model_w = model_w > 0 ? model_w : mask_w * 4;
+  model_h = model_h > 0 ? model_h : mask_h * 4;
   const double scale =
       std::min(static_cast<double>(model_w) / std::max(1, frame_w),
                static_cast<double>(model_h) / std::max(1, frame_h));
@@ -791,7 +849,7 @@ SegmentationOverlay draw_segmentation_overlay(neat::Tensor& frame, const neat::S
     return stats;
   }
 
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return stats;
   }
@@ -838,17 +896,20 @@ SegmentationOverlay draw_segmentation_overlay(neat::Tensor& frame, const neat::S
     const int box_w = x2 - x1 + 1;
     const int box_h = y2 - y1 + 1;
     const MaskRect mask_rect =
-        mask_rect_for_frame_box(x1, y1, x2 + 1, y2 + 1, width, height, kMaskW, kMaskH);
+        mask_rect_for_frame_box(x1, y1, x2 + 1, y2 + 1, width, height, kMaskW, kMaskH,
+                                cfg.model_width, cfg.model_height);
     for (int y = y1; y <= y2; y += 2) {
       for (int x = x1; x <= x2; x += 2) {
         if (projected_mask_value(mask, kMaskW, kMaskH, mask_rect, box_w, box_h, x - x1,
                                  y - y1) <= 127) {
           continue;
         }
-        blend_nv12_mask_pixel(frame, width, height, x, y, instance_color, 0.55f);
-        blend_nv12_mask_pixel(frame, width, height, x + 1, y, instance_color, 0.55f);
-        blend_nv12_mask_pixel(frame, width, height, x, y + 1, instance_color, 0.55f);
-        blend_nv12_mask_pixel(frame, width, height, x + 1, y + 1, instance_color, 0.55f);
+        blend_nv12_luma(frame, width, height, x, y, instance_color, 0.55f);
+        blend_nv12_luma(frame, width, height, x + 1, y, instance_color, 0.55f);
+        blend_nv12_luma(frame, width, height, x, y + 1, instance_color, 0.55f);
+        blend_nv12_luma(frame, width, height, x + 1, y + 1, instance_color, 0.55f);
+        // Once per 2x2 block: all four luma pixels share this one UV pair.
+        blend_nv12_chroma(frame, width, height, x, y, instance_color, 0.55f);
       }
     }
   }
@@ -949,7 +1010,7 @@ int main() {
 
       neat::RunOptions udp_run_options = run_options;
       udp_run_options.output_memory = neat::OutputMemory::Owned;
-      neat::Tensor udp_seed = make_blank_nv12_tensor(cfg.fallback_width, cfg.fallback_height);
+      neat::Tensor udp_seed = make_blank_nv12_tensor(cfg.width, cfg.height);
       rt.udp_run = rt.udp_graph.build(neat::TensorList{udp_seed}, udp_run_options);
       runtimes.push_back(std::move(rt));
     }
@@ -989,7 +1050,7 @@ int main() {
         throw std::runtime_error("failed to pull frame: " + frame_error.message);
       }
 
-      const auto frame_tensors = neat::tensors_from_sample(frame_sample, true);
+      const auto frame_tensors = neat::tensors_from_sample(frame_sample, false);
       if (frame_tensors.empty()) {
         std::cerr << "[warn] frame sample has no tensors\n";
         continue;
@@ -1010,7 +1071,18 @@ int main() {
         neat::PullError pull_error;
         status = rt.model_run.pull("result", 20000, model_sample, &pull_error);
         if (status == neat::PullStatus::Timeout) {
-          std::cerr << "[warn] timed out waiting for " << rt.spec.name << "\n";
+          // A timeout does NOT cancel the in-flight inference: this frame's result is still
+          // queued. Continuing without draining leaves two frames in flight against one pull for
+          // this runtime, and every later result is paired with the WRONG frame -- silently,
+          // permanently. Drain the sink (0 ms = non-blocking) to resynchronise.
+          neat::Sample stale;
+          neat::PullError drain_error;
+          int drained = 0;
+          while (rt.model_run.pull("result", 0, stale, &drain_error) == neat::PullStatus::Ok) {
+            ++drained;
+          }
+          std::cerr << "[warn] timed out waiting for " << rt.spec.name << "; drained " << drained
+                    << " stale result(s)\n";
           continue;
         }
         if (status == neat::PullStatus::Closed) {

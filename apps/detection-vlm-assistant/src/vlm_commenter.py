@@ -58,9 +58,25 @@ class VlmCommenter:
         # Dedup memory: for each recently-triggered object we remember its class,
         # normalized-center box, and when it last fired.
         self._recent: list[dict] = []
-        self._model = None   # lazily-loaded VisionLanguageModel (real mode only)
+        self._model = None   # VisionLanguageModel (real mode only); see preload()
+        self.completed = 0   # captions actually produced (for the run summary)
 
     # -- lifecycle ---------------------------------------------------------- #
+    def preload(self) -> None:
+        """Construct the VLM now, on the caller's thread, before streaming starts.
+
+        This is not an optimisation, it is a correctness fix. ``run()`` and
+        ``stream()`` are bound with ``nb::call_guard<nb::gil_scoped_release>``, but
+        the ``VisionLanguageModel`` **constructor** is not -- so building it holds
+        the GIL for the whole ~10 s weight load. Doing that lazily from the worker
+        thread froze the frame loop mid-stream, which back-pressured the RTSP
+        pipeline until the session died. Pay the 10 s at startup instead, where
+        blocking is free.
+        """
+        if self.dry_run or self._model is not None:
+            return
+        self._ensure_model()
+
     def start(self) -> None:
         if not self.started:
             self.worker.start()
@@ -69,7 +85,19 @@ class VlmCommenter:
     def close(self) -> None:
         self.stop_event.set()
         if self.started:
-            self.worker.join(timeout=2.0)
+            # A generation in flight takes seconds and cannot be interrupted; joining
+            # for less than that tears the interpreter down while a daemon thread is
+            # still inside a C++ MLA call.
+            self.worker.join(timeout=self._join_timeout_s())
+            if self.worker.is_alive():
+                print("vlm: worker still busy at shutdown; leaving it to the daemon exit",
+                      flush=True)
+
+    def _join_timeout_s(self) -> float:
+        if self.dry_run:
+            return 2.0
+        # ~20 tok/s observed on this board, plus TTFT and slack.
+        return max(5.0, self.cfg.vlm_max_new_tokens / 15.0 + 3.0)
 
     # -- selection ---------------------------------------------------------- #
     def _passes_gate(self, box: dict, frame_area: float) -> bool:
@@ -144,7 +172,8 @@ class VlmCommenter:
         for box in candidates:
             if self._is_duplicate(box, now):
                 continue
-            self._remember(box, now)
+            # Deliberately not _remember()ing here: the caller records the object only once the trigger
+            # is queued, else a box dropped by the bounded queue is suppressed for the full cooldown.
             return box
         return None
 
@@ -169,12 +198,15 @@ class VlmCommenter:
         )
         try:
             self.queue.put_nowait(trigger)
-            self.last_enqueue_at = now
         except Full:
             # Bounded queue is full: a VLM call is still in flight. Drop and move on;
             # the detector keeps running. This is the latency-absorbing backpressure.
+            # The object is NOT remembered, so it can trigger again once the VLM frees.
             self.last_enqueue_at = now
             print("vlm: queue busy, dropping trigger", flush=True)
+            return
+        self.last_enqueue_at = now
+        self._remember(box, now)
 
     @staticmethod
     def _crop(frame_bgr, box: dict):
@@ -226,17 +258,25 @@ class VlmCommenter:
             flush=True,
         )
 
+    def _ensure_model(self):
+        import pyneat as neat
+
+        if self._model is None:
+            # One VLM handle for the process; holds LM weights + vision encoder resident.
+            started = time.monotonic()
+            self._model = neat.genai.VisionLanguageModel(self.cfg.vlm_model_dir)
+            print(f"vlm: loaded {self._model.model_id()} "
+                  f"accepts_image={self._model.accepts_image()} "
+                  f"({time.monotonic() - started:.1f}s)", flush=True)
+        return self._model
+
     def _call_vlm(self, trigger: _Trigger) -> None:
         # Lazy imports so dry-run / off-board use never needs these.
         import cv2
         import numpy as np
         import pyneat as neat
 
-        if self._model is None:
-            # One VLM handle for the process; holds LM weights + vision encoder resident.
-            self._model = neat.genai.VisionLanguageModel(self.cfg.vlm_model_dir)
-            print(f"vlm: loaded {self._model.model_id()} "
-                  f"accepts_image={self._model.accepts_image()}", flush=True)
+        model = self._ensure_model()
 
         # CRITICAL colour correctness: VLM images must be uint8 HWC *RGB*. Our crop is
         # OpenCV-native BGR, so convert here. Skipping this silently feeds the VLM
@@ -248,7 +288,8 @@ class VlmCommenter:
         request.images = [crop_rgb]
         request.max_new_tokens = self.cfg.vlm_max_new_tokens
 
-        result = self._model.run(request)
+        result = model.run(request)
+        self.completed += 1
         metrics = result.metrics
         print(
             f"vlm[{trigger.label} score={trigger.score:.2f} bbox={trigger.bbox}]: "

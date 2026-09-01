@@ -33,9 +33,13 @@ def load_config(path: str) -> Config:
     cfg = Config()
     text = Path(path).read_text()
     for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+        # Strip a trailing comment, matching the other apps in this repo -- without it a
+        # house-style `score=0.30  # stricter` reached float() and raised an uncaught ValueError.
+        line = raw.split("#", 1)[0].strip()
+        if not line:
             continue
+        if "=" not in line:
+            raise ValueError(f"{path}: expected key=value, got: {line}")
         key, _, val = line.partition("=")
         key, val = key.strip(), val.strip()
         if key in ("model", "input_dir", "output_dir", "output_suffix"):

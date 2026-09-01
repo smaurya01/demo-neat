@@ -72,9 +72,9 @@ class Config:
     rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
     image_path: str = ""               # file, directory, or glob (source=image)
     rtsp_transport_tcp: bool = True
-    fallback_width: int = 1280
-    fallback_height: int = 720
-    fallback_fps: int = 30
+    width: int = 1280
+    height: int = 720
+    fps: int = 30
     latency_ms: int = 200
 
     # --- detector ---
@@ -87,7 +87,14 @@ class Config:
     nms_iou: float = 0.50
     top_k: int = 100
     frames: int = 0                    # 0 = run until interrupted (rtsp) / all images
-    timeout_ms: int = 20000
+    duration_s: float = 0.0            # 0 = no wall-clock limit (rtsp)
+    timeout_ms: int = 20000            # detector pull timeout
+
+    # --- RTSP resilience --- pyneat collapses PullStatus.Timeout and .Closed into a falsy
+    # return, so ONE empty pull is not end-of-stream. Only rtsp_stall_timeout_s of silence is.
+    source_timeout_ms: int = 2000
+    rtsp_stall_timeout_s: float = 15.0
+    rtsp_reconnect_attempts: int = 3
 
     # --- video output (draw boxes + H.264/RTP over UDP, like the sibling apps) ---
     video_enabled: bool = True
@@ -173,12 +180,12 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.image_path = value
     elif key == "rtsp_transport":
         cfg.rtsp_transport_tcp = value.strip().lower() == "tcp"
-    elif key == "fallback_width":
-        cfg.fallback_width = int(value)
-    elif key == "fallback_height":
-        cfg.fallback_height = int(value)
-    elif key == "fallback_fps":
-        cfg.fallback_fps = int(value)
+    elif key == "width":
+        cfg.width = int(value)
+    elif key == "height":
+        cfg.height = int(value)
+    elif key == "fps":
+        cfg.fps = int(value)
     elif key == "latency_ms":
         cfg.latency_ms = int(value)
     elif key == "model_path":
@@ -201,6 +208,14 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.frames = int(value)
     elif key == "timeout_ms":
         cfg.timeout_ms = int(value)
+    elif key == "duration_s":
+        cfg.duration_s = float(value)
+    elif key == "source_timeout_ms":
+        cfg.source_timeout_ms = int(value)
+    elif key == "rtsp_stall_timeout_s":
+        cfg.rtsp_stall_timeout_s = float(value)
+    elif key == "rtsp_reconnect_attempts":
+        cfg.rtsp_reconnect_attempts = int(value)
     elif key == "vlm_enabled":
         cfg.vlm_enabled = _parse_bool(value)
     elif key == "vlm_model_dir":
@@ -266,6 +281,8 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
     parser.add_argument("--nms", type=float)
     parser.add_argument("--top-k", type=int)
     parser.add_argument("--frames", type=int)
+    parser.add_argument("--duration", type=float, dest="duration_s",
+                        help="stop cleanly after this many seconds (rtsp mode)")
     parser.add_argument("--vlm-model-dir")
     parser.add_argument("--udp-host")
     parser.add_argument("--udp-port", type=int)
@@ -279,7 +296,8 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
     args = parser.parse_args(argv)
 
     cfg = Config()
-    load_config_file(cfg, args.config, required=args.config.exists())
+    load_config_file(cfg, args.config,
+                     required=args.config != default_config_path())
     if args.source is not None:
         cfg.source = args.source
     if args.rtsp_url is not None:
@@ -299,6 +317,8 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
         cfg.top_k = args.top_k
     if args.frames is not None:
         cfg.frames = args.frames
+    if args.duration_s is not None:
+        cfg.duration_s = args.duration_s
     if args.vlm_model_dir is not None:
         cfg.vlm_model_dir = args.vlm_model_dir
     if args.udp_host is not None:
@@ -319,10 +339,8 @@ def build_model(cfg: Config):
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    # Explicit letterbox resize to the compiled model input (mirrors the proven
-    # preprocess block in apps/multi-stream-yolo-yolo11/main.py). Without this the
-    # planner does not resize a full-size frame to 640x640 and the model yields no
-    # detections (observed on this archive with the auto-only path).
+    # Explicit letterbox resize to the model input: without it the planner does not resize a
+    # full-size frame to 640x640 and the model yields no detections.
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
     opt.preprocess.resize.height = cfg.model_height
@@ -404,6 +422,15 @@ def detect(cfg: Config, detector_run, frame_bgr) -> list[dict]:
     if not detector_run.push([model_input]):
         raise RuntimeError("detector push failed")
     sample = detector_run.pull("detections", cfg.timeout_ms)
+    if sample is None:
+        # A timeout does NOT cancel the in-flight inference: frame N's result stays queued and every
+        # later frame would be one behind, silently. Drain the sink (timeout_ms=0) to resynchronise.
+        dropped = 0
+        while detector_run.pull("detections", 0) is not None:
+            dropped += 1
+        print(f"[warn] detector pull timed out; drained {dropped} stale result(s)",
+              file=sys.stderr, flush=True)
+        return []
     tensors = _extract_tensors(sample)
     if not tensors:
         return []
@@ -452,9 +479,18 @@ def make_rtsp_source(cfg: Config, width: int, height: int, fps: int):
     opt.output_caps.fps = fps
     opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
 
+    # THE fix for "RTSP stream ended" after a VLM call. every_frame(1) is max_buffers=1 with
+    # drop=FALSE, and a non-dropping 1-deep appsink back-pressures rtspsrc the moment this thread
+    # stops pulling -- which the ~10 s VLM load does. Set the fields by hand: latest() is
+    # documented as (drop=true, max_buffers=1) but actually returns the plain defaults.
+    sink_opt = pyneat.OutputOptions()
+    sink_opt.max_buffers = 1
+    sink_opt.drop = True
+    sink_opt.sync = False
+
     graph = pyneat.Graph("rtsp_source")
     graph.add(pyneat.groups.rtsp_decoded_input(opt))
-    graph.add(pyneat.nodes.output(pyneat.OutputOptions.every_frame(1)))
+    graph.add(pyneat.nodes.output(sink_opt))
     run_opt = pyneat.RunOptions()
     run_opt.preset = pyneat.RunPreset.Realtime
     run_opt.queue_depth = 3
@@ -499,15 +535,9 @@ def decoded_tensor_to_bgr(tensor):
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
-    cap = cv2.VideoCapture(cfg.rtsp_url)
-    if cap.isOpened():
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
-        cap.release()
-        if width > 0 and height > 0:
-            return width, height, fps if fps > 0 else cfg.fallback_fps
-    return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
+    # Neat 0.4.0 enforces a single global GStreamer init, and OpenCV's VideoCapture() creates its
+    # own instance, tripping the guard. Use the configured fallback dimensions instead.
+    return cfg.width, cfg.height, cfg.fps
 
 
 def list_images(cfg: Config) -> list[str]:
@@ -526,10 +556,7 @@ def list_images(cfg: Config) -> list[str]:
     return files
 
 
-# --------------------------------------------------------------------------- #
-# Overlay + H.264/RTP UDP video output
-# (mirrors the sibling single-stream apps: draw on BGR, convert to NV12, send)
-# --------------------------------------------------------------------------- #
+# Overlay + H.264/RTP UDP video output: draw on BGR, convert to NV12, send.
 WHITE = (255, 255, 255)   # BGR: every detection
 RED = (0, 0, 255)         # BGR: the box the VLM would caption this frame
 
@@ -578,7 +605,9 @@ def make_nv12_input_options(width: int, height: int, fps: int):
     input_opt.caps_override = (
         f"video/x-raw,format=NV12,width={width},height={height},framerate={max(1, fps)}/1"
     )
-    input_opt.use_simaai_pool = False
+    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
+    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
+    input_opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
     return input_opt
 
 
@@ -642,7 +671,13 @@ def build_video_run(cfg: Config, width: int, height: int, fps: int):
     seed_nv12 = np.full((height * 3 // 2, width), 128, dtype=np.uint8)
     seed_nv12[:height, :] = 16
     seed = make_nv12_tensor(seed_nv12, width, height)
-    return graph, graph.build([seed]), sender_opt.video_port
+    # Explicit RunOptions: this is the one graph here with an Input node, so overflow_policy
+    # actually applies -- an encoder stall would otherwise block the whole frame loop.
+    run_opt = pyneat.RunOptions()
+    run_opt.preset = pyneat.RunPreset.Realtime
+    run_opt.queue_depth = 2
+    run_opt.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+    return graph, graph.build([seed], run_opt), sender_opt.video_port
 
 
 def push_video(video_run, frame_bgr) -> None:
@@ -695,7 +730,7 @@ def run_image_mode(cfg: Config, commenter) -> int:
 def run_rtsp_mode(cfg: Config, commenter) -> int:
     width, height, fps = probe_rtsp(cfg)
     print(f"rtsp={cfg.rtsp_url} stream={width}x{height}@{fps}", flush=True)
-    _src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
+    src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
     _model, _graph, detector_run = build_detector_run(cfg, width, height)
 
     video_run = None
@@ -715,13 +750,57 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
               flush=True)
 
     frame_id = 0
+    reconnects = 0
     run_start = time.perf_counter()
+    last_frame_at = run_start
+    stall_logged = False
+    deadline = run_start + cfg.duration_s if cfg.duration_s > 0 else None
+    if deadline is not None:
+        print(f"duration={cfg.duration_s:.0f}s (stops cleanly at the deadline)", flush=True)
     try:
         while cfg.frames <= 0 or frame_id < cfg.frames:
-            tensors = source_run.pull_tensors(timeout_ms=cfg.timeout_ms)
-            if not tensors:
-                print("RTSP stream ended or pull timed out", file=sys.stderr)
+            if deadline is not None and time.perf_counter() >= deadline:
+                print(f"duration reached after {frame_id} frames", flush=True)
                 break
+
+            tensors = source_run.pull_tensors(timeout_ms=cfg.source_timeout_ms)
+            if not tensors:
+                # An empty pull is Timeout OR Closed and pyneat cannot tell them apart. Do NOT treat one
+                # empty pull as end-of-stream; Run.last_error() is the only signal that means really dead.
+                # Run.last_error() is STICKY -- it keeps returning the most recent error even
+                # after frames resume. Gating the grace period on it meant one historical error
+                # turned every routine empty pull into an immediate forced reconnect, so the
+                # stall timer effectively never fired again. Only the timer decides now.
+                error = source_run.last_error()
+                stalled_for = time.perf_counter() - last_frame_at
+                if stalled_for < cfg.rtsp_stall_timeout_s:
+                    if not stall_logged:
+                        print(f"[warn] no RTSP frame for {stalled_for:.1f}s, waiting",
+                              file=sys.stderr, flush=True)
+                        stall_logged = True
+                    continue
+                reason = error or f"no frame for {stalled_for:.1f}s"
+                if reconnects >= cfg.rtsp_reconnect_attempts:
+                    print(f"RTSP stream dead ({reason}); "
+                          f"giving up after {reconnects} reconnect(s)", file=sys.stderr)
+                    break
+                reconnects += 1
+                print(f"[warn] RTSP stream dead ({reason}); "
+                      f"reconnect {reconnects}/{cfg.rtsp_reconnect_attempts}",
+                      file=sys.stderr, flush=True)
+                source_run.close()
+                src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
+                last_frame_at = time.perf_counter()
+                stall_logged = False
+                continue
+
+            last_frame_at = time.perf_counter()
+            stall_logged = False
+            # A frame arrived, so the stream recovered: reset the budget. It was only ever
+            # incremented, so it counted reconnects over the WHOLE run -- a 24 h session that
+            # recovered cleanly from three transient drops treated the fourth as terminal and
+            # exited, despite never having failed to reconnect.
+            reconnects = 0
             frame_bgr = decoded_tensor_to_bgr(tensors[0])
             boxes = detect(cfg, detector_run, frame_bgr)
             # Crop for the VLM from the CLEAN frame first, then draw the overlay so
@@ -737,6 +816,10 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                 fps_now = frame_id / elapsed if elapsed > 0 else 0.0
                 print(f"frame={frame_id} detections={len(boxes)} fps={fps_now:.2f}",
                       flush=True)
+        elapsed = time.perf_counter() - run_start
+        print(f"done: frames={frame_id} elapsed={elapsed:.1f}s "
+              f"avg_fps={frame_id / elapsed if elapsed > 0 else 0.0:.2f} "
+              f"vlm_captions={commenter.completed} reconnects={reconnects}", flush=True)
         return 0 if frame_id > 0 else 3
     finally:
         detector_run.close()
@@ -759,12 +842,15 @@ def run(cfg: Config, force_no_vlm: bool) -> int:
 
     dry_run = force_no_vlm or not cfg.vlm_enabled or not Path(cfg.vlm_model_dir).is_dir()
     commenter = VlmCommenter(cfg, dry_run=dry_run, label_fn=label_for)
-    commenter.start()
     print(
         f"detector={model_path.name} decode={cfg.model_name} "
         f"vlm={'DRY-RUN (crop+prompt logged, VLM not called)' if dry_run else cfg.vlm_model_dir}",
         flush=True,
     )
+    # Load the VLM HERE, before any frame is pulled: the constructor is bound WITHOUT
+    # gil_scoped_release, so it holds the GIL for ~10 s. Lazily it froze the loop and killed RTSP.
+    commenter.preload()
+    commenter.start()
     try:
         if cfg.source == "image":
             return run_image_mode(cfg, commenter)

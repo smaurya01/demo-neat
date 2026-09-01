@@ -65,9 +65,9 @@ std::string default_config_path(const char* argv0) {
 struct Config {
   std::string rtsp_url;
   std::string models_dir;
-  int fallback_width = 1280;
-  int fallback_height = 720;
-  int fallback_fps = 25;
+  int width = 1280;
+  int height = 720;
+  int fps = 25;
   int model_width = 640;
   int model_height = 640;
   int latency_ms = 200;
@@ -231,12 +231,12 @@ void apply_config_value(Config& cfg, const std::string& key, const std::string& 
     cfg.allow_missing = parse_bool_value(value);
   } else if (key == "load_only") {
     cfg.load_only = parse_bool_value(value);
-  } else if (key == "fallback_width") {
-    cfg.fallback_width = parse_int_arg(key.c_str(), value.c_str());
-  } else if (key == "fallback_height") {
-    cfg.fallback_height = parse_int_arg(key.c_str(), value.c_str());
-  } else if (key == "fallback_fps") {
-    cfg.fallback_fps = parse_int_arg(key.c_str(), value.c_str());
+  } else if (key == "width") {
+    cfg.width = parse_int_arg(key.c_str(), value.c_str());
+  } else if (key == "height") {
+    cfg.height = parse_int_arg(key.c_str(), value.c_str());
+  } else if (key == "fps") {
+    cfg.fps = parse_int_arg(key.c_str(), value.c_str());
   } else if (key == "model_width") {
     cfg.model_width = parse_int_arg(key.c_str(), value.c_str());
   } else if (key == "model_height") {
@@ -347,11 +347,11 @@ Config parse_args(int argc, char** argv) {
     } else if (arg == "--load-only") {
       cfg.load_only = true;
     } else if (arg == "--width") {
-      cfg.fallback_width = parse_int_arg("--width", need_value("--width"));
+      cfg.width = parse_int_arg("--width", need_value("--width"));
     } else if (arg == "--height") {
-      cfg.fallback_height = parse_int_arg("--height", need_value("--height"));
+      cfg.height = parse_int_arg("--height", need_value("--height"));
     } else if (arg == "--fps") {
-      cfg.fallback_fps = parse_int_arg("--fps", need_value("--fps"));
+      cfg.fps = parse_int_arg("--fps", need_value("--fps"));
     } else if (arg == "--model-width") {
       cfg.model_width = parse_int_arg("--model-width", need_value("--model-width"));
     } else if (arg == "--model-height") {
@@ -394,7 +394,7 @@ Config parse_args(int argc, char** argv) {
   if (cfg.models_dir.empty()) {
     throw std::runtime_error("models directory must not be empty");
   }
-  if (cfg.fallback_width <= 0 || cfg.fallback_height <= 0 || cfg.fallback_fps <= 0) {
+  if (cfg.width <= 0 || cfg.height <= 0 || cfg.fps <= 0) {
     throw std::runtime_error("fallback width/height/fps must be positive");
   }
   if (cfg.model_width <= 0 || cfg.model_height <= 0) {
@@ -462,8 +462,8 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const ModelSpec& spec
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  opt.preprocess.input_max_width = cfg.fallback_width;
-  opt.preprocess.input_max_height = cfg.fallback_height;
+  opt.preprocess.input_max_width = cfg.width;
+  opt.preprocess.input_max_height = cfg.height;
   // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
   // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
   opt.preprocess.input_max_depth = 3;
@@ -503,14 +503,14 @@ groups::RtspDecodedInputOptions make_rtsp_options(const Config& cfg) {
   opt.decoder_name = "decoder";
   opt.decoder_raw_output = true;
   opt.auto_caps_from_stream = true;
-  opt.fallback_h264_width = cfg.fallback_width;
-  opt.fallback_h264_height = cfg.fallback_height;
-  opt.fallback_h264_fps = cfg.fallback_fps;
+  opt.fallback_h264_width = cfg.width;
+  opt.fallback_h264_height = cfg.height;
+  opt.fallback_h264_fps = cfg.fps;
   opt.output_caps.enable = true;
   opt.output_caps.format = neat::FormatTag::NV12;
-  opt.output_caps.width = cfg.fallback_width;
-  opt.output_caps.height = cfg.fallback_height;
-  opt.output_caps.fps = cfg.fallback_fps;
+  opt.output_caps.width = cfg.width;
+  opt.output_caps.height = cfg.height;
+  opt.output_caps.fps = cfg.fps;
   opt.output_caps.memory = neat::CapsMemory::Any;
   return opt;
 }
@@ -520,12 +520,12 @@ neat::Graph make_source_pipeline(const Config& cfg) {
 
   neat::Graph app("multi_model_load_probe_source");
   app.add(source);
-  // EveryFrame(4), not Latest(). OutputOptions::Latest() CHANGED MEANING in Neat 0.3.0:
-// 0.2.2 returned the struct defaults (max_buffers=4, drop=false); 0.3.0 makes it do what the
-// name says (max_buffers=1, drop=true). The decoder then gets a single slot and every frame
-// arriving while this thread is between pulls is discarded inside GStreamer.
-// Measured on single-stream-yolo-yolo11 vs a 59.94 fps source: Latest() 55.1 fps, EveryFrame(4) 60.8 fps.
-  app.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
+  // EveryFrame(4), not Latest(): Latest() changed meaning in 0.3.0 (max_buffers=1, drop=true)
+  // and measured 55.1 vs 60.8 fps here.
+  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+  auto frame_out = neat::OutputOptions::EveryFrame(4);
+  frame_out.drop = true;
+  app.add(neat::nodes::Output("frame", frame_out));
   return app;
 }
 
@@ -533,18 +533,20 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
   opt.payload_type = neat::PayloadType::Image;
   opt.format = neat::FormatTag::NV12;
-  opt.width = cfg.fallback_width;
-  opt.height = cfg.fallback_height;
+  opt.width = cfg.width;
+  opt.height = cfg.height;
   opt.depth = 1;
-  opt.max_width = cfg.fallback_width;
-  opt.max_height = cfg.fallback_height;
+  opt.max_width = cfg.width;
+  opt.max_height = cfg.height;
   opt.max_depth = 1;
-  opt.fps_n = cfg.fallback_fps;
+  opt.fps_n = cfg.fps;
   opt.fps_d = 1;
-  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.fallback_width) +
-                      ",height=" + std::to_string(cfg.fallback_height) + ",framerate=" +
-                      std::to_string(cfg.fallback_fps) + "/1";
-  opt.use_simaai_pool = false;
+  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.width) +
+                      ",height=" + std::to_string(cfg.height) + ",framerate=" +
+                      std::to_string(cfg.fps) + "/1";
+  // Was `use_simaai_pool = false`, deprecated in NEAT 0.4.0. Input.h documents the exact
+  // mapping: false -> InputMemoryPolicy::SystemMemory. Behaviour-identical.
+  opt.memory_policy = neat::InputMemoryPolicy::SystemMemory;
   return opt;
 }
 
@@ -559,7 +561,7 @@ neat::Graph make_model_pipeline(const Config& cfg, const neat::Model& model,
 
 neat::Graph make_udp_pipeline(const Config& cfg, int udp_port, const std::string& name) {
   auto video_options = groups::VideoSenderOptions::H264RtpUdpFromRaw(
-      cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps);
+      cfg.width, cfg.height, cfg.fps);
   video_options.host = cfg.udp_host;
   video_options.channel = 0;
   video_options.video_port_base = udp_port;
@@ -896,7 +898,7 @@ std::vector<neat::Box> boxes_from_decoded_tensor(const neat::Tensor& tensor) {
 
 std::vector<neat::Box> decode_boxes_from_sample(const neat::Sample& sample, int width, int height,
                                                 int top_k) {
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return {};
   }
@@ -993,7 +995,7 @@ SegmentationOverlay draw_segmentation_overlay(neat::Tensor& frame, const neat::S
     return stats;
   }
 
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return stats;
   }
@@ -1625,7 +1627,7 @@ int main(int argc, char** argv) {
 
       neat::RunOptions udp_run_options = run_options;
       udp_run_options.output_memory = neat::OutputMemory::Owned;
-      neat::Tensor udp_seed = make_blank_nv12_tensor(cfg.fallback_width, cfg.fallback_height);
+      neat::Tensor udp_seed = make_blank_nv12_tensor(cfg.width, cfg.height);
       rt.udp_run = rt.udp_graph.build(neat::TensorList{udp_seed}, udp_run_options);
       runtimes.push_back(std::move(rt));
     }
@@ -1674,25 +1676,43 @@ int main(int argc, char** argv) {
         throw std::runtime_error("failed to pull frame: " + frame_error.message);
       }
 
-      const auto frame_tensors = neat::tensors_from_sample(frame_sample, true);
+      const auto frame_tensors = neat::tensors_from_sample(frame_sample, false);
       if (frame_tensors.empty()) {
         std::cerr << "[warn] frame sample has no tensors\n";
         continue;
       }
 
-      for (auto& rt : runtimes) {
-        if (!rt.model_run.push("image", neat::TensorList{frame_tensors.front()})) {
-          std::cerr << "[warn] failed to push frame to " << rt.spec.name << "\n";
-          continue;
+      // Record which runtimes actually accepted the frame. The pull loop below must skip the
+      // ones that did not: pulling from a runtime that owes nothing blocks the full 20 s
+      // timeout -- stalling every other model AND the RTSP source -- and then pairs its next
+      // result with the wrong frame from then on.
+      std::vector<bool> pushed(runtimes.size(), false);
+      for (std::size_t i = 0; i < runtimes.size(); ++i) {
+        pushed[i] = runtimes[i].model_run.push("image", neat::TensorList{frame_tensors.front()});
+        if (!pushed[i]) {
+          std::cerr << "[warn] failed to push frame to " << runtimes[i].spec.name << "\n";
         }
       }
 
-      for (auto& rt : runtimes) {
+      for (std::size_t i = 0; i < runtimes.size(); ++i) {
+        if (!pushed[i]) {
+          continue;
+        }
+        auto& rt = runtimes[i];
         neat::Sample model_sample;
         neat::PullError pull_error;
         status = rt.model_run.pull("result", 20000, model_sample, &pull_error);
         if (status == neat::PullStatus::Timeout) {
-          std::cerr << "[warn] timed out waiting for " << rt.spec.name << "\n";
+          // The frame is still in flight; drain so this runtime's next result is not paired
+          // with the wrong frame.
+          neat::Sample stale;
+          neat::PullError drain_error;
+          int drained = 0;
+          while (rt.model_run.pull("result", 0, stale, &drain_error) == neat::PullStatus::Ok) {
+            ++drained;
+          }
+          std::cerr << "[warn] timed out waiting for " << rt.spec.name << "; drained " << drained
+                    << " stale result(s)\n";
           continue;
         }
         if (status == neat::PullStatus::Closed) {
