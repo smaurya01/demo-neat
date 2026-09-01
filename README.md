@@ -18,8 +18,36 @@ track below.
 `/workspace` is **NFS-mounted on the DevKit at the same path**, so you edit files host-side and run
 them board-side with **no copying**.
 
+## Tested on NEAT 0.4.0
+
+Everything here was migrated to and re-verified against **NEAT Library 0.4.0 / SDK 2.1.3**, on a
+Modalix DevKit, against a 1280x720 H.264 60 fps RTSP source. All 13 apps build with zero warnings
+and were run on real hardware.
+
+| | Version |
+| --- | --- |
+| NEAT Library | **0.4.0** (`libsima_neat.so.4`, ABI 4) |
+| pyneat | **0.4.0** |
+| SDK container | **2.1.3** |
+| Board interpreter | `/home/sima/pyneat/bin/python` |
+
+**Coming from 0.3.0?**:
+
+- **The C++ ABI is now 4.** Every binary built against 0.3.0 links `libsima_neat.so.3` and is dead
+  on arrival. Delete `build/` and rebuild — no source change is needed for the ABI break itself.
+- **A non-dropping source sink now stalls the hardware decoder permanently.**
+  `OutputOptions::EveryFrame()` / `every_frame()` leave `drop = false`, and on 0.4.0 the moment
+  your consumer falls behind the stream goes to zero *and stays there* — a burst of frames, then
+  nothing. 0.3.0 tolerated the same setting. Set `drop = true` on any live source sink; it is free
+  while you have headroom.
+
+Config files also changed in this pass: `fallback_width` / `fallback_height` / `fallback_fps` are
+now **`width` / `height` / `fps`**, and unknown keys are rejected rather than ignored — so a config
+written for the older apps will fail loudly rather than silently doing the wrong thing.
+
 ## Table of Contents
 
+- [Tested on NEAT 0.4.0](#tested-on-neat-040)
 - [1. Installation](#1-installation)
 - [2. Tutorial — learn the concepts](#2-tutorial--learn-the-concepts)
 - [3. Apps](#3-apps)
