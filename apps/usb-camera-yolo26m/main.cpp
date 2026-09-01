@@ -1,32 +1,8 @@
-// USB camera (UVC/MJPEG) -> YOLO26m object detection -> H.264 RTP/UDP + detection metadata
-//
-// Two pipeline modes, selected by `pipeline_mode` in the config.
-//
-// ── pipeline_mode=push (default, works on runtime 0.2.2) ──────────────────────
-//
-//   source graph:  Custom(v4l2src ! jpegparse ! jpegdec ! videoconvert ! NV12) -> Output("frame")
-//   model  graph:  Input("image") -> Model(yolo26m)  -> Output("detections")
-//   udp    graph:  Input("video") -> VideoSender (H264EncodeSima -> RTP -> UDP)
-//
-//   The app pulls each NV12 frame, pushes it into the model graph (appsrc), pulls the
-//   boxes, draws them onto the frame, and pushes the annotated frame to the encoder.
-//   Pushing through appsrc is what lands the frame in SiMa DMA memory, which the CVU
-//   requires -- see SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY below.
-//
-// ── pipeline_mode=graph (zero-copy, needs a newer runtime) ────────────────────
-//
-//   Custom(camera) -> Branch -+-> VideoSender
-//                             +-> Model -> Output("detections")
-//
-//   Strictly better on paper: the frame never touches the CPU. But on runtime 0.2.2 the
-//   CVU silently reads system-memory buffers as black frames and yields zero detections,
-//   because the private `neatcamerabridge` element that lands OS buffers into SiMa DMA
-//   memory does not exist in libsima_neat.so.2.1.2. Set camera_bridge=true to append it
-//   once you are on a runtime that ships it. See LEARNING.md.
-//
-// MJPEG is decoded on the CPU (jpegdec), NOT on the SiMa hardware decoder. That is
-// deliberate and measured: neatdecoder in mjpeg mode runs at ~4 fps on this camera's
-// JPEGs, while jpegdec sustains the camera's full rate. See LEARNING.md.
+// USB camera (UVC/MJPEG) -> YOLO26m object detection -> H.264 RTP/UDP + detection metadata.
+// pipeline_mode=push (default): source/model/udp graphs, the appsrc push lands frames in SiMa DMA.
+// pipeline_mode=graph: zero-copy Branch; needs camera_bridge=true and a runtime shipping
+// `neatcamerabridge`, else the CVU reads black frames and returns ZERO detections.
+// MJPEG decodes on the CPU (jpegdec) on purpose: neatdecoder mjpeg runs at ~4 fps here.
 
 #include <neat.h>
 
@@ -108,19 +84,9 @@ double ms_since(Clock::time_point a, Clock::time_point b) {
   return std::chrono::duration<double, std::milli>(b - a).count();
 }
 
-// ── time profiling ────────────────────────────────────────────────────────────
-//
-// Two different means, on purpose:
-//
-//   * the periodic line reports the mean over THAT WINDOW only. A cumulative mean
-//     silently hides a pipeline that degrades halfway through a run -- it just drifts
-//     slowly, and by frame 6000 one bad minute is invisible.
-//   * the exit summary reports mean and p95 over the whole run. p95 is what tells you
-//     whether a stage is *occasionally* slow, which a mean never will.
-//
-// Memory is O(1): the mean comes from a running sum, and p95 from a bounded ring of the
-// most recent samples. A `frames=0` run streams for hours; an unbounded sample vector
-// would grow without limit.
+// ── time profiling ───────────────────────────────────────────────────────────
+// Periodic line = mean over THAT WINDOW (a cumulative mean hides mid-run degradation);
+// exit summary = mean + p95 over the whole run. O(1) memory: running sum + bounded ring.
 class StageStat {
 public:
   void add(double ms) {
@@ -281,24 +247,39 @@ Config read_config(const std::string& path) {
   if (cfg.udp_host.empty()) throw std::runtime_error("config missing: udp_host");
   if (cfg.pipeline_mode != "push" && cfg.pipeline_mode != "graph")
     throw std::runtime_error("pipeline_mode must be push or graph");
+  // camera_device and flip are interpolated into a gst_parse_launch string, so an unconstrained
+  // value can splice arbitrary elements (filesrc/filesink/souphttpsrc) into the pipeline. Keep
+  // them to the shapes the app actually supports.
+  if (cfg.source_override.empty()) {
+    if (cfg.camera_device.rfind("/dev/video", 0) != 0 ||
+        cfg.camera_device.find_first_not_of("0123456789", 10) != std::string::npos) {
+      throw std::runtime_error("camera_device must be /dev/videoN, got: " + cfg.camera_device);
+    }
+  }
+  if (cfg.flip != "none" && cfg.flip != "rotate-180" && cfg.flip != "horizontal-flip" &&
+      cfg.flip != "vertical-flip") {
+    throw std::runtime_error("flip must be none|rotate-180|horizontal-flip|vertical-flip, got: " +
+                             cfg.flip);
+  }
+  if (cfg.width <= 0 || cfg.height <= 0 || (cfg.width % 2) != 0 || (cfg.height % 2) != 0) {
+    throw std::runtime_error("width/height must be positive and even");
+  }
+  if (cfg.fps <= 0) throw std::runtime_error("fps must be positive");
+  // graph mode silently yields ZERO detections without neatcamerabridge: the CVU reads
+  // system-memory buffers as black frames. Fail loudly instead of streaming clean video and
+  // reporting boxes=0 forever.
+  if (cfg.pipeline_mode == "graph" && !cfg.camera_bridge) {
+    throw std::runtime_error(
+        "pipeline_mode=graph requires camera_bridge=true (without neatcamerabridge the CVU reads "
+        "black frames and yields zero detections)");
+  }
   return cfg;
 }
 
-// ── Camera source fragment ────────────────────────────────────────────────────
-//
-// Neat has no V4L2 source node, so this is emitted through the Custom() escape hatch.
-//
-//   io-mode=mmap      zero-copy DMA from the UVC driver (io-mode=rw memcpys every frame)
-//   image/jpeg caps   pins MJPEG. Without it v4l2src negotiates YUYV, which the Brio 100
-//                     only offers at 5 fps for 1080p (USB 2.0 bandwidth limit).
-//   queue leaky       drop stale frames rather than stall the camera when the MLA is busy
-//   jpegparse         frame the JPEG stream and fix up caps
-//   jpegdec           CPU MJPEG decode -- faster than the SiMa HW decoder here
-//   videoconvert      I420 (jpegdec's native output) -> NV12, consumed by CVU and encoder
-//
-// The fragment must not end on a bare caps string: gst_parse_launch parses a trailing
-// "video/x-raw,..." as an element name and fails with `no element "video"`. Terminating
-// on a real element keeps the caps a capsfilter.
+// ── Camera source fragment (Neat has no V4L2 node, so Custom()) ──────────────
+// image/jpeg caps pin MJPEG: without them v4l2src negotiates YUYV, capped at ~5 fps at 1080p.
+// The fragment must NOT end on a bare caps string -- gst_parse_launch reads a trailing
+// "video/x-raw,..." as an element name and fails with `no element "video"`.
 std::string camera_fragment(const Config& cfg) {
   if (!cfg.source_override.empty()) return cfg.source_override;
 
@@ -373,7 +354,9 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.width) +
                       ",height=" + std::to_string(cfg.height) +
                       ",framerate=" + std::to_string(cfg.fps) + "/1";
-  opt.use_simaai_pool = false;
+  // Was `use_simaai_pool = false`, deprecated in NEAT 0.4.0. Input.h documents the exact
+  // mapping: false -> InputMemoryPolicy::SystemMemory. Behaviour-identical.
+  opt.memory_policy = neat::InputMemoryPolicy::SystemMemory;
   return opt;
 }
 
@@ -505,11 +488,8 @@ void fill_nv12_rect(std::uint8_t* y, std::uint8_t* uv, int w, int h, int x1, int
   }
 }
 
-// ── label rendering ───────────────────────────────────────────────────────────
-//
-// A 5x7 bitmap font, drawn straight onto the NV12 planes. There is no OpenCV in this
-// app (and no font on the board), so the glyphs are hand-coded -- the same approach the
-// other single-stream apps use.
+// ── label rendering ──────────────────────────────────────────────────────────
+// Hand-coded 5x7 bitmap font drawn onto the NV12 planes: no OpenCV, no font on the board.
 
 std::array<std::string_view, 7> glyph_for(char c) {
   switch (c) {
@@ -630,7 +610,7 @@ void draw_boxes_on_nv12(neat::Tensor& frame, const std::vector<neat::Box>& boxes
 }
 
 std::vector<neat::Box> decode_boxes(const neat::Sample& sample, const Config& cfg) {
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) return {};
   return neat::decode_bbox_tensor(tensors.front(), cfg.width, cfg.height, cfg.top_k, false)
       .boxes;
@@ -703,12 +683,11 @@ int run_push(const Config& cfg) {
 
   neat::Graph source_graph("usb_camera_source");
   source_graph.add(neat::nodes::Custom(camera_fragment(cfg), neat::InputRole::Source));
-  // EveryFrame(4), not Latest(). OutputOptions::Latest() CHANGED MEANING in Neat 0.3.0:
-// 0.2.2 returned the struct defaults (max_buffers=4, drop=false); 0.3.0 makes it do what the
-// name says (max_buffers=1, drop=true). The decoder then gets a single slot and every frame
-// arriving while this thread is between pulls is discarded inside GStreamer.
-// Measured on single-stream-yolo-yolo11 vs a 59.94 fps source: Latest() 55.1 fps, EveryFrame(4) 60.8 fps.
-  source_graph.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
+  // EveryFrame(4), not Latest(): Latest() means max_buffers=1 since 0.3.0 (55.1 vs 60.8 fps).
+  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+  auto frame_out = neat::OutputOptions::EveryFrame(4);
+  frame_out.drop = true;
+  source_graph.add(neat::nodes::Output("frame", frame_out));
 
   neat::Graph model_graph("usb_camera_model");
   model_graph.add(neat::nodes::Input("image", make_nv12_input_options(cfg)));
@@ -780,7 +759,7 @@ int run_push(const Config& cfg) {
     if (status != neat::PullStatus::Ok)
       throw std::runtime_error("pull frame failed: " + err.message);
 
-    const auto frame_tensors = neat::tensors_from_sample(frame_sample, true);
+    const auto frame_tensors = neat::tensors_from_sample(frame_sample, false);
     if (frame_tensors.empty()) {
       std::cerr << "[warn] camera sample has no tensors\n";
       continue;
@@ -933,10 +912,8 @@ int run_graph(const Config& cfg) {
     neat::Sample sample;
     neat::PullError err;
 
-    // In graph mode the whole camera -> CVU -> MLA -> boxdecode chain runs inside the
-    // pipeline, so this single pull IS the pipeline. There is no separate capture or
-    // encode stage to time on this side: `infer` is the wait for the next result, and
-    // `overlay` is the CPU box decode.
+    // In graph mode this single pull IS the pipeline: `infer` is the wait for the next
+    // result and `overlay` is the CPU box decode; there is no separate capture/encode stage.
     const auto t0 = Clock::now();
     const auto status = run.pull("detections", 20000, sample, &err);
     const auto t1 = Clock::now();

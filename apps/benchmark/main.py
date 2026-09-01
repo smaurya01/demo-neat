@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run pyneat.Model.benchmark() for one compiled model package."""
+"""Run pyneat.Model.benchmark() for one compiled model package.
+
+Exit codes: 0 ok · 2 config/argument error · 3 pyneat unavailable · 4 benchmark failed
+· 5 benchmark succeeded but the JSON report could not be written (the measured numbers
+are still printed to stdout).
+"""
 
 from __future__ import annotations
 
@@ -120,18 +125,29 @@ def main() -> int:
         print("pyneat is not importable. Run: source ~/pyneat/bin/activate", file=sys.stderr)
         return 3
 
+    # The BENCHMARK and the REPORT WRITE are separate concerns and must fail separately. With
+    # both under one `try`, a read-only output dir or a bad --output-json threw, was reported as
+    # "benchmark failed", returned 4, and threw away a completed 1000-frame measurement that was
+    # already in hand and never printed.
     try:
         model = pyneat.Model(str(model_path))
         report = model.benchmark(frames)
-        write_report(report_path, model_path, frames, model, report)
     except Exception as exc:
         print(f"benchmark failed: {exc}", file=sys.stderr)
         return 4
 
+    # Measured numbers first: whatever happens to the file, these are the result.
     print(f"latency_ms={report.latency_ms}")
     print(f"fps={report.fps}")
     print(f"avg_power_watts={report.avg_power_watts}")
     print(f"energy_joules={report.energy_joules}")
+
+    try:
+        write_report(report_path, model_path, frames, model, report)
+    except Exception as exc:
+        print(f"report not written to {report_path}: {exc}", file=sys.stderr)
+        return 5
+
     print(f"report_json={report_path}")
     return 0
 

@@ -85,8 +85,14 @@ class PyNeatDetector:
         opt.nms_iou_threshold = nms_iou
         opt.top_k = top_k
         opt.num_classes = num_classes
+        # boxdecode_original_* is the frame size the model's coordinate inversion maps back to.
+        # infer() resizes EVERY image to model_size x model_size before pushing, so that is the
+        # frame the graph actually sees; infer() then scales the returned boxes back to the
+        # original image. (Feeding full-size images while claiming model_size here was what put
+        # every box in the top-left corner of any larger image.)
         opt.boxdecode_original_width = model_size
         opt.boxdecode_original_height = model_size
+        self.model_size = model_size
         self.model = pyneat.Model(pack_path, opt)
 
         run_opt = pyneat.RunOptions()
@@ -94,6 +100,12 @@ class PyNeatDetector:
         run_opt.overflow_policy = pyneat.OverflowPolicy.Block
         run_opt.preset = pyneat.RunPreset.Balanced
 
+        # Seed at the SAME size infer() will push, or the runner's fixed input caps would be
+        # built for the first image's dimensions and reject every resized frame after it.
+        import cv2
+        if seed_bgr.shape[:2] != (model_size, model_size):
+            seed_bgr = cv2.resize(seed_bgr, (model_size, model_size),
+                                  interpolation=cv2.INTER_AREA)
         t_seed = to_bgr_tensor(seed_bgr)
         self.runner = self.model.build(
             [t_seed],
@@ -103,23 +115,72 @@ class PyNeatDetector:
         self.runner.run([t_seed], timeout_ms=timeout_ms)   # warmup
 
     @staticmethod
-    def _extract_bbox_payload(tensors):
+    def _looks_like_bbox(payload: bytes) -> bool:
+        """Structural check on the BBOX wire format before we reinterpret bytes as detections.
+
+        Taking the FIRST non-empty payload and parsing it as BBOX is how you silently draw
+        garbage: if the route ever emits an auxiliary tensor first (a raw head, a preprocess
+        passthrough), its first 4 bytes become a detection count and its body becomes 24-byte
+        records. `count` is capped by the length so nothing crashes -- you just get
+        plausible-looking boxes on the board. Neat's own decoder refuses this
+        (`bbox tensor format mismatch`, and `body % 24 != 0`); mirror that here.
+        """
+        if not payload or len(payload) < 4:
+            return False
+        body = len(payload) - 4
+        if body % 24 != 0:                       # records are exactly 24 bytes (struct RawBox)
+            return False
+        # The buffer is fixed-capacity, so count <= capacity (parse_bbox_payload clamps the same
+        # way). Requiring equality rejected real payloads.
+        count = struct.unpack_from("<I", payload, 0)[0]
+        return count <= body // 24
+
+    @classmethod
+    def _extract_bbox_payload(cls, tensors):
         for tensor in tensors:
             try:
                 payload = tensor.copy_payload_bytes()
             except Exception:
                 continue
-            if payload:
+            if payload and cls._looks_like_bbox(payload):
                 return payload
         return None
 
     def infer(self, bgr) -> List[dict]:
+        """Accept an image of ANY size; resize to the model input before inference.
+
+        The runner's input caps are fixed by the seed image at build time, so pushing a
+        differently-sized image later fails. Normalising every image to model_size x model_size
+        here means a mixed-resolution folder works, and it is also what makes
+        boxdecode_original_* correct: the graph always sees exactly that frame.
+        """
+        import cv2
+
         oh, ow = bgr.shape[:2]
-        out = self.runner.run([to_bgr_tensor(bgr)], timeout_ms=self.timeout_ms)
+        size = self.model_size
+        if (oh, ow) != (size, size):
+            # INTER_AREA downscales without aliasing; INTER_LINEAR is the right choice upscaling.
+            interp = cv2.INTER_AREA if (ow > size or oh > size) else cv2.INTER_LINEAR
+            model_in = cv2.resize(bgr, (size, size), interpolation=interp)
+        else:
+            model_in = bgr
+
+        out = self.runner.run([to_bgr_tensor(model_in)], timeout_ms=self.timeout_ms)
         payload = self._extract_bbox_payload(out)
         if not payload:
             return []
-        return parse_bbox_payload(payload, ow, oh, self.score)
+
+        # Boxes come back in model_size space; map them back to the caller's image.
+        dets = parse_bbox_payload(payload, size, size, self.score)
+        if (oh, ow) != (size, size):
+            sx = ow / float(size)
+            sy = oh / float(size)
+            for d in dets:
+                d["x1"] *= sx
+                d["x2"] *= sx
+                d["y1"] *= sy
+                d["y2"] *= sy
+        return dets
 
     def describe(self) -> str:
         try:
@@ -176,6 +237,7 @@ def run_pipeline(cfg: Config, model_pack: str, input_dir: Path, output_dir: Path
     total_dets = 0
     images_with_dets = 0
     per_class = Counter()
+    written: set = set()
     try:
         for image_path in images:
             bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -191,8 +253,23 @@ def run_pipeline(cfg: Config, model_pack: str, input_dir: Path, output_dir: Path
 
             overlay = bgr.copy()
             draw_detections(overlay, dets, cfg.labels)
+            # Documented name: <stem><output_suffix>.jpg (see README). Only disambiguate when it
+            # would actually collide -- board.jpg and board.png both map to board_detected.jpg,
+            # and the second used to silently overwrite the first while the summary still counted
+            # both as processed.
             out_file = output_dir / (image_path.stem + cfg.output_suffix + ".jpg")
-            cv2.imwrite(str(out_file), overlay)
+            if out_file in written:
+                out_file = output_dir / (image_path.stem + image_path.suffix.replace(".", "_")
+                                         + cfg.output_suffix + ".jpg")
+                logger.warning("output name collision for %s; writing %s",
+                               image_path.name, out_file.name)
+            if out_file.resolve() == image_path.resolve():
+                logger.error("refusing to overwrite input %s", image_path)
+                continue
+            if not cv2.imwrite(str(out_file), overlay):
+                logger.error("failed to write %s", out_file)
+                continue
+            written.add(out_file)
 
             counts = Counter(class_name(d["class_id"], cfg.labels) for d in dets)
             per_class.update(counts)

@@ -337,7 +337,9 @@ def make_nv12_input_options(cfg: Config) -> pyneat.InputOptions:
         f"video/x-raw,format=NV12,width={cfg.width},height={cfg.height}"
         f",framerate={cfg.fps}/1"
     )
-    opt.use_simaai_pool = False
+    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
+    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
+    opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
     return opt
 
 
@@ -612,7 +614,11 @@ def make_metadata_sender(cfg: Config):
 def run_push(cfg: Config) -> int:
     source_graph = pyneat.Graph("usb_camera_source")
     source_graph.add(pyneat.nodes.custom(camera_fragment(cfg), pyneat.InputRole.Source))
-    source_graph.add(pyneat.nodes.output("frame", pyneat.OutputOptions.every_frame(4)))
+    # 4 slots, not 1: one slot means the decoder waits on the source thread every gap.
+    # drop=True: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+    src_out = pyneat.OutputOptions.every_frame(4)
+    src_out.drop = True
+    source_graph.add(pyneat.nodes.output("frame", src_out))
 
     model_graph = pyneat.Graph("usb_camera_model")
     model_graph.add(pyneat.nodes.input("image", make_nv12_input_options(cfg)))
@@ -787,10 +793,8 @@ def run_graph(cfg: Config) -> int:
     last_log_frames = 0
 
     while not _stop and (cfg.frames == 0 or processed < cfg.frames):
-        # In graph mode the whole camera -> CVU -> MLA -> boxdecode chain runs inside the
-        # pipeline, so this single pull IS the pipeline. There is no separate capture or
-        # encode stage to time here: `infer` is the wait for the next result, and
-        # `overlay` is the CPU box decode.
+        # In graph mode this single pull IS the pipeline: `infer` is the wait for the next result
+        # and `overlay` is the CPU box decode.
         t0 = time.perf_counter()
         sample = run.pull("detections", 20000)
         t1 = time.perf_counter()

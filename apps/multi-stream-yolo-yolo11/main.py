@@ -63,9 +63,9 @@ class Config:
     model_path: str = ""
     models_dir: str = ""
     model_name: str = "yolo11"  # yolo11 | yolo26n (selects BoxDecodeType)
-    fallback_width: int = 1280
-    fallback_height: int = 720
-    fallback_fps: int = 25
+    width: int = 1280
+    height: int = 720
+    fps: int = 25
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
@@ -176,7 +176,12 @@ class StreamContext:
     processed: int = 0
     last_detections: int = 0
     last_visible: int = 0
-    dropped: int = 0
+    dropped_source: int = 0   # written only by this stream's source thread
+    dropped_puller: int = 0   # written only by the single puller thread
+
+    @property
+    def dropped(self) -> int:
+        return self.dropped_source + self.dropped_puller
     steady_base: int = 0
     result_q: object = None
     profile: StageProfile = field(default_factory=lambda: StageProfile())
@@ -237,12 +242,12 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.models_dir = value
     elif key == "model_name":
         cfg.model_name = value
-    elif key == "fallback_width":
-        cfg.fallback_width = int(value)
-    elif key == "fallback_height":
-        cfg.fallback_height = int(value)
-    elif key == "fallback_fps":
-        cfg.fallback_fps = int(value)
+    elif key == "width":
+        cfg.width = int(value)
+    elif key == "height":
+        cfg.height = int(value)
+    elif key == "fps":
+        cfg.fps = int(value)
     elif key == "model_width":
         cfg.model_width = int(value)
     elif key == "model_height":
@@ -351,11 +356,11 @@ def parse_args(argv: list[str] | None) -> Config:
     if args.model_name is not None:
         cfg.model_name = args.model_name
     if args.width is not None:
-        cfg.fallback_width = args.width
+        cfg.width = args.width
     if args.height is not None:
-        cfg.fallback_height = args.height
+        cfg.height = args.height
     if args.fps is not None:
-        cfg.fallback_fps = args.fps
+        cfg.fps = args.fps
     if args.model_width is not None:
         cfg.model_width = args.model_width
     if args.model_height is not None:
@@ -414,15 +419,11 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_rtsp(cfg: Config, url: str) -> tuple[int, int, int]:
-    cap = cv2.VideoCapture(url)
-    if cap.isOpened():
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
-        cap.release()
-        if width > 0 and height > 0:
-            return width, height, fps if fps > 0 else cfg.fallback_fps
-    return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
+    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init and OpenCV's
+    # capture backend calls gst_init() itself, so probing tripped the guard and the app died with
+    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
+    # probe FAILED to open the URL -- the case the probe exists for -- so a working URL hid it.
+    return cfg.width, cfg.height, cfg.fps
 
 
 def source_endpoint(stream_id: int) -> str:
@@ -485,10 +486,12 @@ def make_source_graph(cfg: Config, stream_id: int, url: str, width: int, height:
     graph.add(pyneat.groups.rtsp_encoded_input(enc))
     graph.add(pyneat.nodes.sima_decode(dec))
     graph.add(pyneat.nodes.caps_raw("NV12", width, height, fps, pyneat.CapsMemory.Any))
-    # 4 slots, not 1: a single slot leaves the decoder nowhere to put frame N+1 until the
-    # source thread has taken frame N, so every scheduling gap costs a frame.
-    graph.add(pyneat.nodes.output(source_endpoint(stream_id),
-                                  pyneat.OutputOptions.every_frame(cfg.stream_queue_depth)))
+    # 4 slots, not 1: one slot means the decoder waits on the source thread every gap.
+    # drop=True: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind
+    # (observed: stream 0 stopped at 8 frames while stream 1 ran on).
+    src_out = pyneat.OutputOptions.every_frame(cfg.stream_queue_depth)
+    src_out.drop = True
+    graph.add(pyneat.nodes.output(source_endpoint(stream_id), src_out))
     return graph
 
 
@@ -535,21 +538,16 @@ def make_nv12_input_options(width: int, height: int, fps: int):
     input_opt.max_depth = 1
     input_opt.fps_n = max(1, fps)
     input_opt.fps_d = 1
-    # No caps_override: it omitted `depth`, which the fields above DO set, and
-    # caps_override wins -- so the appsrc published caps with no depth and the CVU
-    # had nothing to size the ingress span from.
-    # No use_simaai_pool either: 0.3.0 maps False -> InputMemoryPolicy.SystemMemory,
-    # which made neatprocesscvu reject the staged buffer outright.
+    # No caps_override (it omits `depth` and wins over the fields above) and no memory_policy
+    # (SystemMemory makes neatprocesscvu reject the staged buffer outright).
     return input_opt
 
 
 def build_model_graph(cfg: Config, width: int, height: int, fps: int):
     graph = pyneat.Graph("model")
     model = make_model(cfg)
-    # Ask the MODEL for its ingress options. It knows its own caps, depth, memory
-    # policy and pool sizing; hand-built options produced depth-less caps and
-    # "raw GstMemory span overflow" from neatprocesscvu. Every official example
-    # does this (13 call sites) and none hand-builds the model appsrc.
+    # Ask the MODEL for its ingress options: hand-built ones produced depth-less caps and
+    # "raw GstMemory span overflow" from neatprocesscvu. Every official example does this.
     input_opt = model.input_appsrc_options(False)
     input_opt.block = True
     graph.add(pyneat.nodes.input("image", input_opt))
@@ -713,28 +711,10 @@ def push_nv12_video(video_run, nv12, width: int, height: int) -> None:
 
 
 # ── time profile ─────────────────────────────────────────────────────────────
-# Each frame is timed stage by stage, so a slow pipeline can be ATTRIBUTED rather
-# than guessed at. The stages run on four different threads, so the timings are
-# carried along with the frame through the queue hand-offs and are all recorded by
-# the one thread that finishes the frame (the output worker) — that keeps a single
-# writer per stream and needs no locking.
-#
-#   rtsp     source thread: wait for + copy one decoded NV12 frame out of the RTSP graph
-#   prep     source thread: NV12 -> pyneat.Tensor for the model input
-#   qwait    time the frame sat in this stream's input queue waiting for the pusher
-#   push     pusher thread: model_run.push(). Under OverflowPolicy.Block this BLOCKS
-#            when the MLA already holds queue_depth frames — so a large `push` means
-#            the model is the bottleneck and backpressure is doing its job
-#   infer    push returns -> this frame's result is pulled. Model-graph LATENCY
-#            (EV74 preprocess + MLA + box decode), and it INCLUDES queueing behind
-#            the other frames in flight — it is NOT the model's service time
-#   decode   output thread: pyneat.decode_bbox on the BBOX tensor
-#   overlay  output thread: NV12 Y/UV annotation
-#   send     output thread: NV12 -> Tensor + push into the H.264/RTP UDP sender
-#   latency  end to end: RTSP pull started -> annotated frame handed to the encoder
-#
-# The stages OVERLAP across threads, so they do not sum to the frame period. Read
-# `delivered fps` as the throughput number and the stage columns as cost attribution.
+# Per-stage timings carried with the frame across the four threads and recorded by the
+# output worker (one writer per stream, no locking). Stages OVERLAP, so they do not sum to
+# the frame period: read `delivered fps` as throughput and the columns as cost attribution.
+# `push` blocking means the model is the bottleneck; `infer` is graph LATENCY, not service time.
 STAGES = ("rtsp", "prep", "qwait", "push", "infer", "decode", "overlay", "send")
 
 
@@ -788,46 +768,31 @@ class StageProfile:
 
 
 # ── the engine ───────────────────────────────────────────────────────────────
-# Thread topology, ported from the proven C++ 4-stream demo
-# (a C++ 4-stream reference implementation) which sustains 4x60 fps:
-#
-#   stream i  RTSP -> source thread i -> input queue [cap 4]
-#                                            |
-#                          +--- pusher thread (ROUND-ROBIN) ---+
-#                          |      shared YOLO Run              |
-#                          |      queue_depth=4, Block         |
-#                          |      (MLA keeps 4 in flight)      |
-#                          +--- puller thread -----------------+
-#                                            |
-#                                   result queue i [cap 4]
-#                                            |
-#                              output worker i (overlay + UDP)
-#
-# The two non-obvious pieces, both taken from that demo rather than invented here:
-#
-#   1. PUSHER AND PULLER ARE SEPARATE THREADS, and the shared model Run uses
-#      OverflowPolicy.Block (NOT KeepLatest). Block keeps push/pull strictly paired,
-#      so a plain FIFO `pending` deque carrying (stream, frame) is enough to route
-#      each result home — and because the pusher never waits for the puller, the MLA
-#      stays pipelined with queue_depth frames in flight. Doing push+pull on ONE
-#      thread serialises the MLA against the host; KeepLatest silently drops results
-#      and breaks the FIFO pairing.
-#
-#   2. The pusher is ROUND-ROBIN over the per-stream input queues. That is where
-#      fairness comes from: no stream can monopolise the shared model.
+# RTSP -> per-stream source thread -> input queue -> round-robin pusher -> shared YOLO Run
+# -> puller -> per-stream result queue -> output worker (overlay + UDP).
+# Pusher and puller are SEPARATE threads and the Run uses OverflowPolicy.Block, which keeps
+# push/pull strictly paired so a FIFO `pending` deque routes each result home. Round-robin
+# is where fairness comes from: no stream can monopolise the shared model.
 
 
-def source_worker(cfg, ctx, in_q, stop) -> None:
+def source_worker(cfg, ctx, in_q, stop, errors) -> None:
     """One per stream: RTSP frame -> NV12 -> model input tensor -> input queue."""
+    # Guarded like every other worker: without this, one short/odd decoder buffer raised out of
+    # the thread, the stream froze on its last frame, `stop` was never set and `errors` stayed
+    # empty -- the summary just reported 0 fps with no explanation.
+    try:
+        _source_worker_loop(cfg, ctx, in_q, stop)
+    except Exception as exc:
+        errors.append(f"source {ctx.stream_id}: {exc}")
+        stop.set()
+
+
+def _source_worker_loop(cfg, ctx, in_q, stop) -> None:
     while not stop.is_set():
         t_frame = time.perf_counter()
-        # Named pull: ONE Run now serves every stream, so the endpoint says which
-        # camera this frame belongs to. pull_tensors() takes no name and would
-        # hand back whichever stream happened to arrive first.
-        #
-        # SHORT timeout, not 1000 ms: every source thread shares one Run, and a long
-        # blocking pull on one endpoint starves the others. Measured with a 1000 ms
-        # timeout: stream 1 took 16510 frames while stream 0 got 8.
+        # Named pull: one Run serves every stream, so the endpoint says which camera this frame is.
+        # SHORT timeout, not 1000 ms: a long blocking pull on one endpoint starves the others
+        # (measured at 1000 ms: stream 1 took 16510 frames while stream 0 got 8).
         sample = ctx.source_run.pull(ctx.source_endpoint, 20)
         if sample is None:
             continue
@@ -846,7 +811,10 @@ def source_worker(cfg, ctx, in_q, stop) -> None:
         item = (ctx, nv12, tensor, w, h, t_frame, time.perf_counter(), rtsp_ms, prep_ms)
         # Live source: keep the newest frame rather than block the camera.
         if in_q.put(item):
-            ctx.dropped += 1
+            # Separate counter per writer: `ctx.dropped` was incremented by BOTH this thread and
+            # the puller, and `+=` on an attribute is load/add/store, so increments were lost and
+            # the drop column under-reported the very load-shedding it exists to show.
+            ctx.dropped_source += 1
 
 
 def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) -> None:
@@ -872,6 +840,19 @@ def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) 
             # the bottleneck and backpressure is working as intended.
             mark = time.perf_counter()
             if not model_run.push([tensor]):
+                # A failed push may still have left the buffer in the graph. `pending` is shared
+                # across streams and matched by FIFO POSITION only, so one unrecorded result would
+                # pop another camera's entry and route EVERY later result to the wrong stream,
+                # permanently. Clear the FIFO so an orphan result hits the puller's empty-pending
+                # path and is discarded, instead of corrupting stream identity.
+                # This narrows the window; it does not close it. Closing it properly needs the
+                # result tagged with its stream (e.g. Sample.frame_id propagated through the
+                # model graph) rather than matched by position.
+                with pending_cv:
+                    pending.clear()
+                    pending_cv.notify_all()
+                print("[warn] model push failed; cleared the pending FIFO to protect "
+                      "stream/result pairing", file=sys.stderr, flush=True)
                 continue
             t_pushed = time.perf_counter()
             push_ms = (t_pushed - mark) * 1000.0
@@ -915,20 +896,12 @@ def puller_worker(cfg, model_run, pending, pending_cv, stop, errors, model_rate)
             item = (nv12, sample, w, h, t_frame,
                     rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms)
 
-            # NEVER block here. THIS WAS THE STALL. result_q is bounded and this is
-            # the ONLY thread draining the shared model Run, so a blocking put()
-            # deadlocks everything the moment one output worker falls behind:
-            #   result_q fills -> puller blocks in put() -> nothing drains the model
-            #   graph -> pusher's push() blocks -> after 5 s "GraphRun::push timed
-            #   out waiting for pipeline input queue" and the app dies having done
-            #   ~queue_depth frames.
-            # It survived every graph-level change (envelope, caps, every_frame,
-            # memory policy, model-derived appsrc options, Owned output, source
-            # ordering) because it is a Python deadlock, not a Neat misconfiguration.
-            # Drop the OLDEST pending result instead -- same rule the source mailbox
-            # already follows: shed load at a queue, never stall the accelerator.
+            # NEVER block here. THIS WAS THE STALL: result_q is bounded and this is the only thread
+            # draining the shared Run, so a blocking put() deadlocks everything once an output worker
+            # falls behind. Drop the OLDEST pending result instead -- shed load at a queue, never stall
+            # the accelerator.
             if ctx.result_q.put(item):
-                ctx.dropped += 1
+                ctx.dropped_puller += 1
     except Exception as exc:
         errors.append(f"puller: {exc}")
         stop.set()
@@ -987,23 +960,16 @@ def run(cfg: Config) -> int:
                 "a shared model stage needs matching input geometry"
             )
 
-    # ONE shared model graph/Run for all streams.
-    #
-    # Reliable + Block + queue_depth: taken verbatim from the proven C++ 4-stream demo.
-    # Block (NOT KeepLatest) is the load-bearing choice — it keeps push and pull
-    # strictly paired so the FIFO `pending` deque can route each result back to its
-    # stream, and it lets `queue_depth` frames sit in flight so the MLA stays
-    # pipelined instead of running lock-step with the host.
+    # ONE shared model graph/Run for all streams. Block (NOT KeepLatest) is load-bearing: it
+    # keeps push/pull paired so `pending` can route results, and lets queue_depth frames stay
+    # in flight so the MLA is pipelined rather than lock-step with the host.
     model_graph = build_model_graph(cfg, model_w, model_h, model_fps)
     run_options = pyneat.RunOptions()
     run_options.preset = pyneat.RunPreset.Reliable
     run_options.queue_depth = cfg.model_queue_depth
     run_options.overflow_policy = pyneat.OverflowPolicy.Block
-    # Owned, NOT ZeroCopy. A ZeroCopy Sample points into the graph's own output
-    # buffer, and this app parks Samples in result_q until decode+overlay+encode is
-    # done -- up to stream_queue_depth per stream. Holding graph buffers that long
-    # starves the sink. The only output here is a small decoded BBOX payload, so the
-    # copy is cheap (quad-stream measured Owned as free for its detection stream).
+    # Owned, NOT ZeroCopy: this app parks Samples in result_q until overlay+encode is done, and
+    # holding graph buffers that long starves the sink. The BBOX payload is small, so it is cheap.
     run_options.output_memory = pyneat.OutputMemory.Owned
     model_run = model_graph.build(run_options)
 
@@ -1078,7 +1044,7 @@ def run(cfg: Config) -> int:
                          name="puller", daemon=True),
     ]
     for i, ctx in enumerate(contexts):
-        threads.append(threading.Thread(target=source_worker, args=(cfg, ctx, in_queues[i], stop),
+        threads.append(threading.Thread(target=source_worker, args=(cfg, ctx, in_queues[i], stop, errors),
                                         name=f"src{ctx.stream_id}", daemon=True))
         threads.append(threading.Thread(target=output_worker,
                                         args=(cfg, ctx, stop, errors, on_frame),
@@ -1226,18 +1192,9 @@ def print_summary(contexts: list[StreamContext], wall_s: float, model_rate: dict
     print(f"  aggregate:          {total / wall_s if wall_s else 0.0:6.2f} fps "
           f"across {len(contexts)} streams in {wall_s:.1f}s", flush=True)
 
-    # Interval between results out of the shared model stage, across all streams.
-    #
-    # CAREFUL: this is the OBSERVED OUTPUT RATE, not the model's capacity. When the
-    # model is not saturated it simply mirrors the arrival rate, so it will always
-    # roughly equal `aggregate delivered fps` and tells you nothing about headroom.
-    #
-    # The saturation tell is `push`, not this number. Under OverflowPolicy.Block a
-    # push only blocks once the MLA already holds queue_depth frames:
-    #   push ~= 0      -> the model always had room; it is NOT the bottleneck, and
-    #                     there is headroom for more streams.
-    #   push grows     -> the model is saturated and back-pressuring the pushers;
-    #                     THEN this interval is the real ceiling.
+    # Interval between results out of the shared model stage. CAREFUL: this is the OBSERVED
+    # OUTPUT RATE, not capacity -- unsaturated it just mirrors the arrival rate. The saturation
+    # tell is `push`: ~0 means headroom, growing means the model is back-pressuring.
     gaps = model_rate["gaps"][10:]  # drop warmup pulls
     if gaps:
         mean_gap = sum(gaps) / len(gaps)

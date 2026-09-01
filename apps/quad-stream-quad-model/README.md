@@ -70,7 +70,7 @@ cd /path/to/demo-neat/apps/quad-stream-quad-model
 Sanity-check your RTSP source first — its frame rate is the hard ceiling on any FPS you can claim:
 
 ```bash
-ffprobe -hide_banner -rtsp_transport tcp rtsp://<rtsp-server-ip>:8555/stream
+ffprobe -hide_banner -rtsp_transport tcp <rtsp-url>
 ```
 
 ## Model Download Command
@@ -110,8 +110,8 @@ split-head YOLOX normalization); the compile flow handles them for you, and they
 Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
-rtsp_default=rtsp://<rtsp-server-ip>:8555/stream
-udp_host=<host-ip-that-receives-video>
+rtsp_default=<rtsp-url>
+udp_host=<host-ip>
 udp_port_base=5206
 udp_port_stride=2
 ```
@@ -139,7 +139,7 @@ source; point them at four different cameras and stream identity still holds.
 
 `latency_ms`: RTSP receiver jitter buffer, in milliseconds.
 
-`fallback_width`, `fallback_height`, `fallback_fps`: Used when RTSP caps are incomplete.
+`width`, `height`, `fps`: Used when RTSP caps are incomplete.
 
 **Streams & models**
 
@@ -229,6 +229,32 @@ dk ./build/quad_stream_quad_model --no-overlay --duration 20
 
 ## How To See The Output
 
+### Neat Insight (recommended)
+
+**Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
+and it works from any device that can reach the host.
+
+1. Open **`https://192.168.131.12:9900`** in a browser.
+   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
+   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+2. Go to the **Video Viewer** tab.
+3. This app publishes **4 streams**, so open one viewer channel per stream.
+   `udp_port_base` sets the first port and each later stream takes the next one:
+
+   | channel | port | stream |
+   |---|---|---|
+   | 0 | `9000` | detection |
+   | 1 | `9001` | segmentation |
+   | 2 | `9002` | pose |
+   | 3 | `9003` | YOLOX |
+
+Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
+where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
+9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
+(`exposedPorts[*].hostPortStart`) rather than assuming.
+
+### gst-launch (alternative, no Insight needed)
+
 Install host viewer tools if needed:
 
 ```bash
@@ -236,18 +262,17 @@ sudo apt-get update
 sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
 
-Run this on the machine at `udp_host` — one viewer per stream:
+Run this on the machine at `udp_host` — one receiver per stream:
 
 ```bash
-# stream 0 detection :5206   stream 1 segmentation :5208
-# stream 2 pose      :5210   stream 3 yolox        :5212
-for P in 5206 5208 5210 5212; do
-  gst-launch-1.0 -v udpsrc port=$P caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false &
-done
+gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9001 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9002 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9003 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
 ```
 
-Expected output: four live windows — boxes, masks, skeletons and YOLOX boxes respectively — each
-with an `S<i> <TASK> :<port>` banner burned into the top-left.
+> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
+> over SSH.
 
 <a id="time-profile"></a>
 
@@ -272,7 +297,7 @@ stream task            decode   infer  postproc  overlay  encode  latency   dec 
 1      segmentation      1.46   32.33      1.50    13.89    0.11    69.23      59.9      57.9       58.3      2     12
 2      pose              1.30   21.57      0.09     1.03    0.10    22.84      59.9      59.5       59.3      1      9
 3      yolox             1.29   20.09      0.05     0.26    0.09    20.54      59.9      59.3       59.3      1      3
-                                                    aggregate delivered 235.9 fps
+                                                       aggregate delivered 235.9 fps
 ```
 
 **~236 fps aggregate against a hard ceiling of 239.8 (4 × 59.94).** `dec fps ≈ pull fps ≈ deliv fps`
@@ -306,12 +331,12 @@ The models are small, so 20–32 ms looks alarming. **Almost none of it is MLA c
 `infer` brackets `push` → `pull`, and that window contains the whole model graph:
 
 1. **CPU → EV74 copy** of the 1.4 MB NV12 frame. The app pushes a *host* tensor (it needs the NV12 on
-   the CPU for the overlay), so the runtime inserts a compatibility copy.
+      the CPU for the overlay), so the runtime inserts a compatibility copy.
 2. **EV74 preprocess** — NV12→RGB, letterbox 1280×720 → 640×640, normalize, quantize, tessellate.
 3. **MLA** — the actual model.
 4. **EV74 postprocess** — detessellate + dequantize.
 5. **EV74 SimaBoxDecode** — anchors, sigmoid, NMS (+ DFL for the zoo models, + 32×160×160 proto masks
-   for seg, + keypoints for pose).
+      for seg, + keypoints for pose).
 6. **`pull`**, plus any time the frame spent queued behind the other frames in flight.
 
 Steps 1, 2, 4 and 5 all run on the **EV74**, and **all four streams share one** (`cvu_pre_target` and
@@ -365,63 +390,63 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
 </details>
 
 
----
-# Appendix
+   ---
+   # Appendix
 
-<a id="appendix-measured-behaviour"></a>
+   <a id="appendix-measured-behaviour"></a>
 
-<details>
-<summary><h2>Appendix: Measured behaviour</h2></summary>
+   <details>
+   <summary><h2>Appendix: Measured behaviour</h2></summary>
 
-<br>
+   <br>
 
-Modalix DevKit, RTSP 1280×720 H.264 @ 59.94 fps, all four streams concurrent, `cvu_*_target=EV74`,
-overlay on.
+   Modalix DevKit, RTSP 1280×720 H.264 @ 59.94 fps, all four streams concurrent, `cvu_*_target=EV74`,
+   overlay on.
 
-### C++ (`./build/quad_stream_quad_model`) — current
+   ### C++ (`./build/quad_stream_quad_model`) — current
 
-**~236 fps against a 239.8 fps ceiling (4 × 59.94) — 98% of what the cameras can supply.** All four
-streams deliver at the source rate; the pipeline is not the bottleneck any more. The per-stream
-numbers are the [Time Profile](#time-profile) live table above — the same run, not repeated here.
+   **~236 fps against a 239.8 fps ceiling (4 × 59.94) — 98% of what the cameras can supply.** All four
+   streams deliver at the source rate; the pipeline is not the bottleneck any more. The per-stream
+   numbers are the [Time Profile](#time-profile) live table above — the same run, not repeated here.
 
-### How it got there
+   ### How it got there
 
-An earlier build ran each stream on **one thread doing infer → postproc → overlay → encode with
-nothing overlapping**, which delivered **~165 fps**:
+   An earlier build ran each stream on **one thread doing infer → postproc → overlay → encode with
+   nothing overlapping**, which delivered **~165 fps**:
 
-| stream | old infer | old delivered | now delivered |
-| --- | --- | --- | --- |
-| 0 detection | 18.3 | 44.5 | **59.1** |
-| 1 segmentation | 22.2 | 28.2 | **58.3** |
-| 2 pose | 16.6 | 44.5 | **59.3** |
-| 3 yolox | 16.2 | 47.7 | **59.3** |
-| | | **164.9 fps** | **~236 fps  (+43%)** |
+   | stream | old infer | old delivered | now delivered |
+   | --- | --- | --- | --- |
+   | 0 detection | 18.3 | 44.5 | **59.1** |
+   | 1 segmentation | 22.2 | 28.2 | **58.3** |
+   | 2 pose | 16.6 | 44.5 | **59.3** |
+   | 3 yolox | 16.2 | 47.7 | **59.3** |
+   | | | **164.9 fps** | **~236 fps  (+43%)** |
 
-Two changes did it, and neither touched a model:
+   Two changes did it, and neither touched a model:
 
-1. **postproc + overlay + encode moved to their own thread.** Before, a stream's frame period was the
-   *sum* of every stage (`latency == infer + postproc + overlay + encode` held to 0.01 ms). Now it is
-   `max(infer, rest)`. Segmentation gained most — its 14 ms mask blend had been charged straight
-   against its frame rate.
-2. **`push` and `pull` split across two threads**, so the model graph holds several frames at once
-   instead of exactly one. Frame *i+1*'s EV74 preprocess now overlaps frame *i*'s MLA.
+   1. **postproc + overlay + encode moved to their own thread.** Before, a stream's frame period was the
+      *sum* of every stage (`latency == infer + postproc + overlay + encode` held to 0.01 ms). Now it is
+      `max(infer, rest)`. Segmentation gained most — its 14 ms mask blend had been charged straight
+      against its frame rate.
+   2. **`push` and `pull` split across two threads**, so the model graph holds several frames at once
+      instead of exactly one. Frame *i+1*'s EV74 preprocess now overlaps frame *i*'s MLA.
 
-`infer` went **up** as a result (16–22 ms → 20–32 ms) while throughput went up. That is not a
-contradiction: with frames in flight, `infer` is a **latency**, not a period. See the Time Profile
-section.
+   `infer` went **up** as a result (16–22 ms → 20–32 ms) while throughput went up. That is not a
+   contradiction: with frames in flight, `infer` is a **latency**, not a period. See the Time Profile
+   section.
 
-### Python (`./main.py`) — same models, same config, threaded per stream
+   ### Python (`./main.py`) — same models, same config, threaded per stream
 
-Measured over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile windows, zero
-stalls, zero errors, no degradation across the run.
+   Measured over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile windows, zero
+   stalls, zero errors, no degradation across the run.
 
-| stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
-| --- | --- | --- | --- | --- | --- |
-| 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 | ~17 |
-| 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 | ~10 |
-| 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 | ~24 |
-| 3 yolox | `yolox_s` | 24 | 0.4 | ~10 | ~56 |
-| | | | | | **aggregate ~95 fps** |
+   | stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
+   | --- | --- | --- | --- | --- | --- |
+   | 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 | ~17 |
+   | 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 | ~10 |
+   | 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 | ~24 |
+   | 3 yolox | `yolox_s` | 24 | 0.4 | ~10 | ~56 |
+   | | | | | | **aggregate ~95 fps** |
 
 Two changes got it here from a build that **did not run at all** (4.7 fps, then 0.0 fps permanently
 with every stream reporting `no RTSP frame`):

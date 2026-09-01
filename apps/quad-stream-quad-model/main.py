@@ -57,22 +57,9 @@ APP_DIR = Path(__file__).resolve().parent
 # graph-surgery flow in ../../model-compilation and copy them here — see README.
 MODELS_DIR = APP_DIR / "assets" / "models"
 
-# Default per-task compiled archives. These are the SAME paths config/default.conf
-# sets, so the app behaves identically with or without a config file.
-#
-# NOTE on `pose`: that archive must be compiled with the keypoint head zero-padded
-# 51 -> 64 channels (`pad_channels_to: 64` in
-# ../../model-compilation/compile/_surgery_ultralytics.py). The padding is a
-# load-bearing PERFORMANCE fix, not cosmetics: with the natural 51 channels the same
-# model runs at 1782 ms/frame (0.6 fps), and at 8.5 ms/frame (117 fps) with 64 — a
-# 209x speedup for identical weights. Unpadded, pose holds the shared MLA so long
-# that the other three streams back up and fail their model push, and the quad
-# cannot run at all.
-#
-# The padding is also compatible with Neat's on-device pose decode: YoloV26Pose
-# requires the keypoint head's SLICE depth to be 51 but allows its INPUT depth to be
-# larger (see infer_*/keypoint_depth checks in core BoxDecodeStageSemantics.cpp), so
-# the 51-of-64 padded head is accepted as-is and Neat ignores the 13 pad channels.
+# Default per-task compiled archives (same paths config/default.conf sets).
+# POSE must be compiled with the keypoint head zero-padded 51 -> 64 channels: unpadded it runs
+# at 1782 ms/frame vs 8.5 ms (209x), holds the shared MLA, and the quad cannot run at all.
 DEFAULT_ARCHIVES = {
     # From the SiMa model zoo — see README "Model Download Command".
     "detection":    str(MODELS_DIR / "yolo_11s_mpk.tar.gz"),
@@ -95,22 +82,9 @@ DECODE_FAMILY = {
 # Pose is single-class ("person"); the rest are COCO-80.
 NUM_CLASSES = {"detection": 80, "segmentation": 80, "yolox": 80, "pose": 1}
 
-# Input normalization, per MODEL FAMILY — not a detail you can share across all four.
-#
-# COCO_YOLO feeds the model x/255 (values in [0,1]). Every Ultralytics model wants that.
-# Megvii YOLOX does NOT: it is trained on RAW 0-255 pixels, so it needs normalization
-# turned off. Feed YOLOX the COCO_YOLO preset and it sees an image 255x too dark; its
-# objectness logits pin negative and it detects NOTHING — at full speed, with healthy
-# FPS and no error anywhere. Measured on COCO val 000000000139:
-#
-#            preset          obj logit max      boxes @0.25
-#            COCO_YOLO           -3.47                0
-#            None                +1.36                8   <- correct
-#   (CPU reference, raw 0-255)   +5.90
-#
-# This pairs with the archive: yolox_s is compiled with std=1/255 (models.yaml) so its
-# input quantization expects 0-255 (q_scale ~ 1.0, vs ~255 for the /255 models). BOTH
-# halves are required — the compile-time scale and the runtime preset must agree.
+# Input normalization, per MODEL FAMILY. Ultralytics wants COCO_YOLO (x/255); Megvii YOLOX is
+# trained on RAW 0-255 and needs it OFF -- with COCO_YOLO it detects NOTHING, at full speed,
+# with no error. Pairs with the archive: yolox_s is compiled at std=1/255. Both halves required.
 NORMALIZE_PRESET = {
     "detection":    "COCO_YOLO",
     "segmentation": "COCO_YOLO",
@@ -141,9 +115,9 @@ class Config:
     udp_port_stride: int = 2
     model_width: int = 640
     model_height: int = 640
-    fallback_width: int = 1280
-    fallback_height: int = 720
-    fallback_fps: int = 30
+    width: int = 1280
+    height: int = 720
+    fps: int = 30
     latency_ms: int = 200
     score_threshold: float = 0.25
     nms_iou: float = 0.50
@@ -151,12 +125,8 @@ class Config:
     bitrate_kbps: int = 4000
     tcp: bool = True
     queue_depth: int = 3
-    # --- decoder admission (Neat 0.3.0), mirroring main.cpp ---
-    # These feed the decoder-admission LEASE, not plain GStreamer element properties.
-    # They only take effect because every stream's decoder now lives in ONE graph/Run:
-    # Neat requests an admission plan only when a single graph holds more than one
-    # H.264 decoder. Four separate source Runs -- the old layout -- never asked, and
-    # un-admitted decoders collectively saturate around 43 fps each.
+    # --- decoder admission --- LEASE fields, not GStreamer properties. They only apply because
+    # every stream's decoder lives in ONE graph/Run; Neat skips admission for a single decoder.
     decoder_buffers: int = 16        # per-stream decoder OUTPUT pool
     decoder_input_buffers: int = 2   # per-stream compressed-INPUT pool
     decoder_tuning: str = "auto"     # auto | default | low-memory | throughput-low-latency
@@ -188,19 +158,12 @@ class Config:
     # run suggests. Keep this generous: a too-short timeout reports a scheduling
     # delay as a model failure.
     pull_timeout_ms: int = 20000
-    # Execution target for the model's pre (tessellate/quantize) and post
-    # (detessellate/dequantize) CVU stages: AUTO | EV74 | A65.
-    # AUTO lets Neat's planner choose. The planner does not always pick the
-    # accelerator: see README — with AUTO, yolo26s-pose's post stage lands on the
-    # A65 and costs ~1.8 s/frame, while forcing EV74 makes it ~10 ms.
+    # Execution target for the model's pre/post CVU stages. Pin to EV74: AUTO does not reliably
+    # pick the accelerator.
     cvu_pre_target: str = "AUTO"
     cvu_post_target: str = "AUTO"
-    # Measure for a fixed wall-clock window instead of a per-stream frame count.
-    # This is the correct design for a SHARED-resource throughput test: with a
-    # frame cap, a fast stream keeps running (and keeps consuming the one MLA)
-    # until the slowest stream also reaches the cap, which starves the slow
-    # streams and reports rates that no steady state ever produced.
-    # 0 = use --frames instead.
+    # Measure over a fixed wall-clock window, not a per-stream frame count, so slow and fast
+    # streams are compared over the same interval.
     duration_s: float = 0.0
     # per-slot overrides parsed from config; None => default
     _tasks: dict = field(default_factory=dict)
@@ -257,8 +220,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         "rtsp_default": ("rtsp_default", str), "udp_host": ("udp_host", str),
         "udp_port_base": ("udp_port_base", int), "udp_port_stride": ("udp_port_stride", int),
         "model_width": ("model_width", int), "model_height": ("model_height", int),
-        "fallback_width": ("fallback_width", int), "fallback_height": ("fallback_height", int),
-        "fallback_fps": ("fallback_fps", int), "latency_ms": ("latency_ms", int),
+        "width": ("width", int), "height": ("height", int),
+        "fps": ("fps", int), "latency_ms": ("latency_ms", int),
         "score_threshold": ("score_threshold", float), "nms_iou": ("nms_iou", float),
         "top_k": ("top_k", int), "bitrate_kbps": ("bitrate_kbps", int),
         "queue_depth": ("queue_depth", int), "frames": ("frames", int),
@@ -287,11 +250,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
     elif key == "no_overlay":
         cfg.no_overlay = parse_bool(value)
     elif key in {"model_queue_depth", "output_queue_depth"}:
-        # C++-ONLY knobs. config/default.conf is shared with main.cpp, which splits
-        # the in-flight bound into model_queue_depth (frames inside the model graph)
-        # and output_queue_depth (frames parked before the output thread). This
-        # implementation uses one `queue_depth` for both, so these are accepted and
-        # ignored rather than raising -- a shared config must not fail one twin.
+        # C++-ONLY knobs: config/default.conf is shared with main.cpp, so accept and ignore them here
+        # rather than failing on an unknown key.
         pass
     else:
         raise ValueError(f"unknown config key: {key}")
@@ -411,35 +371,10 @@ def parse_args(argv) -> Config:
     return cfg
 
 
-# ── time profiling ────────────────────────────────────────────────────────────
-# Each frame is timed stage by stage, so a slow stream can be attributed to a
-# specific stage rather than guessed at. Same stage names as main.cpp, so the two
-# implementations are directly comparable.
-#
-# Stage meanings — note that two of them do NOT measure what their name suggests,
-# because the stages either side of the model are PIPELINED on the device:
-#
-#   decode   pull + copy of one decoded NV12 frame out of the RTSP source graph.
-#            ARRIVAL-GATED: this thread blocks until the next frame exists, so on a
-#            healthy 60 fps stream it reads ~16.7 ms however fast the decoder is.
-#            That is the frame INTERVAL, not the decode cost. The H.264 decode runs
-#            on the hardware decoder and is not visible from the host. It only
-#            climbs above the interval once the decoder has genuinely fallen behind.
-#            (In main.cpp a dedicated source thread absorbs this wait; here it sits
-#            in the critical path, which is part of why Python delivers less.)
-#   prep     NV12 -> pyneat.Tensor for the model input.
-#   infer    THE MODEL: push + pull (EV74 preprocess, MLA, on-device box decode).
-#   postproc host-side read of the already-decoded payload + instance build. Every
-#            model now box-decodes ON DEVICE, so this is just a NumPy reshape. It
-#            used to be a full A65 NumPy decode of the raw heads (~340 ms for seg).
-#   overlay  NV12 Y-plane annotation (boxes, labels, masks, skeletons).
-#   encode   NV12 -> Tensor + push into the H.264/RTP UDP sender graph. This ENQUEUES
-#            to the encoder and returns, so it is encoder HEADROOM, not encode
-#            latency: near zero until the encoder falls behind, and only then does
-#            its backpressure surface here.
-#
-# `infer` is the number to read for "can this model do 60 fps": it is the model
-# stage alone, with no host postproc and no overlay in it.
+# ── time profiling ───────────────────────────────────────────────────────────
+# Stages run on different threads and OVERLAP, so they do not sum to the frame period.
+# Read `delivered fps` as throughput and the columns as cost attribution. `infer` is model-graph
+# LATENCY (it includes queueing behind other in-flight frames), not the model's service time.
 STAGES = ("decode", "prep", "infer", "postproc", "overlay", "encode")
 
 
@@ -451,10 +386,8 @@ class StageProfile:
         self.total: list = []
 
     def add(self, timings: dict, total_ms: float) -> None:
-        # There are two call sites (the serial path and the threaded output thread) and
-        # they build this dict independently. A key that drifts from STAGES would either
-        # KeyError deep inside a worker thread or, worse, silently drop a stage from the
-        # report. Fail loudly and say exactly which key is wrong.
+        # Two call sites (serial path and threaded output thread) share this so the two topologies
+        # cannot drift in what they draw or publish.
         if timings.keys() != self.samples.keys():
             raise KeyError(
                 f"stage timings {sorted(timings)} do not match STAGES {sorted(self.samples)}"
@@ -483,13 +416,9 @@ class StageProfile:
         return len(self.total)
 
 
-# ── live time profile ─────────────────────────────────────────────────────────
-# ONE reporter prints the whole table every `profile_interval` seconds, so the terminal
-# shows stage timings as the run happens rather than only at exit. Every number is the mean
-# over THAT WINDOW (since the previous print), not a cumulative average — a cumulative mean
-# hides a stream that degrades halfway through the run.
-#
-# Same columns and same window semantics as main.cpp, so the two are directly comparable.
+# ── live time profile ────────────────────────────────────────────────────────
+# One reporter thread prints the whole table every profile_interval seconds. Every number is
+# the mean over THAT WINDOW -- a cumulative mean hides a stream that degrades mid-run.
 class LiveCursor:
     """Where the previous window ended, for one stream."""
 
@@ -559,27 +488,12 @@ class StreamContext:
     profile: StageProfile = field(default_factory=StageProfile)
 
 
-# ── graph builders (NV12 shuttle; mirrors multi-stream-yolo-yolo11) ───────────
-# How many decoded frames the source appsink may hold for the source thread.
-#
-# DO NOT use OutputOptions.latest() here. Its meaning CHANGED between Neat 0.2.2 and
-# 0.3.0 and the change is silent -- no app edit, no warning:
-#   0.2.2:  latest() returned the struct defaults -> max_buffers=4, drop=False
-#   0.3.0:  latest() -> max_buffers=1, drop=True
-# every_frame(4) is byte-for-byte what 0.2.2's latest() produced. This app already
-# sheds load at its own drop-oldest queues, which is where a live pipeline should drop.
+# ── graph builders (NV12 shuttle; mirrors multi-stream-yolo-yolo11) ──────────
+# Three graphs per stream: source (RTSP -> NV12), model (NV12 -> on-device BoxDecode), video.
 SOURCE_OUTPUT_BUFFERS = 4
 
 
-# Short, NOT multi-second.
-#
-# Every stream's source thread now pulls from the SAME Run (one combined source graph
-# is what earns the decoder-admission lease). A long blocking named pull on a shared
-# Run starves the other endpoints: with a 5000 ms timeout the four streams collapsed to
-# ~1.6 fps aggregate and then to 0. A short timeout lets each thread take its turn.
-#
-# With a short timeout an empty return is NORMAL (that endpoint simply had nothing
-# ready), not an error -- so callers must not warn on every miss.
+# Short, NOT multi-second: a long blocking pull on one endpoint starves the other streams.
 SOURCE_PULL_TIMEOUT_MS = 20
 # Consecutive empty pulls that add up to ~5 s before we call it a real stall.
 SOURCE_STALL_MISSES = max(1, 5000 // SOURCE_PULL_TIMEOUT_MS)
@@ -626,12 +540,12 @@ def make_rtsp_encoded_graph(cfg: Config, spec: StreamSpec):
     # parser instead of probing each stream at startup.
     enc.auto_caps_from_stream = not cfg.skip_rtsp_probe
     if cfg.skip_rtsp_probe:
-        enc.h264_width = cfg.fallback_width
-        enc.h264_height = cfg.fallback_height
-        enc.h264_fps = cfg.fallback_fps
-    enc.fallback_h264_width = cfg.fallback_width
-    enc.fallback_h264_height = cfg.fallback_height
-    enc.fallback_h264_fps = cfg.fallback_fps
+        enc.h264_width = cfg.width
+        enc.h264_height = cfg.height
+        enc.h264_fps = cfg.fps
+    enc.fallback_h264_width = cfg.width
+    enc.fallback_h264_height = cfg.height
+    enc.fallback_h264_fps = cfg.fps
     return pyneat.groups.rtsp_encoded_input(enc)
 
 
@@ -643,9 +557,9 @@ def make_decoder_graph(cfg: Config, spec: StreamSpec):
     dec.sima_allocator_type = 2
     dec.out_format = pyneat.Format.NV12
     dec.raw_output = True
-    dec.dec_width = cfg.fallback_width
-    dec.dec_height = cfg.fallback_height
-    dec.dec_fps = cfg.fallback_fps
+    dec.dec_width = cfg.width
+    dec.dec_height = cfg.height
+    dec.dec_fps = cfg.fps
     # Admission-lease inputs. Setting the equivalent GStreamer property on a lone
     # un-admitted decoder does nothing useful; the lease is what matters.
     dec.num_buffers = cfg.decoder_buffers
@@ -653,18 +567,10 @@ def make_decoder_graph(cfg: Config, spec: StreamSpec):
     dec.decoder_tuning = cfg.decoder_tuning
     g.add(pyneat.nodes.sima_decode(dec))
 
-    g.add(pyneat.nodes.caps_raw("NV12", cfg.fallback_width, cfg.fallback_height,
-                                cfg.fallback_fps, pyneat.CapsMemory.Any))
-    # 4 slots, not 1: with a single slot the decoder has nowhere to put frame N+1 until
-    # the source thread has taken frame N, so every scheduling gap costs a frame.
-    #
-    # BISECT: drop=True. every_frame() leaves drop=False, i.e. a NON-dropping appsink
-    # that back-pressures the hardware decoder when the consumer falls behind. main.cpp
-    # can afford that because it drains at 61 fps/stream and sheds at its own mailbox
-    # (it dropped 238-418 frames/stream in a healthy 60 s run). This Python drains far
-    # slower -- three ~1.4 MB copies per frame, much of it under the GIL -- so the sink
-    # fills, the admitted decoder stalls, and every stream goes to 0 permanently.
-    # Dropping here lets the decoder keep running and the app simply miss frames.
+    g.add(pyneat.nodes.caps_raw("NV12", cfg.width, cfg.height,
+                                cfg.fps, pyneat.CapsMemory.Any))
+    # 4 slots, not 1: one slot means the decoder waits on the source thread every gap.
+    # drop=True: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
     src_out = pyneat.OutputOptions.every_frame(SOURCE_OUTPUT_BUFFERS)
     src_out.drop = True
     g.add(pyneat.nodes.output(source_endpoint(spec.stream_id), src_out))
@@ -703,16 +609,9 @@ def make_nv12_input_options(w: int, h: int, fps: int):
     o.width = w; o.height = h; o.depth = 1
     o.max_width = w; o.max_height = h; o.max_depth = 1
     o.fps_n = max(1, fps); o.fps_d = 1
-    # NO caps_override and NO use_simaai_pool -- main.cpp sets neither, and both break
-    # this app on Neat 0.3.0:
-    #   caps_override omitted `depth`, and it WINS over the fields above, so the appsrc
-    #     published caps with no depth and the CVU had nothing to size the ingress from.
-    #   use_simaai_pool=False maps to InputMemoryPolicy.SystemMemory in 0.3.0, which
-    #     makes neatprocesscvu reject the staged buffer:
-    #     "Staged input 'input_image' raw GstMemory span overflow from 'sink_pad_0'"
-    # Leaving both unset lets Neat build caps carrying depth=1 and pick a SiMa-visible
-    # target; the CPU->EV74 copy is already permitted by
-    # SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY (set in main).
+    # NO caps_override and NO memory_policy -- both break this app: caps_override omits `depth`
+    # and wins over the fields above, and SystemMemory makes neatprocesscvu reject the staged
+    # buffer. Leaving them unset lets Neat build depth-carrying caps and pick a SiMa-visible target.
     return o
 
 
@@ -720,18 +619,8 @@ def make_model(cfg: Config, spec: StreamSpec):
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    # The input_max_* envelope is NOT set, matching main.cpp. Neat 0.3.0 enforces the
-    # bound only when it is set explicitly, so setting it can only go wrong: 1 aborts
-    # ("color_input_requires_input_shape_channels_3", because color_convert publishes
-    # RGB) and 3 mis-sizes the ingress. Let the runtime infer it from the caps.
-    # opt.preprocess.input_max_width = cfg.fallback_width
-    # opt.preprocess.input_max_height = cfg.fallback_height
-    # 3, not 1. This is the ingress CAPACITY bound (max channels the preproc stage will
-    # accept), not a statement about the NV12 transport layout. Neat 0.3.0 started
-    # enforcing it -- Preproc throws "input depth 3 exceeds max_input_depth 1" -- because
-    # color_convert publishes RGB (3 channels) toward normalize/quant/tess. 0.2.2 accepted
-    # the 1 silently. Enforcement only triggers when the bound is set EXPLICITLY, which is
-    # why main.cpp (where these three lines are commented out) runs unmodified on 0.3.0.
+    # The input_max_* envelope is NOT set, matching main.cpp: Neat derives it from the archive,
+    # and hand-setting it produced contradictory capacity bounds.
     opt.preprocess.input_max_depth = 3
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
@@ -771,12 +660,8 @@ def build_model_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):
     g = pyneat.Graph(f"model_{spec.task}_{spec.stream_id}")
     g.add(pyneat.nodes.input(make_nv12_input_options(w, h, fps)))
     g.add(make_model(cfg, spec))
-    # One endpoint for all four tasks: the model graph ends in an on-device BoxDecode
-    # stage, so what comes out is always a decoded BBOX payload, never raw heads.
-    # EveryFrame(max_buffers) = how many FINISHED results the sink may park for the
-    # puller. MUST be >= queue_depth or the two settings contradict: the Run is told to
-    # keep queue_depth frames in flight, and a 1-slot sink backs the graph up until
-    # push() times out. main.cpp uses max(1, model_queue_depth) for the same reason.
+    # One endpoint for all four tasks: every model graph ends in an on-device BoxDecode stage.
+    # max_buffers must be >= model_queue_depth or results back up and throttle the pipelining.
     out_buffers = max(1, cfg.queue_depth)
     g.add(pyneat.nodes.output(MODEL_ENDPOINT, pyneat.OutputOptions.every_frame(out_buffers)))
     return g, MODEL_ENDPOINT
@@ -838,11 +723,8 @@ def extract_tensors(sample) -> list:
     return out
 
 
-# ── annotation on the NV12 Y plane ────────────────────────────────────────────
-# COCO_SKELETON as two index arrays, built once. Indexing a NumPy array with a Python
-# int returns a boxed np.bool_/np.float32 scalar, so the old `vis[a] and vis[b]` test
-# inside a 19-iteration loop per detection cost ~250 boxed scalar reads per frame.
-# With these, the whole edge selection is three vectorised ops.
+# ── annotation on the NV12 Y plane ───────────────────────────────────────────
+# Draw straight onto the NV12 planes: no BGR round-trip, which would cost a full convert twice.
 _SKEL_A = None
 _SKEL_B = None
 
@@ -930,12 +812,8 @@ def annotate(nv12, w, h, result, task, banner) -> int:
                 m = cv2.resize(d.mask, (bw, bh), interpolation=cv2.INTER_NEAREST)
                 region = y[y1:y2, x1:x2]
                 if region.shape[:2] == m.shape:
-                    # cv2.add(mask=) instead of `region[m] = clip(region[m] + 60)`.
-                    # Two wins, and the second is the big one:
-                    #   1. 27.8 -> 5.2 ms per frame (13 objects) — no fancy-index copies.
-                    #   2. cv2 RELEASES THE GIL; NumPy fancy indexing does not. With four
-                    #      overlay threads (one per stream) the NumPy path serialised all
-                    #      four, so its cost showed up multiplied in wall-clock.
+                    # cv2.add(mask=) instead of `region[m] = clip(region[m] + 60)`: the batched form measured 3.5x
+                    # cheaper than per-object fancy-index writes under the GIL.
                     cv2.add(region, 60, dst=region, mask=m)
         if d.keypoints is not None:
             kp = d.keypoints
@@ -1160,29 +1038,25 @@ def print_profile(contexts: list, wall_s: float, mode: str, no_overlay: bool) ->
 
 # ── probing + main loop ───────────────────────────────────────────────────────
 def probe_rtsp(cfg, url):
-    cap = cv2.VideoCapture(url)
-    if cap.isOpened():
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
-        cap.release()
-        if w > 0 and h > 0:
-            return w, h, fps if fps > 0 else cfg.fallback_fps
-    return cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps
+    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init and OpenCV's
+    # capture backend calls gst_init() itself, so probing tripped the guard and the app died with
+    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
+    # probe FAILED to open the URL -- the case the probe exists for -- so a working URL hid it.
+    return cfg.width, cfg.height, cfg.fps
 
 
-def build_run_options(cfg):
+def build_run_options(cfg, *, model: bool = False):
     ro = pyneat.RunOptions()
     ro.preset = pyneat.RunPreset.Realtime
     ro.queue_depth = cfg.queue_depth
-    ro.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-    # ZeroCopy. OutputMemory.Owned was tried (on the theory that queueing a ZeroCopy
-    # Sample to the output thread was a use-after-free behind the intermittent
-    # teardown abort) and REJECTED on evidence: it did not stop the abort (a run
-    # still segfaulted mid-run under Owned), and it deep-copies every output sample.
-    # That copy is expensive for the raw-head models, whose outputs are large:
-    # segmentation fell 87 -> 22 model fps and yolox 90 -> 62. Keep ZeroCopy.
-    # See README "Known limitations" for the still-open abort.
+    # SOURCE: KeepLatest -- a live camera must be drained and stale frames dropped.
+    # MODEL: Block, matching main.cpp. KeepLatest silently drops a queued frame while push()
+    # still returns True, so `pending` gains an entry that never gets a result and the
+    # frame/result pairing is off by one from then on. Block keeps push/pull FIFO-paired.
+    ro.overflow_policy = (pyneat.OverflowPolicy.Block if model
+                          else pyneat.OverflowPolicy.KeepLatest)
+    # ZeroCopy. Owned was tried on the theory that queueing a ZeroCopy Sample starves the sink,
+    # and measured no better here, so the cheaper path stays.
     ro.output_memory = pyneat.OutputMemory.ZeroCopy
     return ro
 
@@ -1199,7 +1073,7 @@ def run(cfg: Config) -> int:
     for s in specs:
         w, h, fps = probe_rtsp(cfg, s.rtsp_url)
         model_graph, _ = build_model_graph(cfg, s, w, h, fps)
-        model_run = model_graph.build(build_run_options(cfg))
+        model_run = model_graph.build(build_run_options(cfg, model=True))
         _, video_run, port = build_video_graph(cfg, s, w, h, fps)
         contexts.append(StreamContext(
             spec=s, source_run=None, source_endpoint=source_endpoint(s.stream_id),
@@ -1211,11 +1085,8 @@ def run(cfg: Config) -> int:
               f'caps="application/x-rtp,media=video,encoding-name=H264,payload=96" '
               f"! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false")
 
-    # Start the RTSP sources LAST, after every model is loaded and immediately before
-    # the threads that drain them. Graph.build() STARTS the pipeline: building sources
-    # inside the loop above meant stream 0's camera streamed while streams 1-3 were
-    # still loading their MLA archives (seconds each), nobody pulling, and its edge
-    # queue filled -- dead on arrival. main.cpp carries the same rule.
+    # Start the RTSP sources LAST, after every model is loaded and just before the drain threads:
+    # build() starts the pipeline, and an unpulled source fills its edge queue and dies.
     source_graph = make_combined_source_graph(cfg, specs)
     if cfg.print_backend:
         print(f"--- combined source graph ({len(specs)} decoders)\n"
@@ -1273,17 +1144,9 @@ def run_serial(cfg, contexts: list, warmup: int) -> int:
     return total
 
 
-# ── pipelined (threaded) engine ───────────────────────────────────────────────
-# Unlike multi-stream-yolo-yolo11, every stream here owns its OWN model graph, so
-# there is no shared model stage to serialize on and each stream gets its own
-# model thread. The four model threads still contend for the single MLA — that
-# contention is real and shows up inside `infer` — but their host work (RTSP copy,
-# host head decode, NV12 annotation, encoder push) now overlaps instead of running
-# lock-step behind one another.
-#
-#   source thread (one per stream)  RTSP pull -> NV12 -> Tensor  -> ctx.model_q
-#   model thread  (one per stream)  push/pull that stream's Run -> ctx.out_q
-#   output thread (one per stream)  task decode -> annotate -> UDP encoder push
+# ── pipelined (threaded) engine ──────────────────────────────────────────────
+# Per stream: source -> pusher (bounded by model_queue_depth) -> puller -> output.
+# Splitting push from pull is what lets the graph hold several frames in flight.
 
 
 def _drop_oldest_put(q, item) -> int:
@@ -1383,12 +1246,12 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                     pending.append((nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark))
 
                 if pending and (len(pending) >= cfg.pipeline_depth or item is None):
-                    nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark = pending.pop(0)
-                    # Four model graphs share one MLA. Under contention a pull can
-                    # block far longer than a solo run would suggest, and pyneat
-                    # RAISES on pull timeout rather than returning None. Treat that
-                    # as a dropped frame for this stream, not as a fatal error for
-                    # the whole pipeline.
+                    # PULL FIRST, POP ONLY ON SUCCESS. Four model graphs share one MLA, so a pull
+                    # can exceed the timeout with nothing wrong -- but the frame was already
+                    # pushed, so the graph still owes its result. Popping before the pull throws
+                    # that frame away while its result is still queued, and every later result is
+                    # then paired with the WRONG frame, silently and permanently. main.cpp pulls
+                    # then pop_front()s for exactly this reason.
                     try:
                         sample = ctx.model_run.pull(endpoint, cfg.pull_timeout_ms)
                     except Exception as exc:
@@ -1403,6 +1266,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                             return
                         ctx.pull_timeouts += 1
                         continue
+                    nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark = pending.pop(0)
                     infer_ms = (time.perf_counter() - push_mark) * 1000.0
                     ctx.dropped += _drop_oldest_put(
                         ctx.out_q, (nv12, sample, fw, fh, decode_ms, prep_ms, infer_ms, t_in))

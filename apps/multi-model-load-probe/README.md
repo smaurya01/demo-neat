@@ -77,8 +77,8 @@ Expected model files:
 Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
-rtsp_url=rtsp://<rtsp-server-ip>:8555/stream
-udp_host=<host-ip-that-receives-video>
+rtsp_url=<rtsp-url>
+udp_host=<host-ip>
 udp_port_base=5201
 models_dir=./assets/models
 ```
@@ -154,6 +154,32 @@ dk ./build/multi_model_load_probe \
 
 ## How To See The Output
 
+### Neat Insight (recommended)
+
+**Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
+and it works from any device that can reach the host.
+
+1. Open **`https://192.168.131.12:9900`** in a browser.
+   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
+   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+2. Go to the **Video Viewer** tab.
+3. This app publishes **4 streams**, so open one viewer channel per stream.
+   `udp_port_base` sets the first port and each later stream takes the next one:
+
+   | channel | port | stream |
+   |---|---|---|
+   | 0 | `9000` | yolov8n |
+   | 1 | `9001` | yolov8n-seg |
+   | 2 | `9002` | yolo26n |
+   | 3 | `9003` | open-pose |
+
+Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
+where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
+9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
+(`exposedPorts[*].hostPortStart`) rather than assuming.
+
+### gst-launch (alternative, no Insight needed)
+
 Install host viewer tools if needed:
 
 ```bash
@@ -161,33 +187,17 @@ sudo apt-get update
 sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
 
-Run one receiver per output on the host machine receiving UDP. If `udp_port_base=5201`, all four
-receivers are:
+Run this on the machine at `udp_host` — one receiver per stream:
 
 ```bash
-gst-launch-1.0 -v udpsrc port=5201 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9001 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9002 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9003 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
 ```
 
-```bash
-gst-launch-1.0 -v udpsrc port=5202 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-```bash
-gst-launch-1.0 -v udpsrc port=5203 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-```bash
-gst-launch-1.0 -v udpsrc port=5204 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-Expected mapping:
-
-```text
-5201 yolov8n
-5202 yolov8n-seg
-5203 yolo26n
-5204 open_pose
-```
+> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
+> over SSH.
 
 <details>
 <summary><h2>Notes</h2></summary>

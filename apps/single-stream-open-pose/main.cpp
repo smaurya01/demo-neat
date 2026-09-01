@@ -3,6 +3,7 @@
 #include <neat.h>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -27,9 +28,9 @@ struct Config {
   std::string model_path;
   std::string udp_host;
   int udp_port_base = 5204;
-  int fallback_width = 1280;
-  int fallback_height = 720;
-  int fallback_fps = 25;
+  int width = 1280;
+  int height = 720;
+  int fps = 25;
   int latency_ms = 200;
   int frames = 0;
   int bitrate_kbps = 4000;
@@ -92,8 +93,17 @@ std::string trim(std::string value) {
   return value.substr(begin, end - begin + 1);
 }
 
-int to_int(const std::string& value) {
-  return std::stoi(value);
+int to_int(const std::string& key, const std::string& value) {
+  try {
+    std::size_t used = 0;
+    const int parsed = std::stoi(value, &used);
+    if (used != value.size()) {
+      throw std::invalid_argument("trailing characters");
+    }
+    return parsed;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("config key '" + key + "': invalid integer '" + value + "'");
+  }
 }
 
 bool to_bool(const std::string& value) {
@@ -110,19 +120,19 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   } else if (key == "udp_host") {
     cfg.udp_host = value;
   } else if (key == "udp_port_base") {
-    cfg.udp_port_base = to_int(value);
-  } else if (key == "fallback_width") {
-    cfg.fallback_width = to_int(value);
-  } else if (key == "fallback_height") {
-    cfg.fallback_height = to_int(value);
-  } else if (key == "fallback_fps") {
-    cfg.fallback_fps = to_int(value);
+    cfg.udp_port_base = to_int(key, value);
+  } else if (key == "width") {
+    cfg.width = to_int(key, value);
+  } else if (key == "height") {
+    cfg.height = to_int(key, value);
+  } else if (key == "fps") {
+    cfg.fps = to_int(key, value);
   } else if (key == "latency_ms") {
-    cfg.latency_ms = to_int(value);
+    cfg.latency_ms = to_int(key, value);
   } else if (key == "frames") {
-    cfg.frames = to_int(value);
+    cfg.frames = to_int(key, value);
   } else if (key == "bitrate_kbps") {
-    cfg.bitrate_kbps = to_int(value);
+    cfg.bitrate_kbps = to_int(key, value);
   } else if (key == "print_backend") {
     cfg.print_backend = to_bool(value);
   } else {
@@ -138,17 +148,34 @@ Config read_config() {
   }
 
   std::string line;
+  int line_no = 0;
   while (std::getline(file, line)) {
-    const auto comment = line.find('#');
-    if (comment != std::string::npos) {
-      line.erase(comment);
+    ++line_no;
+    // Strip a comment only when '#' starts the line or follows whitespace; stripping it
+    // unconditionally truncated any value legitimately containing '#' (e.g. an RTSP password).
+    for (std::size_t i = 0; i < line.size(); ++i) {
+      if (line[i] == '#' && (i == 0 || std::isspace(static_cast<unsigned char>(line[i - 1])))) {
+        line.erase(i);
+        break;
+      }
     }
     line = trim(line);
     if (line.empty()) {
       continue;
     }
     const auto equal = line.find('=');
-    set_config_value(cfg, trim(line.substr(0, equal)), trim(line.substr(equal + 1)));
+    // A line with no '=' used to make both halves the whole line, so `udp_host` silently became
+    // udp_host="udp_host" and the app streamed nowhere with no diagnostic.
+    if (equal == std::string::npos) {
+      throw std::runtime_error(std::string(kConfigPath) + ":" + std::to_string(line_no) +
+                               ": expected key=value, got '" + line + "'");
+    }
+    const std::string key = trim(line.substr(0, equal));
+    if (key.empty()) {
+      throw std::runtime_error(std::string(kConfigPath) + ":" + std::to_string(line_no) +
+                               ": empty config key");
+    }
+    set_config_value(cfg, key, trim(line.substr(equal + 1)));
   }
   return cfg;
 }
@@ -157,8 +184,8 @@ std::unique_ptr<neat::Model> make_open_pose_model(const Config& cfg) {
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  opt.preprocess.input_max_width = cfg.fallback_width;
-  opt.preprocess.input_max_height = cfg.fallback_height;
+  opt.preprocess.input_max_width = cfg.width;
+  opt.preprocess.input_max_height = cfg.height;
   // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
   // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
   opt.preprocess.input_max_depth = 3;
@@ -168,9 +195,21 @@ std::unique_ptr<neat::Model> make_open_pose_model(const Config& cfg) {
   opt.preprocess.resize.width = 480;
   opt.preprocess.resize.height = 480;
   opt.preprocess.resize.mode = neat::ResizeMode::Letterbox;
+  // 128, not the YOLO default 114: 128 is exactly 0.0 after the normalization below, so the
+  // letterbox bars are neutral to the model instead of a weak signal.
+  opt.preprocess.resize.pad_value = 128;
   opt.preprocess.preset = neat::NormalizePreset::None;
   opt.preprocess.normalize.enable = neat::AutoFlag::On;
-  opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
+  // The archive declares input_range [-0.5, 0.49609375], i.e. it wants roughly pixel/256 - 0.5.
+  // NEAT computes (pixel/255 - mean) / stddev, so mean=0/stddev=1 feeds it [0,1] instead: every
+  // pixel >= 127 saturates to int8 127 and the negative half of the domain goes unused. That is
+  // what made the pose output unusable.
+  // The exact stats would be stddev = 1/(hi-lo) = 1.003922, but NEAT caps stddev at 1.0
+  // (InputPlanner.cpp) and rejects anything above it with `channel_stddev_invalid_idx_0` -- which
+  // is also why NEAT cannot auto-derive them from input_range here. mean=0.5/stddev=1.0 is the
+  // closest expressible fit: it maps [0,255] onto [-0.5, +0.5], so only pure white overshoots
+  // the model's top end, by 0.4%.
+  opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
   opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
   opt.preprocess.normalize.has_explicit_stats = true;
   return std::make_unique<neat::Model>(cfg.model_path, opt);
@@ -180,18 +219,20 @@ neat::InputOptions nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
   opt.payload_type = neat::PayloadType::Image;
   opt.format = neat::FormatTag::NV12;
-  opt.width = cfg.fallback_width;
-  opt.height = cfg.fallback_height;
+  opt.width = cfg.width;
+  opt.height = cfg.height;
   opt.depth = 1;
-  opt.max_width = cfg.fallback_width;
-  opt.max_height = cfg.fallback_height;
+  opt.max_width = cfg.width;
+  opt.max_height = cfg.height;
   opt.max_depth = 1;
-  opt.fps_n = cfg.fallback_fps;
+  opt.fps_n = cfg.fps;
   opt.fps_d = 1;
-  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.fallback_width) +
-                      ",height=" + std::to_string(cfg.fallback_height) + ",framerate=" +
-                      std::to_string(cfg.fallback_fps) + "/1";
-  opt.use_simaai_pool = false;
+  opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.width) +
+                      ",height=" + std::to_string(cfg.height) + ",framerate=" +
+                      std::to_string(cfg.fps) + "/1";
+  // Was `use_simaai_pool = false`, deprecated in NEAT 0.4.0. Input.h documents the exact
+  // mapping: false -> InputMemoryPolicy::SystemMemory. Behaviour-identical.
+  opt.memory_policy = neat::InputMemoryPolicy::SystemMemory;
   return opt;
 }
 
@@ -206,14 +247,14 @@ groups::RtspDecodedInputOptions rtsp_options(const Config& cfg) {
   opt.decoder_name = "decoder";
   opt.decoder_raw_output = true;
   opt.auto_caps_from_stream = true;
-  opt.fallback_h264_width = cfg.fallback_width;
-  opt.fallback_h264_height = cfg.fallback_height;
-  opt.fallback_h264_fps = cfg.fallback_fps;
+  opt.fallback_h264_width = cfg.width;
+  opt.fallback_h264_height = cfg.height;
+  opt.fallback_h264_fps = cfg.fps;
   opt.output_caps.enable = true;
   opt.output_caps.format = neat::FormatTag::NV12;
-  opt.output_caps.width = cfg.fallback_width;
-  opt.output_caps.height = cfg.fallback_height;
-  opt.output_caps.fps = cfg.fallback_fps;
+  opt.output_caps.width = cfg.width;
+  opt.output_caps.height = cfg.height;
+  opt.output_caps.fps = cfg.fps;
   opt.output_caps.memory = neat::CapsMemory::Any;
   return opt;
 }
@@ -221,12 +262,11 @@ groups::RtspDecodedInputOptions rtsp_options(const Config& cfg) {
 neat::Graph make_source_graph(const Config& cfg) {
   neat::Graph graph("single_stream_open_pose_source");
   graph.add(groups::RtspDecodedInput(rtsp_options(cfg)));
-  // EveryFrame(4), not Latest(). OutputOptions::Latest() CHANGED MEANING in Neat 0.3.0:
-// 0.2.2 returned the struct defaults (max_buffers=4, drop=false); 0.3.0 makes it do what the
-// name says (max_buffers=1, drop=true). The decoder then gets a single slot and every frame
-// arriving while this thread is between pulls is discarded inside GStreamer.
-// Measured on single-stream-yolo-yolo11 vs a 59.94 fps source: Latest() 55.1 fps, EveryFrame(4) 60.8 fps.
-  graph.add(neat::nodes::Output("frame", neat::OutputOptions::EveryFrame(4)));
+  // EveryFrame(4), not Latest(): Latest() means max_buffers=1 since 0.3.0 (55.1 vs 60.8 fps).
+  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+  auto frame_out = neat::OutputOptions::EveryFrame(4);
+  frame_out.drop = true;
+  graph.add(neat::nodes::Output("frame", frame_out));
   return graph;
 }
 
@@ -240,7 +280,7 @@ neat::Graph make_model_graph(const Config& cfg, const neat::Model& model) {
 
 neat::Graph make_udp_graph(const Config& cfg) {
   auto opt = groups::VideoSenderOptions::H264RtpUdpFromRaw(
-      cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps);
+      cfg.width, cfg.height, cfg.fps);
   opt.host = cfg.udp_host;
   opt.channel = 0;
   opt.video_port_base = cfg.udp_port_base;
@@ -306,7 +346,7 @@ int main() {
 
     auto udp_options = realtime_options();
     udp_options.output_memory = neat::OutputMemory::Owned;
-    auto udp_seed = make_blank_nv12_tensor(cfg.fallback_width, cfg.fallback_height);
+    auto udp_seed = make_blank_nv12_tensor(cfg.width, cfg.height);
     auto udp_run = udp_graph.build(neat::TensorList{udp_seed}, udp_options);
 
     std::cout << "RTSP input: " << cfg.rtsp_url << "\n";
@@ -336,7 +376,7 @@ int main() {
         throw std::runtime_error("failed to pull frame: " + frame_error.message);
       }
 
-      const auto frame_tensors = neat::tensors_from_sample(frame_sample, true);
+      const auto frame_tensors = neat::tensors_from_sample(frame_sample, false);
       if (frame_tensors.empty()) {
         std::cerr << "[warn] frame sample has no tensors\n";
         continue;
@@ -352,7 +392,18 @@ int main() {
       neat::PullError model_error;
       status = model_run.pull("result", 20000, model_sample, &model_error);
       if (status == neat::PullStatus::Timeout) {
-        std::cerr << "[warn] timed out waiting for OpenPose\n";
+        // A timeout does NOT cancel the in-flight inference: this frame's result is still
+        // queued. Pushing the next frame would leave two frames in flight against one pull, and
+        // every later result would be paired with the WRONG frame -- silently, permanently.
+        // Drain the sink (0 ms = non-blocking) to resynchronise before continuing.
+        neat::Sample stale;
+        neat::PullError drain_error;
+        int drained = 0;
+        while (model_run.pull("result", 0, stale, &drain_error) == neat::PullStatus::Ok) {
+          ++drained;
+        }
+        std::cerr << "[warn] timed out waiting for OpenPose; drained " << drained
+                  << " stale result(s)\n";
         continue;
       }
       if (status == neat::PullStatus::Closed) {

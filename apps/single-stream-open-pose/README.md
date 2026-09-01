@@ -64,9 +64,9 @@ same `/workspace` path used by `dk`.
 Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
-rtsp_url=rtsp://<rtsp-server-ip>:8555/stream
+rtsp_url=<rtsp-url>
 model_path=./assets/models/open_pose_mpk.tar.gz
-udp_host=<host-ip-that-receives-video>
+udp_host=<host-ip>
 udp_port_base=5204
 ```
 
@@ -88,11 +88,11 @@ then keep `model_path` pointed at the archive.
 
 `model_path`: OpenPose model archive loaded by the Neat model node.
 
-`fallback_width`: Fallback decoded frame width used when RTSP caps are incomplete.
+`width`: Fallback decoded frame width used when RTSP caps are incomplete.
 
-`fallback_height`: Fallback decoded frame height used when RTSP caps are incomplete.
+`height`: Fallback decoded frame height used when RTSP caps are incomplete.
 
-`fallback_fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
+`fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
 
 `latency_ms`: RTSP receiver latency buffer in milliseconds.
 
@@ -129,6 +129,25 @@ For a bounded smoke test, set `frames=30` in `./config/default.conf`, then run t
 
 ## How To See The Output
 
+### Neat Insight (recommended)
+
+**Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
+and it works from any device that can reach the host.
+
+1. Open **`https://192.168.131.12:9900`** in a browser.
+   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
+   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+2. Go to the **Video Viewer** tab.
+3. Set **Port** to **9000** — the same value as `udp_port_base` in `./config/default.conf`.
+   Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
+
+Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
+where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
+9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
+(`exposedPorts[*].hostPortStart`) rather than assuming.
+
+### gst-launch (alternative, no Insight needed)
+
 Install host viewer tools if needed:
 
 ```bash
@@ -136,14 +155,14 @@ sudo apt-get update
 sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 ```
 
-
-Run this on the host machine receiving UDP. Use the same port configured by `udp_port_base`.
+Run this on the machine at `udp_host`:
 
 ```bash
-gst-launch-1.0 -v udpsrc port=5204 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
+gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
 ```
 
-Expected output: live video with grouped OpenPose skeletons.
+> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
+> over SSH.
 
 <details>
 <summary><h2>TODO</h2></summary>

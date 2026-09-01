@@ -43,20 +43,15 @@ import statistics
 import sys
 import time
 
-# The app sets this too. Without it, pushing a CPU-backed NV12 Tensor into the
-# model's EV74 route is refused outright. With it, Neat performs a "slow
-# compatibility copy" in runner.push(). That copy is the same 1280x720 NV12 for
-# every model, so it is NOT what makes pose special — but it is a real per-push
-# cost for ALL models, and building the Tensor with TensorMemory.EV74 instead
-# would avoid it. Tracked as a separate optimisation lead.
+# Required: without it, pushing a CPU-backed NV12 Tensor into the EV74 route is refused.
+# With it Neat does a slow compatibility copy in push() -- a real per-push cost for ALL
+# models; building the Tensor with TensorMemory.EV74 would avoid it.
 os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
 
 APP_DIR = Path(__file__).resolve().parent.parent
 
-# Read the archive map straight from the app, so the probe can never measure a
-# DIFFERENT model than the pipeline actually deploys. (It did, once: the probe
-# kept its own copy of the map, so it silently benchmarked the OLD pose archive
-# after the app had been pointed at the fixed one.)
+# Read the archive map from the app so the probe can never measure a DIFFERENT model than
+# the pipeline deploys. (It did once, silently benchmarking the old pose archive.)
 sys.path.insert(0, str(APP_DIR))
 from main import DEFAULT_ARCHIVES as ARCHIVES  # noqa: E402
 
@@ -232,7 +227,9 @@ def nv12_input_options(w: int, h: int, fps: int):
     o.fps_n = max(1, fps); o.fps_d = 1
     o.caps_override = (f"video/x-raw,format=NV12,width={w},height={h},"
                        f"framerate={max(1, fps)}/1")
-    o.use_simaai_pool = False
+    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
+    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
+    o.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
     return o
 
 
