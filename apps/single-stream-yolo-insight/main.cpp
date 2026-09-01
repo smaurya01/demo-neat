@@ -50,9 +50,9 @@ struct Config {
   int channel = 0;
   int video_port_base = 9000;
   int metadata_port_base = 9100;
-  int fallback_width = 1280;
-  int fallback_height = 720;
-  int fallback_fps = 60;
+  int width = 1280;
+  int height = 720;
+  int fps = 60;
   int model_width = 640;
   int model_height = 640;
   int latency_ms = 200;
@@ -112,12 +112,12 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
     cfg.video_port_base = to_int(value);
   } else if (key == "metadata_port_base") {
     cfg.metadata_port_base = to_int(value);
-  } else if (key == "fallback_width") {
-    cfg.fallback_width = to_int(value);
-  } else if (key == "fallback_height") {
-    cfg.fallback_height = to_int(value);
-  } else if (key == "fallback_fps") {
-    cfg.fallback_fps = to_int(value);
+  } else if (key == "width") {
+    cfg.width = to_int(value);
+  } else if (key == "height") {
+    cfg.height = to_int(value);
+  } else if (key == "fps") {
+    cfg.fps = to_int(value);
   } else if (key == "model_width") {
     cfg.model_width = to_int(value);
   } else if (key == "model_height") {
@@ -189,8 +189,8 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  opt.preprocess.input_max_width = cfg.fallback_width;
-  opt.preprocess.input_max_height = cfg.fallback_height;
+  opt.preprocess.input_max_width = cfg.width;
+  opt.preprocess.input_max_height = cfg.height;
   // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
   // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
   opt.preprocess.input_max_depth = 3;
@@ -221,14 +221,14 @@ groups::RtspDecodedInputOptions make_rtsp_options(const Config& cfg) {
   opt.decoder_name = "decoder";
   opt.decoder_raw_output = true;
   opt.auto_caps_from_stream = true;
-  opt.fallback_h264_width = cfg.fallback_width;
-  opt.fallback_h264_height = cfg.fallback_height;
-  opt.fallback_h264_fps = cfg.fallback_fps;
+  opt.fallback_h264_width = cfg.width;
+  opt.fallback_h264_height = cfg.height;
+  opt.fallback_h264_fps = cfg.fps;
   opt.output_caps.enable = true;
   opt.output_caps.format = neat::FormatTag::NV12;
-  opt.output_caps.width = cfg.fallback_width;
-  opt.output_caps.height = cfg.fallback_height;
-  opt.output_caps.fps = cfg.fallback_fps;
+  opt.output_caps.width = cfg.width;
+  opt.output_caps.height = cfg.height;
+  opt.output_caps.fps = cfg.fps;
   opt.output_caps.memory = neat::CapsMemory::Any;
   return opt;
 }
@@ -241,7 +241,7 @@ neat::Graph make_pipeline(const Config& cfg, const neat::Model& model, int& vide
   auto branch = neat::graphs::Branch("source", {"video", "model"});
 
   auto video_options = groups::VideoSenderOptions::H264RtpUdpFromRaw(
-      cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps);
+      cfg.width, cfg.height, cfg.fps);
   video_options.host = cfg.insight_host;
   video_options.channel = cfg.channel;
   video_options.video_port_base = cfg.video_port_base;
@@ -268,12 +268,12 @@ neat::Graph make_pipeline(const Config& cfg, const neat::Model& model, int& vide
 }
 
 std::vector<neat::Box> decode_boxes(const neat::Sample& sample, const Config& cfg) {
-  const auto tensors = neat::tensors_from_sample(sample, true);
+  const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return {};
   }
-  const auto decoded = neat::decode_bbox_tensor(tensors.front(), cfg.fallback_width,
-                                                cfg.fallback_height, cfg.top_k, false);
+  const auto decoded = neat::decode_bbox_tensor(tensors.front(), cfg.width,
+                                                cfg.height, cfg.top_k, false);
   return decoded.boxes;
 }
 
@@ -309,8 +309,8 @@ std::string build_objects_json(const std::vector<neat::Box>& boxes, const Config
     }
     const int x = std::max(0, static_cast<int>(box.x1));
     const int y = std::max(0, static_cast<int>(box.y1));
-    const int w = std::min(cfg.fallback_width - x, static_cast<int>(box.x2 - box.x1));
-    const int h = std::min(cfg.fallback_height - y, static_cast<int>(box.y2 - box.y1));
+    const int w = std::min(cfg.width - x, static_cast<int>(box.x2 - box.x1));
+    const int h = std::min(cfg.height - y, static_cast<int>(box.y2 - box.y1));
     if (w <= 0 || h <= 0) {
       continue;
     }
@@ -366,10 +366,7 @@ int run_app() {
             << "Viewer:       Neat Insight Video Viewer channel " << cfg.channel
             << " draws boxes from metadata\n";
 
-  // Stats are windowed: each log line covers only the frames since the previous
-  // line. A cumulative average since run start would fold the one-off startup
-  // cost into every figure and converge on the true rate only as 1/n, which
-  // makes short runs (frames=30) read several times slower than they are.
+  // Windowed stats: a cumulative average would fold startup cost into every figure.
   int processed = 0;
   int timeouts = 0;
   int window_frames = 0;
@@ -410,16 +407,9 @@ int run_app() {
 
     const int64_t frame_id = sample.frame_id >= 0 ? sample.frame_id : processed;
     const auto send_start = Clock::now();
-    // Send every frame, including an empty list, so stale boxes never linger
-    // in the viewer. UDP is fire-and-forget; success only proves the datagram
-    // left this host.
-    //
-    // timestamp = -1 omits the "timestamp" field from the envelope. Do not pass
-    // an epoch-ms value here: Insight's vf ingest drops every metadata message
-    // whose "timestamp" is a JSON integer (messages_received climbs while
-    // messages_forwarded stays at 0), so the boxes never reach the viewer.
-    // Without the field, vf forwards and the viewer pairs metadata to frames by
-    // arrival order.
+    // Send every frame, even empty, so stale boxes never linger in the viewer.
+    // timestamp = -1 OMITS the field on purpose: an integer "timestamp" makes vf drop
+    // every message (messages_received climbs, messages_forwarded stays 0).
     std::string send_err;
     if (!metadata_sender.send_metadata("object-detection", data_json, -1,
                                        std::to_string(frame_id), &send_err)) {

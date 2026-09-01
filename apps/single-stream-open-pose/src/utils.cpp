@@ -296,7 +296,12 @@ std::pair<int, int> model_to_frame(float model_x, float model_y, int frame_w, in
 
 std::vector<std::vector<PoseKeypoint>> find_openpose_peaks(const OpenPoseTensorData& heatmap) {
   constexpr float kPeakThreshold = 0.15f;
-  constexpr float kSuppressRadius = 6.0f;
+  // 1.5 cells, not 6. Units are HEATMAP cells: the map is 60x60 for a 480x480 input (stride 8),
+  // so 6 cells = 48 px in model space = ~128 SOURCE pixels at 1280 wide. Two people whose wrists
+  // passed within 128 px deleted each other's peak, taking the whole forearm limb with it. The
+  // 4-neighbour local-maximum test above is already the real NMS; this only de-duplicates
+  // adjacent cells of the same blob.
+  constexpr float kSuppressRadius = 1.5f;
   constexpr int kMaxPeaksPerType = 16;
   std::vector<std::vector<PoseKeypoint>> by_type(18);
   int next_id = 0;
@@ -482,9 +487,26 @@ std::vector<PosePerson> assemble_openpose_people(
       if (!matched_indices.empty()) {
         auto& person = people[static_cast<std::size_t>(matched_indices.front())];
         add_pose_connection(person, ka, kb, connection, all_keypoints);
+        // Merge only a person that CONFLICTS WITH NONE of this one's occupied joint slots.
+        // Merging unconditionally fused two people who merely shared one endpoint: one spurious
+        // cross-body PAF link joined person A's neck to person B's shoulder and both were drawn
+        // as a single skeleton with limbs stretching between the bodies, while the source's
+        // occupied slots were silently discarded and persons reported 1 instead of 2.
         for (std::size_t idx = matched_indices.size(); idx-- > 1;) {
           const int source_index = matched_indices[idx];
-          merge_pose_people(person, people[static_cast<std::size_t>(source_index)]);
+          const auto& source = people[static_cast<std::size_t>(source_index)];
+          bool conflicts = false;
+          for (std::size_t slot = 0; slot < person.keypoint_ids.size(); ++slot) {
+            if (person.keypoint_ids[slot] >= 0 && source.keypoint_ids[slot] >= 0 &&
+                person.keypoint_ids[slot] != source.keypoint_ids[slot]) {
+              conflicts = true;
+              break;
+            }
+          }
+          if (conflicts) {
+            continue;
+          }
+          merge_pose_people(person, source);
           people.erase(people.begin() + source_index);
         }
       } else {

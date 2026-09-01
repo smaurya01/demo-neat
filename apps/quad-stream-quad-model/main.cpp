@@ -1,34 +1,9 @@
 // quad_stream_quad_model — 4 RTSP streams -> 4 DIFFERENT models -> 4 UDP sinks (C++).
-//
-// This is the C++ port of main.py. Same four models, same config file, same output.
-// The reason it exists: the Python version is gated by the GIL. Four streams means four
-// overlay threads, and NumPy's fancy-index blend holds the interpreter lock, so the
-// per-stream overlay stage measured ~60-140 ms for work that costs under 6 ms in
-// isolation. Here each stream owns a real OS thread and the overlay is a plain memory
-// write, so the four run genuinely concurrently.
-//
-// Task routing (config/default.conf, per stream slot 0..3). EVERY stream decodes
-// on-device with Neat's fused BoxDecode — nothing is decoded on the host:
-//
-//   task          model            source          Neat decode family     normalization
-//   detection     yolo_11s         MODEL ZOO       BoxDecodeType::YoloV8     COCO_YOLO
-//   segmentation  yolo_11s_seg     MODEL ZOO       BoxDecodeType::YoloV8Seg  COCO_YOLO
-//   pose          yolo26s-pose     self-compiled   BoxDecodeType::YoloV26Pose COCO_YOLO
-//   yolox         yolox_s          self-compiled   BoxDecodeType::YoloX      None (raw 0-255)
-//
-// Two things that are easy to get wrong and fail SILENTLY (see LEARNING.md):
-//   * The decode family follows the shape of the archive's HEAD, not the model's version
-//     number. There is no "YoloV11" — zoo YOLO11 keeps raw 64-channel DFL heads and so
-//     decodes as YoloV8. A self-compiled YOLO11 folds the DFL away and decodes as YoloV26.
-//   * Megvii YOLOX is trained on RAW 0-255 pixels. Hand it the COCO_YOLO preset (x/255)
-//     that its three neighbours want and it detects NOTHING, at full speed, with no error.
-//
-// Design provenance (https://github.com/sima-neat/core and sibling apps):
-//   * three-graph shuttle (source / model / video) — apps/single-stream-yolo-yolo11/main.cpp
-//   * per-task ModelSpec + NormalizePreset::None — apps/multi-model-load-probe/main.cpp
-//   * NV12 mask blend + letterbox-inverse — apps/single-stream-yolov8n-seg/main.cpp
-//   * decode_bbox_tensor / decode_pose_tensor / decode_segmentation_tensor
-//     — core/include/pipeline/DetectionTypes.h
+// C++ port of main.py; exists because the GIL serialises the four Python overlay threads.
+// Task -> decode family: detection=YoloV8, segmentation=YoloV8Seg, pose=YoloV26Pose, yolox=YoloX.
+// TWO SILENT FAILURES (LEARNING.md): the decode family follows the archive's HEAD shape, not the
+// model version (zoo YOLO11 keeps DFL heads -> YoloV8); and YOLOX is trained on RAW 0-255, so the
+// COCO_YOLO preset makes it detect NOTHING at full speed with no error.
 
 #include <neat.h>
 
@@ -64,6 +39,24 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 std::atomic<bool> g_stop{false};
+
+// Every worker body runs through this. An exception escaping a std::thread's entry function calls
+// std::terminate() -- SIGABRT, all four streams dead, no diagnostic, no Run::close(), and main()'s
+// catch cannot see it. One odd-height frame from a renegotiating source was enough
+// (init_nv12_tensor_meta throws on a non-even dimension). Report which worker failed and ask the
+// rest to stop, so shutdown is orderly and the reason is visible.
+template <typename Fn>
+void run_guarded(const char* what, int stream_id, Fn&& fn) {
+  try {
+    fn();
+  } catch (const std::exception& e) {
+    std::cerr << "[error] stream " << stream_id << " " << what << ": " << e.what() << "\n";
+    g_stop.store(true);
+  } catch (...) {
+    std::cerr << "[error] stream " << stream_id << " " << what << ": unknown exception\n";
+    g_stop.store(true);
+  }
+}
 // Set once every source+worker thread has finished, so the reporter thread stops too.
 // Without it a --frames run (which sets neither g_stop nor a deadline) would leave the
 // reporter spinning forever and hang on join().
@@ -141,9 +134,9 @@ struct Config {
   int udp_port_stride = 2;
   int model_width = 640;
   int model_height = 640;
-  int fallback_width = 1280;
-  int fallback_height = 720;
-  int fallback_fps = 30;
+  int width = 1280;
+  int height = 720;
+  int fps = 30;
   int latency_ms = 200;
   float score_threshold = 0.25f;
   float nms_iou = 0.50f;
@@ -164,21 +157,13 @@ struct Config {
   int output_queue_depth = 2;
   bool print_backend = false;
   bool no_overlay = false;
+  std::string mode = "pipelined";   // serial | split | pipelined
   std::string cvu_pre_target = "EV74";
   std::string cvu_post_target = "EV74";
 
-  // ── decoder admission (Neat 0.3.0) ─────────────────────────────────────────
-  //
-  // These three feed the decoder-admission LEASE, not plain GStreamer element properties.
-  // They only take effect because every stream's decoder now lives in ONE graph/Run: Neat
-  // requests an admission plan from the decoder daemon only when a single graph contains
-  // more than one H.264 decoder (RunCoreGraphStart.cpp returns early on
-  // `auto_h264_decoders <= 1`). Four separate source Runs -- the pre-0.3.0 layout -- never
-  // asked, so every decoder grabbed an uncoordinated default and they collectively
-  // saturated well below the hardware's real capacity.
-  //
-  // Values follow apps/examples/object-detection/high-density-multi-stream-object-detector,
-  // whose validated profiles decode 400-480 fps of 720p aggregate.
+  // ── decoder admission ────────────────────────────────────────────────────
+  // LEASE fields, not GStreamer properties. They only apply because all four decoders live in
+  // ONE graph/Run -- Neat skips admission for a graph holding a single decoder.
   int decoder_buffers = 16;        // per-stream decoder OUTPUT pool  -> SimaDecodeOptions::num_buffers
   int decoder_input_buffers = 2;   // per-stream compressed-INPUT pool -> ::input_buffers
   // auto | default | low-memory | throughput-low-latency
@@ -186,18 +171,9 @@ struct Config {
   // Ask rtspsrc to drop late buffers instead of preserving stale ones. Correct for a live
   // source and what the high-density profiles use.
   bool rtsp_drop_on_latency = true;
-  // Pin the H.264 parser caps to the configured width/height/fps instead of deriving them
-  // from the stream.
-  //
-  // OFF by default, and that is deliberate: it pins an INTEGER framerate, and this app's
-  // reference source is 59.94 fps (60000/1001). Pinning `framerate=(fraction)60/1` makes
-  // rtspsrc fail negotiation outright -- `streaming stopped, reason not-negotiated (-4)`,
-  // every stream at 0.0 fps. Only enable it for a source whose rate really is an integer
-  // (SiMa's high-density profiles use 25/20/10 fps, which is why they can).
-  //
-  // Turning it off costs nothing that matters here: decoder admission needs the decoded
-  // shape from SimaDecodeOptions (dec_width/dec_height/dec_fps), which this app always
-  // sets explicitly, so the lease is granted either way.
+  // Pin parser caps from config instead of the stream. OFF by default on purpose: it pins an
+  // INTEGER framerate, and 60/1 against a 59.94 fps source fails negotiation outright
+  // (`not-negotiated (-4)`, every stream at 0.0 fps). Only enable for an integer-rate source.
   bool skip_rtsp_probe = false;
 };
 
@@ -237,9 +213,9 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   else if (key == "udp_port_stride") cfg.udp_port_stride = std::stoi(value);
   else if (key == "model_width") cfg.model_width = std::stoi(value);
   else if (key == "model_height") cfg.model_height = std::stoi(value);
-  else if (key == "fallback_width") cfg.fallback_width = std::stoi(value);
-  else if (key == "fallback_height") cfg.fallback_height = std::stoi(value);
-  else if (key == "fallback_fps") cfg.fallback_fps = std::stoi(value);
+  else if (key == "width") cfg.width = std::stoi(value);
+  else if (key == "height") cfg.height = std::stoi(value);
+  else if (key == "fps") cfg.fps = std::stoi(value);
   else if (key == "latency_ms") cfg.latency_ms = std::stoi(value);
   else if (key == "score_threshold") cfg.score_threshold = std::stof(value);
   else if (key == "nms_iou") cfg.nms_iou = std::stof(value);
@@ -251,6 +227,7 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   else if (key == "profile_interval") cfg.profile_interval_s = std::stod(value);
   else if (key == "model_queue_depth") cfg.model_queue_depth = std::stoi(value);
   else if (key == "output_queue_depth") cfg.output_queue_depth = std::stoi(value);
+  else if (key == "mode") cfg.mode = value;
   else if (key == "print_backend") cfg.print_backend = to_bool(value);
   else if (key == "cvu_pre_target") cfg.cvu_pre_target = value;
   else if (key == "cvu_post_target") cfg.cvu_post_target = value;
@@ -271,18 +248,9 @@ Config read_config(const std::string& path) {
   }
   std::string line;
   while (std::getline(in, line)) {
-    // Strip a trailing `# comment` BEFORE parsing, exactly as main.py does
-    // (`raw.split("#", 1)[0].strip()`). This file is shared between the two
-    // implementations, so they have to agree on what a value is.
-    //
-    // Without this the two parsers disagree and the C++ side fails in two different
-    // ways, neither obvious:
-    //   decoder_tuning=auto   # ...   -> the comment ends up INSIDE the gst pipeline
-    //                                    string: "gst_parse_launch failed: syntax error"
-    //   drop_on_latency=true  # ...   -> to_bool() compares the whole string to "true",
-    //                                    gets false, and the option silently flips off.
-    // The int keys survived by luck (std::stoi stops at the first non-digit), which is
-    // exactly the kind of partial success that hides the bug.
+    // Strip a trailing `# comment` BEFORE parsing, as main.py does -- the config file is shared,
+    // so both parsers must agree. Otherwise a trailing comment lands inside the gst launch string
+    // and bool keys silently flip off.
     const auto hash = line.find('#');
     if (hash != std::string::npos) line.erase(hash);
     line = trim(line);
@@ -324,8 +292,8 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
   opt.preprocess.enable = neat::AutoFlag::On;
-  // opt.preprocess.input_max_width = cfg.fallback_width;
-  // opt.preprocess.input_max_height = cfg.fallback_height;
+  // opt.preprocess.input_max_width = cfg.width;
+  // opt.preprocess.input_max_height = cfg.height;
   // opt.preprocess.input_max_depth = 3;
   opt.preprocess.resize.enable = neat::AutoFlag::On;
   opt.preprocess.resize.width = cfg.model_width;
@@ -338,16 +306,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   if (uses_coco_yolo_normalize(spec.task)) {
     opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;   // x/255
   } else {
-    // YOLOX: raw 0-255, i.e. normalization OFF.
-    //
-    // Set the preset and NOTHING else. Do NOT also set explicit normalize stats of
-    // mean=0/stddev=1: those are interpreted in [0,1] space, so stddev=1 re-applies the
-    // very x/255 we are trying to avoid, and YOLOX goes back to detecting nothing.
-    // (Measured: with explicit stats, objs=0 on every frame; with the bare preset,
-    // objs=2-7 on the same stream.)
-    //
-    // This pairs with the archive, compiled with std=1/255 (models.yaml) so its input
-    // quantization expects 0-255 (q_scale ~ 1.0). Both halves are required.
+    // YOLOX: raw 0-255, normalization OFF. Set the preset and NOTHING else -- explicit
+    // mean=0/stddev=1 stats are read in [0,1] space and re-apply the x/255, and YOLOX goes back
+    // to detecting nothing. Pairs with the archive compiled at std=1/255.
     opt.preprocess.preset = neat::NormalizePreset::None;
   }
 
@@ -364,13 +325,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   opt.top_k = cfg.top_k;
   opt.num_classes = num_classes_for(spec.task);
 
-  // decode_type_option is deliberately LEFT AT Auto. These are MPK-backed models, so the
-  // archive's own contract already pins tensor order, layout, dtype and score domain, and
-  // SimaBoxDecode.h says application code should set only the decode FAMILY and the
-  // thresholds. Forcing an explicit sub-variant makes the model-managed route fail to
-  // compile, and it surfaces as "Missing prepared runtime stage for graph-owned processcvu"
-  // on the PREPROC element — a thoroughly confusing place to learn you broke the decode.
-  // NOT setting boxdecode_original_width/height — deprecated in core/include/model/Model.h.
+  // decode_type_option stays Auto: the MPK contract already pins tensor order/layout/dtype.
+  // Forcing a sub-variant breaks the model-managed route and surfaces as "Missing prepared
+  // runtime stage for graph-owned processcvu" on PREPROC -- a very confusing place to land.
 
   return std::make_unique<neat::Model>(spec.model_path, opt);
 }
@@ -383,42 +340,21 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
   opt.payload_type = neat::PayloadType::Image;
   opt.format = neat::FormatTag::NV12;
-  opt.width = cfg.fallback_width;
-  opt.height = cfg.fallback_height;
+  opt.width = cfg.width;
+  opt.height = cfg.height;
   opt.depth = 1;
-  opt.max_width = cfg.fallback_width;
-  opt.max_height = cfg.fallback_height;
+  opt.max_width = cfg.width;
+  opt.max_height = cfg.height;
   opt.max_depth = 1;
-  opt.fps_n = std::max(1, cfg.fallback_fps);
+  opt.fps_n = std::max(1, cfg.fps);
   opt.fps_d = 1;
   return opt;
 }
 
-// How many decoded frames the source appsink may hold for the source thread.
-//
-// DO NOT use OutputOptions::Latest() here. Its meaning CHANGED between Neat 0.2.2 and
-// 0.3.0 and the change is silent -- it needs no app edit and raises no warning:
-//
-//   0.2.2:  Latest() { return OutputOptions{}; }          -> max_buffers=4, drop=false
-//   0.3.0:  Latest() { max_buffers=1; drop=true; }        -> max_buffers=1, drop=true
-//
-// In 0.2.2 the preset was a no-op that handed back the struct defaults, so this graph
-// silently got a 4-deep NON-dropping appsink. 0.3.0 made the preset do what its name says.
-// The result on this app: the decoder gets exactly one slot, so every frame that lands
-// while the source thread is between pulls is thrown away inside GStreamer.
-//
-// EveryFrame(4) is byte-for-byte the options 0.2.2's Latest() produced
-// (max_buffers=4, drop=false, sync=false), so this restores the old behaviour exactly
-// rather than papering over it with a bigger number.
-//
-// MEASURED: this alone changed nothing (151.6 vs 153.9 fps aggregate) -- the limiter was
-// upstream, in the decoder. Keep it anyway: it stops discarding frames the decoder already
-// paid for. It is a correctness fix, not the throughput fix. The throughput fix is the
-// single-Run source graph below.
-//
-// Non-dropping is deliberate and is NOT a latency risk here: this app already sheds load
-// at its own drop-oldest mailbox (see run_source/FrameMailbox), which is where a live
-// pipeline should drop.
+// Source appsink depth. DO NOT use OutputOptions::Latest(): its meaning changed silently
+// between 0.2.2 and 0.3.0 (was max_buffers=4/drop=false, now 1/true), which starves the
+// decoder to one slot. EveryFrame(4) restores the old behaviour exactly.
+// Non-dropping is deliberate: this app sheds load at its own drop-oldest mailbox.
 constexpr int kSourceOutputBuffers = 4;
 
 // Per-stream endpoint name on the ONE shared source Run.
@@ -426,31 +362,11 @@ std::string source_endpoint(int stream_id) {
   return "frame" + std::to_string(stream_id);
 }
 
-// ── the source layer: ONE Graph, ONE Run, ALL decoders ───────────────────────
-//
-// This is the shape that unlocks the hardware decoder, and it is not optional on 0.3.0.
-//
-// Neat asks the decoder daemon (/tmp/dec-admission-v2.sock) for a coordinated admission
-// plan ONLY when a single graph contains more than one H.264 decoder --
-// `apply_decoder_admission_if_needed()` returns early on `auto_h264_decoders <= 1`. The
-// previous layout built one source Graph and one Run PER STREAM, so each of the four
-// decoders looked like a lone decoder, never requested a lease, and picked an
-// uncoordinated default. They then collectively saturated far below the hardware's real
-// capacity:
-//
-//   4 separate un-admitted decoders    ~43 fps each   (~172 fps aggregate)
-//   SiMa's high-density example        24x20 / 48x10  (~480 fps aggregate)
-//
-// The example (apps/examples/object-detection/high-density-multi-stream-object-detector)
-// puts every decoder in one graph and one build(), which is what this now does.
-//
-// Two further points copied from that example:
-//   * The source is RtspEncodedInput (depay + parse only) followed by an explicit
-//     SimaDecode, rather than the all-in-one RtspDecodedInput group. Splitting them is what
-//     lets the decoder carry the admission-lease fields below.
-//   * num_buffers / input_buffers / decoder_tuning are LEASE properties. Setting the
-//     equivalent GStreamer property on a lone un-admitted decoder does nothing useful
-//     (measured: num-buffers 8 and 16 were both *worse* than the default).
+// ── the source layer: ONE Graph, ONE Run, ALL decoders ──────────────────────
+// Not optional on 0.3.0+: Neat requests a decoder-admission lease only when a single graph
+// holds more than one H.264 decoder. One Run per stream (the old layout) never asked and
+// collectively saturated at ~43 fps each. Uses RtspEncodedInput + explicit SimaDecode so the
+// decoder can carry the lease fields.
 neat::Graph make_rtsp_encoded_graph(const Config& cfg, const StreamSpec& spec) {
   groups::RtspEncodedInputOptions enc;
   enc.url = spec.rtsp_url;
@@ -464,13 +380,13 @@ neat::Graph make_rtsp_encoded_graph(const Config& cfg, const StreamSpec& spec) {
   // parser instead of probing each stream at startup.
   enc.auto_caps_from_stream = !cfg.skip_rtsp_probe;
   if (cfg.skip_rtsp_probe) {
-    enc.h264_width = cfg.fallback_width;
-    enc.h264_height = cfg.fallback_height;
-    enc.h264_fps = cfg.fallback_fps;
+    enc.h264_width = cfg.width;
+    enc.h264_height = cfg.height;
+    enc.h264_fps = cfg.fps;
   }
-  enc.fallback_h264_width = cfg.fallback_width;
-  enc.fallback_h264_height = cfg.fallback_height;
-  enc.fallback_h264_fps = cfg.fallback_fps;
+  enc.fallback_h264_width = cfg.width;
+  enc.fallback_h264_height = cfg.height;
+  enc.fallback_h264_fps = cfg.fps;
   return groups::RtspEncodedInput(enc);
 }
 
@@ -482,15 +398,15 @@ neat::Graph make_decoder_graph(const Config& cfg, const StreamSpec& spec) {
   dec.sima_allocator_type = 2;
   dec.out_format = neat::FormatTag::NV12;
   dec.raw_output = true;
-  dec.dec_width = cfg.fallback_width;
-  dec.dec_height = cfg.fallback_height;
-  dec.dec_fps = cfg.fallback_fps;
+  dec.dec_width = cfg.width;
+  dec.dec_height = cfg.height;
+  dec.dec_fps = cfg.fps;
   dec.num_buffers = cfg.decoder_buffers;
   dec.input_buffers = cfg.decoder_input_buffers;
   dec.decoder_tuning = cfg.decoder_tuning;
   g.add(neat::nodes::SimaDecode(std::move(dec)));
 
-  g.add(neat::nodes::CapsRaw("NV12", cfg.fallback_width, cfg.fallback_height, cfg.fallback_fps,
+  g.add(neat::nodes::CapsRaw("NV12", cfg.width, cfg.height, cfg.fps,
                              neat::CapsMemory::Any));
   g.add(neat::nodes::Output(source_endpoint(spec.id),
                             neat::OutputOptions::EveryFrame(kSourceOutputBuffers)));
@@ -512,14 +428,9 @@ neat::Graph make_model_graph(const Config& cfg, const StreamSpec& spec, const ne
   neat::Graph g("qsqm_model_" + task_name(spec.task) + "_" + std::to_string(spec.id));
   g.add(neat::nodes::Input("image", make_nv12_input_options(cfg)));
   g.add(model);
-  // One endpoint for all four tasks: each model graph ends in an on-device BoxDecode
-  // stage, so what comes out is always a decoded payload, never raw heads.
-  //
-  // EveryFrame(max_buffers) = how many FINISHED results the output sink may park for the
-  // puller. This must be at least model_queue_depth, or the two settings contradict each
-  // other: --mode pipelined deliberately keeps N frames in flight, and if the sink can only
-  // hold 1 finished result, results back up inside the graph and throttle the very pipelining
-  // we are paying for. (apps/multi-model-load-probe uses 4; the library default is 30.)
+  // One endpoint for all four tasks: every model graph ends in an on-device BoxDecode stage.
+  // EveryFrame(max_buffers) must be >= model_queue_depth, or finished results back up inside
+  // the graph and throttle the pipelining we are paying for.
   const int out_buffers = std::max(1, cfg.model_queue_depth);
   g.add(neat::nodes::Output("detections", neat::OutputOptions::EveryFrame(out_buffers)));
   return g;
@@ -527,7 +438,7 @@ neat::Graph make_model_graph(const Config& cfg, const StreamSpec& spec, const ne
 
 neat::Graph make_video_graph(const Config& cfg, const StreamSpec& spec) {
   auto so = groups::VideoSenderOptions::H264RtpUdpFromRaw(
-      cfg.fallback_width, cfg.fallback_height, std::max(1, cfg.fallback_fps));
+      cfg.width, cfg.height, std::max(1, cfg.fps));
   so.host = cfg.udp_host;
   so.channel = 0;
   so.video_port_base = spec.port;
@@ -793,9 +704,13 @@ struct MaskRect {
 };
 
 MaskRect mask_rect_for_frame_box(int x1, int y1, int x2, int y2, int frame_w, int frame_h,
-                                 int mask_w, int mask_h) {
-  const int model_w = mask_w * 4;   // 160 * 4 = 640
-  const int model_h = mask_h * 4;
+                                 int mask_w, int mask_h, int model_w, int model_h) {
+  // model_w/h is the LETTERBOX CANVAS the mask was produced under, i.e. cfg.model_width/height.
+  // It was derived as mask_w * 4, correct only for the default 640x640: at model_width=320 the
+  // scale and padding were both wrong and masks landed offset from their (correct) boxes.
+  // main.py already took the configured size, so the two implementations disagreed.
+  model_w = model_w > 0 ? model_w : mask_w * 4;
+  model_h = model_h > 0 ? model_h : mask_h * 4;
   const double scale = std::min(static_cast<double>(model_w) / frame_w,
                                 static_cast<double>(model_h) / frame_h);
   const double pad_x = (model_w - frame_w * scale) / 2.0;
@@ -856,32 +771,11 @@ std::vector<neat::Box> boxes_from_tensor(const neat::Tensor& t) {
   return out;
 }
 
-// ── per-stream runtime ───────────────────────────────────────────────────────
-//
-// The pipeline spans two threads, so the profile does too:
-//
-//   source thread : decode                                  (RTSP/H.264 -> NV12)
-//   worker thread : infer -> postproc -> overlay -> encode
-//
-// Two of these stages are PIPELINED, and their host-side timing is not the device's
-// internal cost. Reporting them as if it were is the easiest way to publish a confident,
-// wrong number, so each is named for what it actually measures:
-//
-//   dec_wait   blocking pull on the source graph. ARRIVAL-GATED: a healthy 60 fps stream
-//              hands back a frame every ~16.7 ms however fast the decoder is, so this is
-//              the frame INTERVAL, not the decode cost. It only rises above the interval
-//              once the decoder has genuinely fallen behind -> read it as a health check,
-//              and read `decode fps` for whether the decoder is keeping up.
-//   decode     memcpy of the decoded NV12 frame out of the zero-copy pool (~1.4 MB). This
-//              is the real, host-side cost of getting a decoded frame. The H.264 decode
-//              proper runs on the hardware decoder and is not observable from the host.
-//   qwait      worker blocked waiting for the source thread. Idle, not work.
-//   infer      model push + pull: on-device preprocess + MLA + fused BoxDecode. Real cost.
-//   postproc   host-side read of the decoded payload + instance build. Real host CPU.
-//   overlay    host-side NV12 draw. Real host CPU (0 under --no-overlay).
-//   encode     video push. This ENQUEUES to the encoder and returns — it is NOT the
-//              encoder's latency. It sits near zero until the encoder falls behind, at
-//              which point its backpressure surfaces here. Read it as encoder HEADROOM.
+// ── per-stream runtime ──────────────────────────────────────────────────────
+// Stage timings, split across the source and worker threads. Two are pipelined and their
+// host-side timing is NOT the device cost: `dec_wait` is arrival-gated (the frame interval,
+// not the decode cost -- read `decode fps` instead), and `encode` only enqueues, so it reads
+// as encoder headroom rather than encoder latency.
 struct SourceProfile {
   std::vector<double> wait;   // one sample per DECODED frame (including ones we then drop)
   std::vector<double> copy;   // one sample per frame actually handed to the worker
@@ -915,12 +809,8 @@ double pct_of(std::vector<double> v, std::size_t skip, double p) {
 }
 
 // Single-slot drop-oldest mailbox between a stream's source thread and its worker.
-//
-// This is what keeps the RTSP source DRAINED. Without it the source graph's internal edge
-// queue (256 frames) fills — a live 60 fps camera does not wait for a ~45 fps consumer —
-// and every stream then dies with "sink backpressure timeout" after exactly 256 frames.
-// A live source must be drained continuously and the stale frames thrown away; the drop
-// belongs HERE, at the source, not inside the model. Same intent as OverflowPolicy::KeepLatest.
+// This is what keeps the RTSP source DRAINED: without it the source graph's 256-frame edge
+// queue fills and every stream dies with "sink backpressure timeout" after exactly 256 frames.
 struct FrameMailbox {
   std::mutex m;
   std::condition_variable cv;
@@ -931,14 +821,10 @@ struct FrameMailbox {
   bool closed = false;
   long long dropped = 0;
 
-  // True when the worker has taken the last frame and is ready for another.
-  //
-  // The source thread checks this BEFORE copying. That ordering matters: the RTSP graph
-  // must still be pulled at the full 60 fps to keep its edge queue drained, but copying
-  // every one of those frames costs 1.4 MB per stream per frame — ~336 MB/s of memcpy
-  // across four streams — which starves the workers of the very CPU they need. So we pull
-  // always, and copy only when someone is actually waiting for the frame. Drop before the
-  // copy, not after it.
+  // True when the worker has taken the last frame and wants another.
+  // Checked BEFORE copying: the RTSP graph must be pulled at full rate to stay drained, but
+  // copying every frame costs 1.4 MB each (~336 MB/s over four streams). Pull always, copy only
+  // when someone is waiting -- drop before the copy, not after.
   bool wants_frame() {
     std::lock_guard<std::mutex> lk(m);
     return !has;
@@ -977,10 +863,8 @@ struct FrameMailbox {
 };
 
 // One frame after the model has run, on its way to postproc + overlay + encode.
-//
-// It carries the model's output Sample. That Sample is ZeroCopy, so holding it keeps one of the
-// model graph's output buffers checked out — which is exactly why out_q is small (bounded by
-// --output-queue-depth, default 2). Make it large and you starve the model of output buffers.
+// It carries a ZeroCopy Sample, so holding it keeps a model-graph output buffer checked out --
+// which is why out_q is small. Make it large and you starve the model of output buffers.
 struct InferItem {
   neat::Tensor frame;          // CPU NV12, annotated in place
   int fw = 0;
@@ -1067,16 +951,13 @@ struct StreamRuntime {
   std::condition_variable pending_cv;   // signalled by the puller when a slot frees
   std::deque<PendingFrame> pending;
   std::atomic<bool> push_done{false};   // pusher has finished; puller may drain and exit
-  // Frames handed to the model graph but not yet pulled back. This is the number the
-  // backpressure gate bounds. It is reported as `inflt` so you can SEE whether the bound
-  // holds instead of inferring it from latency: if this reads > --model-queue-depth, the
-  // gate is not working. (Serial/split push and pull on one thread, so it is 0 or 1 there.)
+  // Frames handed to the model graph but not yet pulled back -- the number the backpressure
+  // gate bounds. Reported as `inflt`: if it reads > --model-queue-depth, the gate is not working.
   std::atomic<int> in_flight{0};
 
-  // Guards source_profile, profile, `processed` and `last_objs` — the live reporter thread
-  // reads all four WHILE the source and worker threads are still writing them. Without this
-  // a push_back that reallocates under the reporter's feet is a use-after-free, not a
-  // wrong number. Taken ~60x/sec per stream; the contention is nil.
+  // Guards source_profile, profile, `processed` and `last_objs`: the reporter thread reads all
+  // four while the source and worker threads write them. Without it a reallocating push_back
+  // under the reporter is a use-after-free, not just a wrong number.
   std::mutex prof_mu;
   SourceProfile source_profile;   // written by the source thread
   StageProfile profile;           // written by the worker thread
@@ -1096,13 +977,16 @@ struct StreamRuntime {
 };
 
 // Source thread: pull the RTSP graph as fast as it produces, copy each frame out of the
-// zero-copy pool, and park only the newest one for the worker.
-//
-// Copying out and releasing the Sample immediately is what lets the source recycle its
-// buffers. Holding a ZeroCopy Sample across the model + overlay + encode stalls the source.
+// zero-copy pool, and park only the newest for the worker. Copying out and releasing the
+// Sample immediately is what lets the source recycle its buffers.
 void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
   while (!g_stop.load()) {
     if (cfg.duration_s > 0.0 && Clock::now() >= deadline) break;
+    // --frames also stops the SOURCE. Only the pusher honoured cfg.frames, so with `--frames N`
+    // the pushers/pullers/outputs all finished while these four threads looped forever pulling
+    // RTSP and dropping it -- main() blocked in sources.join(), never printed the report, and
+    // the process had to be killed.
+    if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
 
     neat::Sample frame_sample;
     neat::PullError err;
@@ -1135,7 +1019,7 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
       continue;
     }
     const auto copy_begin = Clock::now();
-    const auto tensors = neat::tensors_from_sample(frame_sample, true);
+    const auto tensors = neat::tensors_from_sample(frame_sample, false);
     if (tensors.empty()) continue;
     int w = 0, h = 0;
     if (!infer_dims(tensors.front(), w, h)) continue;
@@ -1155,42 +1039,22 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
   rt.mailbox.close();
 }
 
-// ── the per-stream worker ─────────────────────────────────────────────────────
-//
-// Three topologies, chosen with --mode. They share ONE implementation of
-// postproc/overlay/encode (finish_frame), so switching topology cannot change what is drawn
-// or published — only who does the work and when.
-//
-//   serial     (default, the original)
-//       source -> [ take | infer | postproc | overlay | encode ]            1 worker thread
-//       Nothing overlaps: a stream's frame period is the SUM of every stage, which is why
-//       `latency == infer + postproc + overlay + encode` holds to 0.01 ms.
-//
-//   split      (FIX 1)
-//       source -> [ take | infer ] -> out_q -> [ postproc | overlay | encode ]   2 threads
-//       Frame period becomes max(infer, postproc+overlay+encode) instead of the sum. This is
-//       what segmentation's 11.4 ms overlay was costing: it was charged against the frame rate.
-//
-//   pipelined  (FIX 2 = FIX 1 + decoupled push/pull)
-//       source -> [ take | push ] -> model graph -> [ pull ] -> out_q -> [ output ]  3 threads
-//       In serial/split the same thread pushes a frame and then blocks on its pull, so exactly
-//       ONE frame is ever inside the model graph and queue_depth is inert. Splitting push from
-//       pull lets the graph hold --model-queue-depth frames at once, so frame i+1's EV74
-//       preprocess overlaps frame i's MLA and decode. Requires OverflowPolicy::Block: it keeps
-//       push/pull FIFO-paired (so `pending` matches results to frames) AND applies backpressure
-//       instead of silently dropping. Taken from the C++ 4-stream demo and multi-stream-yolo.
+// ── the per-stream worker ───────────────────────────────────────────────────
+// Three topologies via --mode, sharing one finish_frame() so the output cannot differ:
+//   serial     one thread; frame period is the SUM of every stage.
+//   split      infer | output on 2 threads; period becomes max(infer, output).
+//   pipelined  push/pull decoupled on 3 threads, so the graph holds --model-queue-depth
+//              frames at once. Requires OverflowPolicy::Block to keep push/pull FIFO-paired.
 
 // Read the decoded payload the on-device BoxDecode stage produced.
-//
-// `pose_out` / `seg_out` are OUT params on purpose: `Instance::keypoints` and `Instance::mask`
-// point INTO their storage, so they must outlive the returned instances. Keeping them in the
-// caller's frame is what makes that lifetime obvious rather than accidental.
+// `pose_out`/`seg_out` are OUT params on purpose: Instance::keypoints and Instance::mask point
+// INTO their storage, so they must outlive the returned instances.
 std::vector<Instance> decode_payload(const Config& cfg, StreamRuntime& rt,
                                      const neat::Sample& det_sample, int fw, int fh,
                                      neat::PoseDecodeTensors& pose_out,
                                      neat::SegmentationDecodeTensors& seg_out) {
   std::vector<Instance> instances;
-  const auto out_tensors = neat::tensors_from_sample(det_sample, true);
+  const auto out_tensors = neat::tensors_from_sample(det_sample, false);
   if (out_tensors.empty()) return instances;
 
   try {
@@ -1244,7 +1108,8 @@ std::vector<Instance> decode_payload(const Config& cfg, StreamRuntime& rt,
 
 // Burn the annotation into the NV12 frame, in place.
 void draw_overlay(const StreamRuntime& rt, neat::Tensor& frame, int fw, int fh,
-                  const std::vector<Instance>& instances, const std::string& banner) {
+                  const std::vector<Instance>& instances, const std::string& banner,
+                  int model_w, int model_h) {
   const Nv12Color kBox{235, 128, 128};
   const Nv12Color kMask{210, 90, 200};
   const Nv12Color kKpt{255, 128, 128};
@@ -1259,7 +1124,7 @@ void draw_overlay(const StreamRuntime& rt, neat::Tensor& frame, int fw, int fh,
     if (x2 <= x1 || y2 <= y1) continue;
 
     if (in.mask != nullptr) {
-      const auto rect = mask_rect_for_frame_box(x1, y1, x2, y2, fw, fh, 160, 160);
+      const auto rect = mask_rect_for_frame_box(x1, y1, x2, y2, fw, fh, 160, 160, model_w, model_h);
       const int bw = x2 - x1;
       const int bh = y2 - y1;
       for (int by = 0; by < bh; ++by) {
@@ -1313,7 +1178,8 @@ void finish_frame(const Config& cfg, StreamRuntime& rt, InferItem& item,
 
   const auto overlay_begin = Clock::now();
   if (!cfg.no_overlay) {
-    draw_overlay(rt, item.frame, item.fw, item.fh, instances, banner);
+    draw_overlay(rt, item.frame, item.fw, item.fh, instances, banner,
+                 cfg.model_width, cfg.model_height);
   }
   const auto overlay_end = Clock::now();
 
@@ -1377,19 +1243,11 @@ void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
     // own reference because `pf` is about to be moved into `pending`.
     neat::Tensor to_push = pf.frame;
 
-    // RESERVE A SLOT BEFORE PUSHING. This is the backpressure — NOT OverflowPolicy::Block.
-    //
-    // Block does not bound how many frames sit in the graph: a Neat graph has a large internal
-    // edge queue (the same 256-frame queue the source-graph comment above warns about), and
-    // push() returns as soon as the frame lands in it. So for any model slower than the source
-    // — segmentation here — input outruns the model, the edge queue fills toward its physical
-    // limit, and per-frame latency climbs into the SECONDS and stays there. Measured: seg went
-    // from 30 ms to 7319 ms, and then "delivered" 85 fps from a 60 fps camera while it drained
-    // the backlog. That is not throughput, it is a queue emptying.
-    //
-    // Gating on pending.size() bounds frames-in-flight exactly, whatever the graph does
-    // internally. Excess frames are then dropped at the mailbox (drop-oldest, where a live
-    // source SHOULD shed load) instead of silently queueing.
+    // RESERVE A SLOT BEFORE PUSHING -- this is the backpressure, NOT OverflowPolicy::Block.
+    // Block does not bound in-graph buffering: push() returns as soon as the frame lands in the
+    // large internal edge queue, so a model slower than the source runs latency into SECONDS
+    // (measured: seg 30 ms -> 7319 ms, then "delivering" 85 fps from a 60 fps camera while it
+    // drained the backlog). Gating on pending.size() bounds frames-in-flight exactly.
     {
       const auto depth = static_cast<std::size_t>(std::max(1, cfg.model_queue_depth));
       std::unique_lock<std::mutex> lk(rt.pending_mu);
@@ -1475,6 +1333,98 @@ void run_puller(StreamRuntime& rt) {
   rt.out_q.close();
 }
 
+// ── serial worker: take -> push -> pull -> finish, all on one thread ─────────
+// --mode serial. Nothing overlaps, so a stream's frame period is the SUM of every stage. This
+// is the reference topology: it is the easiest to reason about and the slowest.
+void run_serial_worker(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
+  const std::string banner = stream_banner(rt);
+  neat::PullError err;
+
+  while (!g_stop.load()) {
+    if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
+
+    InferItem item;
+    Clock::time_point t_in;
+    double qwait_ms = 0.0;
+    if (!take_frame(cfg, rt, deadline, item.frame, item.fw, item.fh, qwait_ms, t_in)) break;
+    item.t_in = t_in;
+    item.qwait_ms = qwait_ms;
+
+    const auto push_begin = Clock::now();
+    if (!rt.model_run.push("image", neat::TensorList{item.frame})) break;
+    rt.in_flight.fetch_add(1);
+
+    auto st = rt.model_run.pull("detections", 20000, item.det, &err);
+    rt.in_flight.fetch_sub(1);
+    if (st == neat::PullStatus::Closed) break;
+    if (st == neat::PullStatus::Timeout) {
+      // The frame is still in flight; drain so the next result is not paired with a later frame.
+      neat::Sample stale;
+      neat::PullError drain_err;
+      while (rt.model_run.pull("detections", 0, stale, &drain_err) == neat::PullStatus::Ok) {
+      }
+      std::cerr << "[warn] stream " << rt.spec.id << ": model pull timed out\n";
+      continue;
+    }
+    if (st != neat::PullStatus::Ok) {
+      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
+      continue;
+    }
+
+    item.infer_ms = ms_since(push_begin, Clock::now());
+    rt.pulled.fetch_add(1);
+    finish_frame(cfg, rt, item, banner);
+    item = InferItem{};   // release the ZeroCopy sample promptly
+  }
+  rt.push_done.store(true);
+  rt.out_q.close();
+  mark_steady_done(rt);
+}
+
+// ── split worker: take -> push -> pull on one thread, output on another ──────
+// --mode split. The frame period becomes max(infer, postproc+overlay+encode) instead of their
+// sum, which is what the segmentation stream's overlay was costing the frame rate.
+void run_split_infer(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
+  neat::PullError err;
+
+  while (!g_stop.load()) {
+    if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
+
+    InferItem item;
+    Clock::time_point t_in;
+    double qwait_ms = 0.0;
+    if (!take_frame(cfg, rt, deadline, item.frame, item.fw, item.fh, qwait_ms, t_in)) break;
+    item.t_in = t_in;
+    item.qwait_ms = qwait_ms;
+
+    const auto push_begin = Clock::now();
+    if (!rt.model_run.push("image", neat::TensorList{item.frame})) break;
+    rt.in_flight.fetch_add(1);
+
+    auto st = rt.model_run.pull("detections", 20000, item.det, &err);
+    rt.in_flight.fetch_sub(1);
+    if (st == neat::PullStatus::Closed) break;
+    if (st == neat::PullStatus::Timeout) {
+      neat::Sample stale;
+      neat::PullError drain_err;
+      while (rt.model_run.pull("detections", 0, stale, &drain_err) == neat::PullStatus::Ok) {
+      }
+      std::cerr << "[warn] stream " << rt.spec.id << ": model pull timed out\n";
+      continue;
+    }
+    if (st != neat::PullStatus::Ok) {
+      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
+      continue;
+    }
+
+    item.infer_ms = ms_since(push_begin, Clock::now());
+    rt.pulled.fetch_add(1);
+    if (!rt.out_q.push(std::move(item))) break;
+  }
+  rt.push_done.store(true);
+  rt.out_q.close();
+}
+
 // ── output thread: postproc -> overlay -> encode ─────────────────────────────
 void run_output_thread(const Config& cfg, StreamRuntime& rt) {
   const std::string banner = stream_banner(rt);
@@ -1486,12 +1436,9 @@ void run_output_thread(const Config& cfg, StreamRuntime& rt) {
   mark_steady_done(rt);
 }
 
-// ── live time profile ─────────────────────────────────────────────────────────
-//
-// ONE reporter thread prints the whole table every `profile_interval` seconds, so the
-// terminal shows stage timings as the run happens rather than only at exit. Every number
-// is the mean over THAT WINDOW (since the previous print), not a cumulative average — a
-// cumulative mean hides a stream that degrades halfway through the run.
+// ── live time profile ───────────────────────────────────────────────────────
+// One reporter thread prints the whole table every profile_interval seconds. Every number is
+// the mean over THAT WINDOW -- a cumulative mean hides a stream that degrades mid-run.
 double mean_slice(const std::vector<double>& v, std::size_t from) {
   if (v.size() <= from) return 0.0;
   double s = 0.0;
@@ -1741,8 +1688,13 @@ int main(int argc, char** argv) {
       else if (a == "--output-queue-depth") cfg.output_queue_depth = std::stoi(next());
       else if (a == "--no-overlay") cfg.no_overlay = true;
       else if (a == "--print-backend") cfg.print_backend = true;
+      else if (a == "--mode") cfg.mode = next();
       else if (a == "--pre-target") cfg.cvu_pre_target = next();
       else if (a == "--post-target") cfg.cvu_post_target = next();
+    }
+
+    if (cfg.mode != "serial" && cfg.mode != "split" && cfg.mode != "pipelined") {
+      throw std::runtime_error("--mode must be serial|split|pipelined, got: " + cfg.mode);
     }
 
     const auto specs = build_specs(cfg);
@@ -1753,13 +1705,9 @@ int main(int argc, char** argv) {
     run_options.overflow_policy = neat::OverflowPolicy::KeepLatest;
     run_options.output_memory = neat::OutputMemory::ZeroCopy;
 
-    // The SOURCE run stays Realtime/KeepLatest: a live camera must be drained continuously and
-    // its stale frames thrown away. The MODEL run is different — Block, not KeepLatest:
-    //   * Block keeps push/pull strictly FIFO-paired, so `pending` can match each result back
-    //     to the frame it came from. KeepLatest silently drops results and breaks that pairing.
-    //   * It does NOT bound how many frames sit in the graph — that is the pusher's in-flight
-    //     gate (see run_pusher). Relying on Block alone let segmentation accumulate a 600-frame,
-    //     11-second backlog.
+    // SOURCE run stays Realtime/KeepLatest (a live camera must be drained, stale frames dropped).
+    // MODEL run uses Block, not KeepLatest: Block keeps push/pull FIFO-paired so `pending` can
+    // match each result to its frame. It does NOT bound in-graph frames -- that is the pusher's gate.
     neat::RunOptions model_run_options = run_options;
     model_run_options.preset = neat::RunPreset::Reliable;
     model_run_options.queue_depth = cfg.model_queue_depth;
@@ -1789,7 +1737,7 @@ int main(int argc, char** argv) {
       // NOTE: the source run is deliberately NOT built here — see below.
       rt->model_run = rt->model_graph.build(model_run_options);
       rt->out_q.set_capacity(static_cast<std::size_t>(std::max(1, cfg.output_queue_depth)));
-      neat::Tensor seed = make_blank_nv12_tensor(cfg.fallback_width, cfg.fallback_height);
+      neat::Tensor seed = make_blank_nv12_tensor(cfg.width, cfg.height);
       rt->video_run = rt->video_graph.build(neat::TensorList{seed}, video_run_options);
 
       std::cout << "Stream " << spec.id << ": " << std::left << std::setw(13)
@@ -1799,19 +1747,10 @@ int main(int argc, char** argv) {
       rts.push_back(std::move(rt));
     }
 
-    // Start the RTSP sources LAST, after every model is loaded, and immediately before the
-    // threads that drain them.
-    //
-    // Graph::build() starts the pipeline running. Building each stream's source inside the
-    // loop above meant stream 0's camera started streaming while streams 1-3 were still
-    // loading their models (seconds each, an MLA archive at a time). Nobody was pulling
-    // yet, so its 256-frame edge queue filled and it was already dead on arrival with a
-    // "sink backpressure timeout". The symptom was diagnostic: stream 3 — built last, and
-    // so idle for the shortest time — was the only one that survived.
-    //
-    // ONE graph, ONE build() for every stream's decoder. That is what makes Neat request a
-    // decoder-admission lease (see make_combined_source_graph). Building four separate
-    // source Runs here instead silently costs ~60% of the decode rate.
+    // Start the RTSP sources LAST, after every model is loaded and just before the drain threads.
+    // Graph::build() starts the pipeline: building sources in the model loop let stream 0 stream
+    // while streams 1-3 loaded, filling its 256-frame edge queue and killing it with "sink
+    // backpressure timeout" before anyone pulled.
     neat::Graph source_graph = make_combined_source_graph(cfg, specs);
     if (cfg.print_backend) {
       std::cout << "--- combined source graph (" << specs.size() << " decoders)\n"
@@ -1833,20 +1772,50 @@ int main(int argc, char** argv) {
     const auto deadline =
         start + std::chrono::milliseconds(static_cast<long>(cfg.duration_s * 1000.0));
 
-    // Four threads per stream:
-    //   source  RTSP -> drop-oldest mailbox
-    //   pusher  mailbox -> model graph        (bounded by model_queue_depth)
-    //   puller  model graph -> output queue
-    //   output  postproc -> overlay -> encode
+    // Four threads per stream: source (RTSP -> mailbox), pusher (-> model graph, bounded by
+    // model_queue_depth), puller (-> output queue), output (postproc -> overlay -> encode).
     std::vector<std::thread> sources, pushers, pullers, outputs;
     for (auto* v : {&sources, &pushers, &pullers, &outputs}) v->reserve(rts.size());
 
     for (auto& rt : rts) {
       StreamRuntime* p = rt.get();
-      sources.emplace_back([&cfg, p, deadline]() { run_source(cfg, *p, deadline); });
-      pushers.emplace_back([&cfg, p, deadline]() { run_pusher(cfg, *p, deadline); });
-      pullers.emplace_back([p]() { run_puller(*p); });
-      outputs.emplace_back([&cfg, p]() { run_output_thread(cfg, *p); });
+      const int sid = p->spec.id;
+      sources.emplace_back([&cfg, p, deadline, sid]() {
+        run_guarded("source", sid, [&] { run_source(cfg, *p, deadline); });
+        p->mailbox.close();       // never leave a consumer blocked in take() after a failure
+      });
+      if (cfg.mode == "serial") {
+        // take | infer | postproc | overlay | encode on ONE thread; no out_q hand-off.
+        outputs.emplace_back([&cfg, p, deadline, sid]() {
+          run_guarded("worker", sid, [&] { run_serial_worker(cfg, *p, deadline); });
+        });
+      } else if (cfg.mode == "split") {
+        // [take | infer] -> out_q -> [postproc | overlay | encode]
+        pushers.emplace_back([&cfg, p, deadline, sid]() {
+          run_guarded("infer", sid, [&] { run_split_infer(cfg, *p, deadline); });
+          p->push_done.store(true);
+          p->out_q.close();       // release the output thread if we died mid-loop
+        });
+        outputs.emplace_back([&cfg, p, sid]() {
+          run_guarded("output", sid, [&] { run_output_thread(cfg, *p); });
+        });
+      } else {
+        // pipelined (default): push and pull decoupled so the graph holds model_queue_depth
+        // frames at once.
+        pushers.emplace_back([&cfg, p, deadline, sid]() {
+          run_guarded("pusher", sid, [&] { run_pusher(cfg, *p, deadline); });
+          p->push_done.store(true);
+          p->pending_cv.notify_all();
+        });
+        pullers.emplace_back([p, sid]() {
+          run_guarded("puller", sid, [&] { run_puller(*p); });
+          p->out_q.close();       // a dead puller must not leave the output thread waiting
+          p->pending_cv.notify_all();
+        });
+        outputs.emplace_back([&cfg, p, sid]() {
+          run_guarded("output", sid, [&] { run_output_thread(cfg, *p); });
+        });
+      }
     }
 
     // One reporter thread prints the live time profile for ALL streams on an interval.

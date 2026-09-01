@@ -64,6 +64,25 @@ YOLO_SPECS = {
         "extra_scale_heads": [],
         "passthrough_outputs": [],
     },
+    # yolov8l shares byte-for-byte the same head node names as yolov8s: Detect is still at
+    # model.22, the cv2.*/cv3.* layout is scale-invariant, and the export has 0 MatMul nodes
+    # (verified on the actual export), so attention_blocks stays empty like yolov8s.
+    "yolov8l": {
+        "attention_blocks": [],
+        "bbox_sources": [
+            "/model.22/cv2.0/cv2.0.2/Conv_output_0",
+            "/model.22/cv2.1/cv2.1.2/Conv_output_0",
+            "/model.22/cv2.2/cv2.2.2/Conv_output_0",
+        ],
+        "class_sources": [
+            "/model.22/cv3.0/cv3.0.2/Conv_output_0",
+            "/model.22/cv3.1/cv3.1.2/Conv_output_0",
+            "/model.22/cv3.2/cv3.2.2/Conv_output_0",
+        ],
+        "dfl_bins": 16,
+        "extra_scale_heads": [],
+        "passthrough_outputs": [],
+    },
     # yolo11n shares byte-for-byte the same head node names as yolo11s (scale-invariant).
     "yolo11n": {
         "attention_blocks": ["/model.10/m/m.0/attn"],
