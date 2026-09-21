@@ -76,10 +76,10 @@ utilisation live.
 
 ---
 
-## Where the numbers come from
+## Detail Info
 
 - [SiMa hardware overview](https://developer.sima.ai/hardware)
-- [SOM Carrier Board Data Sheet (PDF)](https://docs.sima.ai/pkg_downloads/datasheets_product_briefs/SiMa_SOM_Carrier_Board_Data_Sheet_Rev1.2_1-24-2026.pdf) — pinouts and electrical detail
+- [Modalix SoM Product-Brief (PDF)](https://sima.ai/wp-content/uploads/2026/07/Modalix-SoM-Product-Brief_v2.4-1.pdf)
 
 ---
 
