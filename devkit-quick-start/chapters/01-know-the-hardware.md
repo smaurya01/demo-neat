@@ -17,7 +17,7 @@ Modalix for carrier-board and product integration, and every DevKit documented h
 silicon.
 
 <p align="center">
-  <img src="images/modalix-arch.png" alt="MLSoC Modalix architecture block diagram" width="620">
+  <img src="../images/modalix-arch.png" alt="MLSoC Modalix architecture block diagram" width="620">
 </p>
 
 ---
@@ -72,7 +72,7 @@ cooling fan.
 [Chapter 11](11-install-simaai-sentinel.md) installs the tool that shows temperature, power and MLA
 utilisation live.
 
-![Inside the enclosure: heatsink and cooling fan, MIPI CSI ribbon connectors on the left, GPIO header on the right](images/qsg-devkit-inside.png)
+![Inside the enclosure: heatsink and cooling fan, MIPI CSI ribbon connectors on the left, GPIO header on the right](../images/qsg-devkit-inside.png)
 
 ---
 
@@ -85,4 +85,4 @@ utilisation live.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Contents](README.md) | [All chapters](README.md) | [Chapter 2 · The board and its connections](02-board-and-connections.md) |
+| [Contents](../README.md) | [All chapters](../README.md) | [Chapter 2 · The board and its connections](02-board-and-connections.md) |

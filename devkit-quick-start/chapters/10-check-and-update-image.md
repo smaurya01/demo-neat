@@ -147,4 +147,4 @@ More detail: [Firmware Update](https://developer.sima.ai/hardware/getting-starte
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 9 · Mount the NVMe](09-mount-nvme.md) | [All chapters](README.md) | [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) |
+| [Chapter 9 · Mount the NVMe](09-mount-nvme.md) | [All chapters](../README.md) | [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) |

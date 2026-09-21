@@ -117,4 +117,4 @@ That is normal and not a problem to fix.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 12 · Install pyneat](12-install-pyneat.md) | [All chapters](README.md) | [Chapter 14 · LLiMa](14-llima.md) |
+| [Chapter 12 · Install pyneat](12-install-pyneat.md) | [All chapters](../README.md) | [Chapter 14 · LLiMa](14-llima.md) |

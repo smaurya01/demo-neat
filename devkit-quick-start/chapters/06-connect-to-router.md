@@ -13,7 +13,7 @@ The board arrives configured for DHCP. Plug it into a router and it gets an addr
 route with no configuration at all. It is reachable from **every** machine on your LAN, not just one
 laptop, and it stays reachable when you close your laptop lid.
 
-![Board on your LAN via a router](images/net-router.svg)
+![Board on your LAN via a router](../images/net-router.svg)
 
 ---
 
@@ -90,4 +90,4 @@ sima@modalix:~$ ip link show end0
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 5 · Share the host's internet](05-internet-sharing.md) | [All chapters](README.md) | [Chapter 7 · Static IP connection](07-static-connection.md) |
+| [Chapter 5 · Share the host's internet](05-internet-sharing.md) | [All chapters](../README.md) | [Chapter 7 · Static IP connection](07-static-connection.md) |

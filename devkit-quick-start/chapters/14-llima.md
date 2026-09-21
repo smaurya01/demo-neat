@@ -127,4 +127,4 @@ with MLA utilisation that rises and falls per token rather than sitting flat.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 13 · Object detection on images](13-object-detection.md) | [All chapters](README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 13 · Object detection on images](13-object-detection.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |

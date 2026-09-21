@@ -13,9 +13,9 @@
 Your host PC is on Wi-Fi and the DevKit has no network drop of its own. The host lends the board its
 internet connection over the Ethernet port. One cable, no router configuration.
 
-![DevKit connected directly to a laptop through a USB-C Ethernet adapter](images/qsg-remote-setup.png)
+![DevKit connected directly to a laptop through a USB-C Ethernet adapter](../images/qsg-remote-setup.png)
 
-![Host shares its internet with the board](images/net-internet-sharing.svg)
+![Host shares its internet with the board](../images/net-internet-sharing.svg)
 
 The trade-off: **the board is only reachable from that host.** Nothing else on your network can see
 it, and it disappears when you unplug the laptop.
@@ -154,4 +154,4 @@ If forwarding is off or the MASQUERADE rule is missing, the host isn't actually 
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 4 · The serial console](04-serial-console.md) | [All chapters](README.md) | [Chapter 6 · Connect to a router](06-connect-to-router.md) |
+| [Chapter 4 · The serial console](04-serial-console.md) | [All chapters](../README.md) | [Chapter 6 · Connect to a router](06-connect-to-router.md) |

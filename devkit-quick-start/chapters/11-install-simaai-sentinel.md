@@ -69,4 +69,4 @@ The two tools answer different questions: `htop` tells you which *process* is bu
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 10 · Check and update the board image](10-check-and-update-image.md) | [All chapters](README.md) | [Chapter 12 · Install pyneat](12-install-pyneat.md) |
+| [Chapter 10 · Check and update the board image](10-check-and-update-image.md) | [All chapters](../README.md) | [Chapter 12 · Install pyneat](12-install-pyneat.md) |

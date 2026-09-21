@@ -12,7 +12,7 @@
 A lab bench where the address must never change, or a host whose network settings you cannot alter.
 Direct cable between host and board, both sides configured by hand.
 
-![Direct cable with static IPs on both ends](images/net-static.svg)
+![Direct cable with static IPs on both ends](../images/net-static.svg)
 
 > **This gives you host-to-board connectivity, not internet on the board.** Package installs,
 > `sima-cli update` and model downloads will all fail until you add NAT — see
@@ -139,4 +139,4 @@ you are removing the very address you would be connected on.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 6 · Connect to a router](06-connect-to-router.md) | [All chapters](README.md) | [Chapter 8 · Install sima-cli](08-install-sima-cli.md) |
+| [Chapter 6 · Connect to a router](06-connect-to-router.md) | [All chapters](../README.md) | [Chapter 8 · Install sima-cli](08-install-sima-cli.md) |

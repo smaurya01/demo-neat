@@ -13,7 +13,7 @@ disk space.
 
 The board has a **500 GB NVMe** for exactly this. Mount it before you download anything.
 
-![eMMC versus NVMe — where files belong](images/storage-layout.svg)
+![eMMC versus NVMe — where files belong](../images/storage-layout.svg)
 
 
 ---
@@ -121,4 +121,4 @@ sima@modalix:~$ sima-cli nvme format
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 8 · Install sima-cli](08-install-sima-cli.md) | [All chapters](README.md) | [Chapter 10 · Check and update the board image](10-check-and-update-image.md) |
+| [Chapter 8 · Install sima-cli](08-install-sima-cli.md) | [All chapters](../README.md) | [Chapter 10 · Check and update the board image](10-check-and-update-image.md) |

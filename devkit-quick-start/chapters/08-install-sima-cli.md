@@ -114,4 +114,4 @@ If `which` finds nothing, see
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 7 · Static IP connection](07-static-connection.md) | [All chapters](README.md) | [Chapter 9 · Mount the NVMe](09-mount-nvme.md) |
+| [Chapter 7 · Static IP connection](07-static-connection.md) | [All chapters](../README.md) | [Chapter 9 · Mount the NVMe](09-mount-nvme.md) |

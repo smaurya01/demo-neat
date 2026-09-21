@@ -193,4 +193,4 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 14 · LLiMa](14-llima.md) | [All chapters](README.md) | [Miscellaneous](miscellaneous.md) |
+| [Chapter 14 · LLiMa](14-llima.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |

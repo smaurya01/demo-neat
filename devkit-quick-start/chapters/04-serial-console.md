@@ -149,4 +149,4 @@ Full reference: [Configure Serial Connection](https://developer.sima.ai/hardware
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 3 · HDMI, keyboard and mouse](03-hdmi-and-peripherals.md) | [All chapters](README.md) | [Chapter 5 · Share the host's internet](05-internet-sharing.md) |
+| [Chapter 3 · HDMI, keyboard and mouse](03-hdmi-and-peripherals.md) | [All chapters](../README.md) | [Chapter 5 · Share the host's internet](05-internet-sharing.md) |

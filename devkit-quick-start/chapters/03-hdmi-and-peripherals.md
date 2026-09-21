@@ -18,14 +18,14 @@ If neither applies, skip to [Chapter 4](04-serial-console.md).
 
 ## Connecting it up
 
-![Standalone desktop setup](images/hdmi-setup.svg)
+![Standalone desktop setup](../images/hdmi-setup.svg)
 
 1. **HDMI cable** from the DevKit to your monitor. Not supplied.
 2. **USB keyboard and mouse** into any of the four USB 3.0 ports. No drivers, no configuration.
 3. Power on. The board boots to a desktop.
 4. Log in with `sima` / `edgeai`.
 
-![DevKit on a desk with monitor, keyboard, mouse and USB camera](images/qsg-local-setup.png)
+![DevKit on a desk with monitor, keyboard, mouse and USB camera](../images/qsg-local-setup.png)
 
 ---
 
@@ -69,4 +69,4 @@ the monitor entirely.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 2 · The board and its connections](02-board-and-connections.md) | [All chapters](README.md) | [Chapter 4 · The serial console](04-serial-console.md) |
+| [Chapter 2 · The board and its connections](02-board-and-connections.md) | [All chapters](../README.md) | [Chapter 4 · The serial console](04-serial-console.md) |

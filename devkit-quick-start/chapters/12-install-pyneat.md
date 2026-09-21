@@ -106,4 +106,4 @@ Full reference: [Python API](https://developer.sima.ai/software/reference/python
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) | [All chapters](README.md) | [Chapter 13 · Object detection on images](13-object-detection.md) |
+| [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) | [All chapters](../README.md) | [Chapter 13 · Object detection on images](13-object-detection.md) |

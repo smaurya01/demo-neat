@@ -144,4 +144,4 @@ Once enumerated, the software chapters ([8](08-install-sima-cli.md) onward) appl
 
 | ← Previous | Contents |
 |:---|---:|
-| [Troubleshooting](troubleshooting.md) | [All chapters](README.md) |
+| [Troubleshooting](troubleshooting.md) | [All chapters](../README.md) |

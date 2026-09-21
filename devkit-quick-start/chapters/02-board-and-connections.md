@@ -6,7 +6,7 @@
 
 ## What's in the box
 
-![DevKit, 12 V power supply and USB-C serial cable as shipped](images/qsg-package.png)
+![DevKit, 12 V power supply and USB-C serial cable as shipped](../images/qsg-package.png)
 
 - Modalix SOM mounted on the SOM carrier board, in its enclosure
 - 12 V power supply with regional plug adapters
@@ -29,11 +29,11 @@ anything without it.
 
 ## The ports
 
-![The DevKit rear panel, with ports labelled on the chassis](images/qsg-devkit-interfaces.png)
+![The DevKit rear panel, with ports labelled on the chassis](../images/qsg-devkit-interfaces.png)
 
 The same interfaces, laid out schematically:
 
-![DevKit 3.0 external interfaces](images/board-ports.svg)
+![DevKit 3.0 external interfaces](../images/board-ports.svg)
 
 | Interface | Detail |
 |---|---|
@@ -88,4 +88,4 @@ covers Linux, macOS, Windows and the browser-based console.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 1 · Know the hardware](01-know-the-hardware.md) | [All chapters](README.md) | [Chapter 3 · HDMI, keyboard and mouse](03-hdmi-and-peripherals.md) |
+| [Chapter 1 · Know the hardware](01-know-the-hardware.md) | [All chapters](../README.md) | [Chapter 3 · HDMI, keyboard and mouse](03-hdmi-and-peripherals.md) |
