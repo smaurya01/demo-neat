@@ -30,30 +30,29 @@ straight to the one you need.
 
 ### Part 2 — Getting it on the network
 
-Pick **one** of these three. They are alternatives, not steps.
+Pick **one** of these two. They are alternatives, not steps.
 
 | # | Chapter | Choose it when |
 |---|---|---|
 | 5 | [Share the host's internet](chapters/05-internet-sharing.md) | One cable to your laptop, no router available |
 | 6 | [Connect to a router](chapters/06-connect-to-router.md) | **Recommended.** Normal LAN with DHCP and internet |
-| 7 | [Static IP connection](chapters/07-static-connection.md) | You need a fixed, predictable address |
 
 ### Part 3 — Software setup
 
 | # | Chapter | What you get out of it |
 |---|---|---|
-| 8 | [Install sima-cli](chapters/08-install-sima-cli.md) | The tool everything else depends on |
-| 9 | [Mount the NVMe](chapters/09-mount-nvme.md) | Somewhere to actually put models and data |
-| 10 | [Check and update the board image](chapters/10-check-and-update-image.md) | Get onto a known-good software version |
-| 11 | [Install simaai-sentinel](chapters/11-install-simaai-sentinel.md) | See temperature, power, CPU and MLA usage |
-| 12 | [Install pyneat](chapters/12-install-pyneat.md) | The Python API for the accelerator |
+| 7 | [Install sima-cli](chapters/07-install-sima-cli.md) | The tool everything else depends on |
+| 8 | [Mount the NVMe](chapters/08-mount-nvme.md) | Somewhere to actually put models and data |
+| 9 | [Check and update the board image](chapters/09-check-and-update-image.md) | Get onto a known-good software version |
+| 10 | [Install simaai-sentinel](chapters/10-install-simaai-sentinel.md) | See temperature, power, CPU and MLA usage |
+| 11 | [Install pyneat](chapters/11-install-pyneat.md) | The Python API for the accelerator |
 
 ### Part 4 — Running something
 
 | # | Chapter | What you get out of it |
 |---|---|---|
-| 13 | [Object detection on images](chapters/13-object-detection.md) | Your first real inference on the MLA |
-| 14 | [LLiMa — search, list, pull](chapters/14-llima.md) | Run a language model on the board |
+| 12 | [Object detection on images](chapters/12-object-detection.md) | Your first real inference on the MLA |
+| 13 | [LLiMa — search, list, pull](chapters/13-llima.md) | Run a language model on the board |
 
 ### Reference
 

@@ -50,7 +50,7 @@ Then `ssh sima@<devkit-ip>`.
 - Host and board are on different subnets, or discovery traffic is blocked.
 - The board is on **older firmware** that does not advertise itself. Reach it over
   [serial](02-board-and-connections.md#the-serial-console--your-safety-net), run
-  `cat /etc/buildinfo`, and [update it](10-check-and-update-image.md).
+  `cat /etc/buildinfo`, and [update it](09-check-and-update-image.md).
 
 ### The board has an IP but no internet
 
@@ -65,24 +65,17 @@ Address works, name fails → **DNS**. Both fail → **routing**.
 
 Most common causes, in order:
 
-1. No default route on a static profile — set `ipv4.gateway` ([Chapter 7](07-static-connection.md))
-2. No DNS server configured — set `ipv4.dns`
-3. IP forwarding or NAT not enabled on the sharing host ([Chapter 5](05-internet-sharing.md))
+1. No DNS server configured — set `ipv4.dns`
+2. IP forwarding or NAT not enabled on the sharing host ([Chapter 5](05-internet-sharing.md))
 
 ### Internet sharing gives the board no address
 
 - The board must be on the **DHCP** profile: `sudo nmcli connection up end0-dhcp`
-  ([both directions](05-internet-sharing.md#switching-between-dhcp-and-static))
+  ([switching profiles](05-internet-sharing.md#switching-between-dhcp-and-static))
 - The host's wired connection must be **Shared to other computers**, then toggled off and on
 - The cable must be in the host's own Ethernet port, not a dock presenting a different interface
 - Scan the sharing subnet: `nmap -sn 10.42.0.0/24 | grep report` (Ubuntu),
   `192.168.137.0/24` (Windows), `192.168.2.0/24` (macOS)
-
-### Static IPs, but the two machines cannot see each other
-
-Almost always: **only one side was configured.** Both host and board need addresses in the same
-subnet — see [Chapter 6](07-static-connection.md#the-mistake-almost-everyone-makes). Test in both
-directions; a one-way failure points at a firewall rather than addressing.
 
 ---
 
@@ -150,7 +143,7 @@ sima@modalix:~$ du -sh ~/* 2>/dev/null | sort -h | tail
 ```
 
 Move models, datasets and outputs to `/media/nvme` and point your applications there
-([Chapter 9](09-mount-nvme.md)).
+([Chapter 8](08-mount-nvme.md)).
 
 ---
 
@@ -169,7 +162,7 @@ first. Units shipped before mid-December 2025 are typically Yocto.
 ### "It built but it won't run"
 
 Almost always a version mismatch between board software, Neat Library and Neat SDK. Check all three
-against the [compatibility table](10-check-and-update-image.md#which-version-should-you-be-on) and
+against the [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on) and
 upgrade them as a set.
 
 ```bash
@@ -193,4 +186,4 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 14 · LLiMa](14-llima.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |
+| [Chapter 13 · LLiMa](13-llima.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |

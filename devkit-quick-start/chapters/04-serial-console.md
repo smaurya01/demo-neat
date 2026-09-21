@@ -14,8 +14,8 @@ The serial console does not care. It is a direct wire to the board's console, in
 addresses, DHCP, routing and firewalls. It is how you:
 
 - Read the board's IP address when you don't know it
-- Change network settings safely ([Chapters 5](05-internet-sharing.md)–[7](07-static-connection.md))
-- Watch an update that reboots partway through ([Chapter 10](10-check-and-update-image.md))
+- Change network settings safely ([Chapters 5](05-internet-sharing.md)–[6](06-connect-to-router.md))
+- Watch an update that reboots partway through ([Chapter 9](09-check-and-update-image.md))
 - Recover a board you have locked yourself out of
 
 Set it up now, while nothing is broken.
@@ -36,7 +36,7 @@ The other end goes into a USB-A port on your computer. A hub is fine.
 
 ## Linux and macOS
 
-With `sima-cli` installed on your host ([Chapter 8](08-install-sima-cli.md)):
+With `sima-cli` installed on your host ([Chapter 7](07-install-sima-cli.md)):
 
 ```bash
 sima-user@host:~$ sima-cli serial

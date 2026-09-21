@@ -1,4 +1,4 @@
-# Chapter 11 — Install simaai-sentinel
+# Chapter 10 — Install simaai-sentinel
 
 *See what the chip is actually doing: temperature, power, CPU, memory and MLA usage.*
 
@@ -69,4 +69,4 @@ The two tools answer different questions: `htop` tells you which *process* is bu
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 10 · Check and update the board image](10-check-and-update-image.md) | [All chapters](../README.md) | [Chapter 12 · Install pyneat](12-install-pyneat.md) |
+| [Chapter 9 · Check and update the board image](09-check-and-update-image.md) | [All chapters](../README.md) | [Chapter 11 · Install pyneat](11-install-pyneat.md) |

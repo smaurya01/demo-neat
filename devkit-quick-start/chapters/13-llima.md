@@ -1,4 +1,4 @@
-# Chapter 14 — LLiMa: search, list, pull
+# Chapter 13 — LLiMa: search, list, pull
 
 *Run a language or vision-language model directly on the board.*
 
@@ -61,7 +61,7 @@ sima@modalix:~$ llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 
 > **Check where it lands.** Models are large. The default location is
 > `/media/nvme/llima/models` — on the NVMe, which is where you want it. If your NVMe is not mounted
-> ([Chapter 9](09-mount-nvme.md)), a download will fill the root filesystem and cause the confusing
+> ([Chapter 8](08-mount-nvme.md)), a download will fill the root filesystem and cause the confusing
 > failures described there. Mount it first.
 
 ---
@@ -111,7 +111,7 @@ sima@modalix:~$ df -h /media/nvme
 
 ## Watch it work
 
-Run `simaai-sentinel` ([Chapter 11](11-install-simaai-sentinel.md)) in a second terminal. Generative
+Run `simaai-sentinel` ([Chapter 10](10-install-simaai-sentinel.md)) in a second terminal. Generative
 models show a very different profile from vision models — memory-bound rather than compute-bound,
 with MLA utilisation that rises and falls per token rather than sitting flat.
 
@@ -119,7 +119,7 @@ with MLA utilisation that rises and falls per token rather than sitting flat.
 
 ## Where to go next
 
-- [Chapter 13](13-object-detection.md) — vision inference, if you skipped it
+- [Chapter 12](12-object-detection.md) — vision inference, if you skipped it
 - [Tutorials](https://developer.sima.ai/software/tutorials) — the full series
 - [Troubleshooting](troubleshooting.md) — when something misbehaves
 
@@ -127,4 +127,4 @@ with MLA utilisation that rises and falls per token rather than sitting flat.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 13 · Object detection on images](13-object-detection.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 12 · Object detection on images](12-object-detection.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |

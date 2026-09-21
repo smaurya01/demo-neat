@@ -2,8 +2,8 @@
 
 *The recommended path. Plug it into your network and let DHCP do the work.*
 
-> **Pick one networking chapter.** This one, [Chapter 5](05-internet-sharing.md) or
-> [Chapter 7](07-static-connection.md) — they are alternatives.
+> **Pick one networking chapter.** This one or [Chapter 5](05-internet-sharing.md) — they are
+> alternatives.
 
 ---
 
@@ -73,12 +73,8 @@ If the address ping succeeds and the name ping fails, your DNS is wrong, not you
 ## Keeping the same address
 
 DHCP leases can change across reboots, which is mildly annoying when you have scripts pointing at an
-IP. Two options:
-
-- **A DHCP reservation on your router**, tied to the board's MAC address. Best of both — the board
-  stays on DHCP, but always gets the same address.
-- **A static IP on the board** — see [Chapter 7](07-static-connection.md). More control, more ways
-  to get it wrong.
+IP. The fix: **a DHCP reservation on your router**, tied to the board's MAC address. Best of both
+— the board stays on DHCP, but always gets the same address.
 
 Find the MAC address with:
 
@@ -90,4 +86,4 @@ sima@modalix:~$ ip link show end0
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 5 · Share the host's internet](05-internet-sharing.md) | [All chapters](../README.md) | [Chapter 7 · Static IP connection](07-static-connection.md) |
+| [Chapter 5 · Share the host's internet](05-internet-sharing.md) | [All chapters](../README.md) | [Chapter 7 · Install sima-cli](07-install-sima-cli.md) |

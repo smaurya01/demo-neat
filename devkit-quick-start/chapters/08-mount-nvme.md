@@ -1,4 +1,4 @@
-# Chapter 9 — Mount the NVMe
+# Chapter 8 — Mount the NVMe
 
 *Give yourself somewhere to put things. In practice this is not optional.*
 
@@ -6,10 +6,9 @@
 
 ## Why this matters more than it sounds
 
-The root filesystem lives on a 16 GB eMMC with roughly **1–2 GB free**. A couple of model archives
-will fill it. And a full root filesystem on this board does not fail cleanly — you get installs that
-die halfway, logs that stop being written, and services misbehaving in ways that look unrelated to
-disk space.
+The root filesystem is small — a couple of model archives will fill it. And a full root filesystem
+on this board does not fail cleanly — you get installs that die halfway, logs that stop being
+written, and services misbehaving in ways that look unrelated to disk space.
 
 The board has a **500 GB NVMe** for exactly this. Mount it before you download anything.
 
@@ -121,4 +120,4 @@ sima@modalix:~$ sima-cli nvme format
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 8 · Install sima-cli](08-install-sima-cli.md) | [All chapters](../README.md) | [Chapter 10 · Check and update the board image](10-check-and-update-image.md) |
+| [Chapter 7 · Install sima-cli](07-install-sima-cli.md) | [All chapters](../README.md) | [Chapter 9 · Check and update the board image](09-check-and-update-image.md) |

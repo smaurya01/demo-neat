@@ -1,4 +1,4 @@
-# Chapter 12 — Install pyneat
+# Chapter 11 — Install pyneat
 
 *The Neat Library and its Python API — what your applications actually call.*
 
@@ -43,7 +43,7 @@ sima@modalix:~$ sima-cli neat install apps@v0.5.0
 
 > **Versions are a matched set.** Neat Apps 0.5.0 goes with Neat Library 0.4.0, which goes with
 > board software 2.1.3. Mixing them is the usual cause of "it built but it won't run" — see the
-> [compatibility table](10-check-and-update-image.md#which-version-should-you-be-on).
+> [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on).
 
 ---
 
@@ -96,7 +96,7 @@ sima-user@host:~$ ssh sima@<devkit-ip> 'source $HOME/pyneat/bin/activate; python
 ```
 
 The two objects you will meet first are **`Model`** — load a compiled archive and run it — and
-**`Graph`** — wire several stages together into a pipeline. [Chapter 13](13-object-detection.md)
+**`Graph`** — wire several stages together into a pipeline. [Chapter 12](12-object-detection.md)
 uses `Model`.
 
 Full reference: [Python API](https://developer.sima.ai/software/reference/pythonapi/) ·
@@ -106,4 +106,4 @@ Full reference: [Python API](https://developer.sima.ai/software/reference/python
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) | [All chapters](../README.md) | [Chapter 13 · Object detection on images](13-object-detection.md) |
+| [Chapter 10 · Install simaai-sentinel](10-install-simaai-sentinel.md) | [All chapters](../README.md) | [Chapter 12 · Object detection on images](12-object-detection.md) |

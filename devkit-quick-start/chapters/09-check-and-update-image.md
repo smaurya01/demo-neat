@@ -1,4 +1,4 @@
-# Chapter 10 — Check and update the board image
+# Chapter 9 — Check and update the board image
 
 *Find out what the board is running, then get it onto a known-good version.*
 
@@ -147,4 +147,4 @@ More detail: [Firmware Update](https://developer.sima.ai/hardware/getting-starte
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 9 · Mount the NVMe](09-mount-nvme.md) | [All chapters](../README.md) | [Chapter 11 · Install simaai-sentinel](11-install-simaai-sentinel.md) |
+| [Chapter 8 · Mount the NVMe](08-mount-nvme.md) | [All chapters](../README.md) | [Chapter 10 · Install simaai-sentinel](10-install-simaai-sentinel.md) |

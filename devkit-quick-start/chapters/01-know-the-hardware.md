@@ -69,7 +69,7 @@ The practical consequence:
 
 Typical draw is **8–12 W** depending on workload. The enclosure contains a heatsink and an active
 cooling fan.
-[Chapter 11](11-install-simaai-sentinel.md) installs the tool that shows temperature, power and MLA
+[Chapter 10](10-install-simaai-sentinel.md) installs the tool that shows temperature, power and MLA
 utilisation live.
 
 ![Inside the enclosure: heatsink and cooling fan, MIPI CSI ribbon connectors on the left, GPIO header on the right](../images/qsg-devkit-inside.png)

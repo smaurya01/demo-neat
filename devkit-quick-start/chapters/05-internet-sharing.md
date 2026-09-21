@@ -2,9 +2,9 @@
 
 *One cable from your laptop to the board. No router needed.*
 
-> **Pick one networking chapter.** This one, [Chapter 6](06-connect-to-router.md) or
-> [Chapter 7](07-static-connection.md) — they are alternatives. If you have a router available,
-> [Chapter 6](06-connect-to-router.md) is simpler and gives a better result.
+> **Pick one networking chapter.** This one or [Chapter 6](06-connect-to-router.md) — they are
+> alternatives. If you have a router available, [Chapter 6](06-connect-to-router.md) is simpler
+> and gives a better result.
 
 ---
 
@@ -13,7 +13,9 @@
 Your host PC is on Wi-Fi and the DevKit has no network drop of its own. The host lends the board its
 internet connection over the Ethernet port. One cable, no router configuration.
 
-![DevKit connected directly to a laptop through a USB-C Ethernet adapter](../images/qsg-remote-setup.png)
+<p align="center">
+  <img src="../images/qsg-remote-setup.jpg" alt="DevKit connected directly to a laptop through a USB-C Ethernet adapter" width="480">
+</p>
 
 ![Host shares its internet with the board](../images/net-internet-sharing.svg)
 
@@ -70,16 +72,6 @@ Required for this chapter, and for [Chapter 6](06-connect-to-router.md):
 
 ```bash
 sima@modalix:~$ sudo nmcli connection up end0-dhcp
-sima@modalix:~$ nmcli -f NAME,DEVICE,STATE connection show --active
-sima@modalix:~$ networkctl status
-```
-
-### To static
-
-Required for [Chapter 7](07-static-connection.md):
-
-```bash
-sima@modalix:~$ sudo nmcli connection up end0-static
 sima@modalix:~$ nmcli -f NAME,DEVICE,STATE connection show --active
 sima@modalix:~$ networkctl status
 ```

@@ -119,7 +119,7 @@ sudo modprobe simaai_pcie
 sima-user@host:~$ lspci | grep -i sima
 ```
 
-Once enumerated, the software chapters ([8](08-install-sima-cli.md) onward) apply as written.
+Once enumerated, the software chapters ([7](07-install-sima-cli.md) onward) apply as written.
 
 ---
 

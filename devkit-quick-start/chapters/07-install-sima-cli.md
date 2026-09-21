@@ -1,4 +1,4 @@
-# Chapter 8 — Install sima-cli
+# Chapter 7 — Install sima-cli
 
 *The tool everything else depends on. Install it twice: once on your host, once on the board.*
 
@@ -81,8 +81,8 @@ Follow the prompt. Do this **on both machines**, host and board.
 |---|---|
 | `sima-cli --version` | Confirm the install |
 | `sima-cli login` | Authenticate for downloads |
-| `sima-cli update` | Update the board image — [Chapter 10](10-check-and-update-image.md) |
-| `sima-cli nvme remount` / `format` | Mount the NVMe — [Chapter 9](09-mount-nvme.md) |
+| `sima-cli update` | Update the board image — [Chapter 9](09-check-and-update-image.md) |
+| `sima-cli nvme remount` / `format` | Mount the NVMe — [Chapter 8](08-mount-nvme.md) |
 | `sima-cli network` | Guided network configuration |
 | `sima-cli neat install <pkg>` | Install Neat packages on the board |
 | `sima-cli modelzoo` | Pre-compiled models for the MLA |
@@ -114,4 +114,4 @@ If `which` finds nothing, see
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 7 · Static IP connection](07-static-connection.md) | [All chapters](../README.md) | [Chapter 9 · Mount the NVMe](09-mount-nvme.md) |
+| [Chapter 6 · Connect to a router](06-connect-to-router.md) | [All chapters](../README.md) | [Chapter 8 · Mount the NVMe](08-mount-nvme.md) |

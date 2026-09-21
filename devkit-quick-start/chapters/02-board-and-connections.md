@@ -6,7 +6,7 @@
 
 ## What's in the box
 
-![DevKit, 12 V power supply and USB-C serial cable as shipped](../images/qsg-package.png)
+![DevKit, 12 V power supply and USB-C serial cable as shipped](../images/qsg-package.jpg)
 
 - Modalix SOM mounted on the SOM carrier board, in its enclosure
 - 12 V power supply with regional plug adapters
@@ -29,7 +29,7 @@ anything without it.
 
 ## The ports
 
-![The DevKit rear panel, with ports labelled on the chassis](../images/qsg-devkit-interfaces.png)
+![The DevKit rear panel, with ports labelled on the chassis](../images/qsg-devkit-interfaces.jpg)
 
 The same interfaces, laid out schematically:
 
@@ -46,7 +46,7 @@ The same interfaces, laid out schematically:
 | **microSD** | Alternate boot media. |
 | **40-pin GPIO** | Expansion header. |
 
-Internally there is an **M.2 slot with a 500 GB NVMe drive** — see [Chapter 9](09-mount-nvme.md).
+Internally there is an **M.2 slot with a 500 GB NVMe drive** — see [Chapter 8](08-mount-nvme.md).
 
 ---
 
@@ -82,7 +82,7 @@ covers Linux, macOS, Windows and the browser-based console.
 |---|---|
 | Use it as a desktop machine with a monitor | [Chapter 3](03-hdmi-and-peripherals.md) |
 | Set up the serial console — **do this early** | [Chapter 4](04-serial-console.md) |
-| Get it on the network — **do this one** | Chapters [5](05-internet-sharing.md), [6](06-connect-to-router.md) or [7](07-static-connection.md) |
+| Get it on the network — **do this one** | Chapters [5](05-internet-sharing.md) or [6](06-connect-to-router.md) |
 
 ---
 
