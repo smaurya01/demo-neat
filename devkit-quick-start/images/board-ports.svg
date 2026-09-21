@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect x="0" y="0" width="760" height="400" fill="#f6f8fa" rx="8"/>
+  <text x="380" y="30" text-anchor="middle" font-size="17" font-weight="700" fill="#1f2328">DevKit 3.0 — external interfaces</text>
+  <text x="380" y="50" text-anchor="middle" font-size="12" fill="#57606a">Schematic layout. Physical port positions vary by enclosure revision.</text>
+
+  <rect x="60" y="72" width="640" height="150" rx="10" fill="#ffffff" stroke="#57606a" stroke-width="2"/>
+  <text x="80" y="95" font-size="12" font-weight="700" fill="#57606a">Modalix DevKit 3.0 enclosure</text>
+
+  <rect x="82" y="110" width="92" height="46" rx="4" fill="#ffebe9" stroke="#cf222e" stroke-width="1.5"/>
+  <text x="128" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#82071e">12 V DC</text>
+  <text x="128" y="147" text-anchor="middle" font-size="10" fill="#82071e">barrel jack</text>
+
+  <rect x="188" y="110" width="92" height="46" rx="4" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+  <text x="234" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#0a3069">RJ45</text>
+  <text x="234" y="147" text-anchor="middle" font-size="10" fill="#0a3069">1 GbE · DHCP</text>
+
+  <rect x="294" y="110" width="92" height="46" rx="4" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+  <text x="340" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#633c01">USB-C</text>
+  <text x="340" y="147" text-anchor="middle" font-size="10" fill="#633c01">UART console</text>
+
+  <rect x="400" y="110" width="118" height="46" rx="4" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+  <text x="459" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#0f5323">USB 3.0 x 4</text>
+  <text x="459" y="147" text-anchor="middle" font-size="10" fill="#0f5323">kbd · mouse · camera</text>
+
+  <rect x="532" y="110" width="92" height="46" rx="4" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+  <text x="578" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#512a97">HDMI 1.4</text>
+  <text x="578" y="147" text-anchor="middle" font-size="10" fill="#512a97">4K30 / 1080p60</text>
+
+  <rect x="638" y="110" width="46" height="46" rx="4" fill="#eaeef2" stroke="#57606a" stroke-width="1.5"/>
+  <text x="661" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2328">SD</text>
+  <text x="661" y="147" text-anchor="middle" font-size="9" fill="#57606a">boot</text>
+
+  <rect x="82" y="168" width="200" height="40" rx="4" fill="#eaeef2" stroke="#57606a" stroke-width="1.5"/>
+  <text x="182" y="185" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2328">MIPI CSI x 2 (2-lane)</text>
+  <text x="182" y="200" text-anchor="middle" font-size="10" fill="#57606a">22-pin Rev 1/3 · 30-pin Rev 2</text>
+
+  <rect x="296" y="168" width="180" height="40" rx="4" fill="#eaeef2" stroke="#57606a" stroke-width="1.5"/>
+  <text x="386" y="185" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2328">40-pin GPIO header</text>
+  <text x="386" y="200" text-anchor="middle" font-size="10" fill="#57606a">expansion</text>
+
+  <rect x="490" y="168" width="194" height="40" rx="4" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+  <text x="587" y="185" text-anchor="middle" font-size="11" font-weight="700" fill="#0a3069">M.2 NVMe 500 GB (internal)</text>
+  <text x="587" y="200" text-anchor="middle" font-size="10" fill="#0a3069">mount it — see Chapter 8</text>
+
+  <rect x="60" y="245" width="640" height="132" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="80" y="268" font-size="13" font-weight="700" fill="#1f2328">In the box</text>
+  <text x="80" y="289" font-size="11.5" fill="#57606a">DevKit in enclosure  ·  12 V PSU + plug adapters  ·  USB-A to USB-C cable (serial)  ·  quick-start card</text>
+  <text x="80" y="316" font-size="13" font-weight="700" fill="#cf222e">Not in the box — source these yourself</text>
+  <text x="80" y="337" font-size="11.5" fill="#57606a">Ethernet cable  ·  HDMI cable  ·  monitor  ·  USB keyboard and mouse  ·  MIPI cameras</text>
+  <text x="80" y="362" font-size="11.5" font-weight="700" fill="#82071e">Default login:  sima  /  edgeai</text>
+</svg>
