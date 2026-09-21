@@ -127,4 +127,4 @@ with MLA utilisation that rises and falls per token rather than sitting flat.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 12 · Object detection on images](12-object-detection.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 12 · Object detection on images](12-object-detection.md) | [All chapters](../README.md) | [Chapter 14 · The Neat stack](14-neat-components.md) |

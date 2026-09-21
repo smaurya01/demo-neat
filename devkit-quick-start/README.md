@@ -54,6 +54,16 @@ Pick **one** of these two. They are alternatives, not steps.
 | 12 | [Object detection on images](chapters/12-object-detection.md) | Your first real inference on the MLA |
 | 13 | [LLiMa — search, list, pull](chapters/13-llima.md) | Run a language model on the board |
 
+### Part 5 — The development environment
+
+Everything above runs on the board. This part sets up the host side.
+
+| # | Chapter | What you get out of it |
+|---|---|---|
+| 14 | [The Neat stack](chapters/14-neat-components.md) | What each piece of Neat is, where it runs, which repo it lives in |
+| 15 | [Install the Neat SDK](chapters/15-install-neat-sdk.md) | Cross-compilation and one workspace shared by host, SDK and board |
+| 16 | [Neat Insight](chapters/16-neat-insight.md) | A browser console for streams, output and runtime state |
+
 ### Reference
 
 - [Troubleshooting](chapters/troubleshooting.md) — symptom-first, for when something doesn't work
