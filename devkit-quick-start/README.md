@@ -3,7 +3,9 @@
 A chapter-by-chapter walkthrough that takes a Modalix DevKit 3.0 from a sealed box to running
 object detection and a local LLM.
 
-![Modalix DevKit 3.0](images/qsg-devkit-board.png)
+<p align="center">
+  <img src="images/qsg-devkit-board.png" alt="Modalix DevKit 3.0" width="520">
+</p>
 
 Work through it in order the first time. After that, each chapter stands on its own — jump
 straight to the one you need.
@@ -57,21 +59,6 @@ Pick **one** of these three. They are alternatives, not steps.
 
 - [Troubleshooting](troubleshooting.md) — symptom-first, for when something doesn't work
 - [Miscellaneous](miscellaneous.md) — command reference, defaults, links, PCIe card notes
-
----
-
-## The shortest path
-
-If you just want it working and don't care why:
-
-1. [Chapter 2](02-board-and-connections.md) — plug in power and Ethernet
-2. [Chapter 6](06-connect-to-router.md) — get it on your LAN
-3. [Chapter 8](08-install-sima-cli.md) — install `sima-cli`
-4. [Chapter 10](10-check-and-update-image.md) — update to 2.1.3
-5. [Chapter 9](09-mount-nvme.md) — mount the NVMe
-6. [Chapter 13](13-object-detection.md) — run detection
-
-Everything else is optional or explanatory.
 
 ---
 

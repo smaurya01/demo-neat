@@ -54,7 +54,7 @@ Work through these in order:
    sima@modalix:~$ sudo reboot
    ```
 4. **Try a different cable or monitor.** HDMI 1.4 is undemanding, but marginal cables do fail.
-5. **Confirm the board is alive over serial** — see [Chapter 2](02-board-and-connections.md#the-serial-console--your-safety-net).
+5. **Confirm the board is alive over serial** — see [Chapter 4 · The serial console](04-serial-console.md).
    If serial gives you a prompt, the board is fine and the problem is purely the display path.
 
 ---
