@@ -32,7 +32,7 @@ it, and it disappears when you unplug the laptop.
 4. Connect the cable from host to DevKit and power the board on
 
 The host now runs DHCP and NAT on `10.42.0.0/24` — it takes `10.42.0.1` and hands the board
-something like `10.42.0.203`.
+something like `10.42.0.xxx`.
 
 Find the board:
 
@@ -49,7 +49,7 @@ sima-user@host:~$ nmap -sn 10.42.0.0/24 | grep report      # sudo apt install nm
 Then connect:
 
 ```bash
-sima-user@host:~$ ssh sima@10.42.0.203
+sima-user@host:~$ ssh sima@10.42.0.xxx
 ```
 
 > **The board must be on DHCP** for this to work. That is the factory default — but if you
@@ -85,9 +85,47 @@ effect, which is what you want before trusting anything else.
 If the profile activates but no address appears, nothing is serving DHCP on the other end — go back
 and check the host's sharing setting.
 
-> **`sima-cli network` does the same thing interactively**, if it is available on your board. It
-> walks the profiles and is easier to remember. The `nmcli` commands above are the fallback when it
-> is not installed, and they are what `sima-cli network` drives underneath.
+### Guided configuration with sima-cli (optional)
+
+Once `sima-cli` is installed **on the board**, you can use its interactive menu to switch network
+modes. A host-only install is not enough. Check in the board's shell:
+
+```bash
+sima@modalix:~$ sima-cli --version
+```
+
+If it is not installed yet, use the `nmcli` commands above to get online, then follow
+[Chapter 7 · Install on the board](07-install-sima-cli.md#install-on-the-board). You can return to
+this menu whenever you need to change the configuration; it is not required for first-time setup.
+
+From the board's [serial console](04-serial-console.md), run:
+
+```bash
+sima@modalix:~$ sima-cli network
+```
+
+The **Select Ethernet Interface** menu shows each interface's link status, internet check,
+and current IP address. Use **↑ / ↓**, then **Enter**, to select `end0` for the DevKit's Ethernet
+port. The **Configure end0** menu offers:
+
+| Option | When to use it |
+|---|---|
+| **Set to DHCP** | For host internet sharing in this chapter or a router in [Chapter 6](06-connect-to-router.md). Activates `end0-dhcp` on this guide's NetworkManager-based image. |
+| **Set to Default Static IP** | Activates the existing `end0-static` profile. It uses that profile's saved address; it does not prompt for a custom IP, subnet, or gateway. |
+| **Set as Default Route** | Changes the default route through this interface. In CLI 2.1.16, it assumes the gateway is the interface's IPv4 address with the last octet replaced by `.1`; use it only when that matches your network. Normal DHCP setup does not need this. |
+| **Back to Interface Selection** | Returns to the interface list, where **Quit Menu** exits. |
+
+Menu checked on the DevKit with `sima-cli` **2.1.16**. Choosing a configuration option applies it
+immediately, which can disconnect SSH. For internet sharing, choose **Set to DHCP**. A default
+static address may be on a different subnet from your host or router; for a stable address on a
+router, see [Chapter 6 · Keeping the same address](06-connect-to-router.md#keeping-the-same-address).
+
+After a change, use the `nmcli` and `networkctl` checks above to confirm the active profile and
+address, then [verify internet access](#verify-the-board-actually-has-internet), including DNS.
+In CLI 2.1.16, **Set to DHCP** also writes `8.8.8.8` as the DNS server in `/etc/resolv.conf`; if your
+network requires its own DNS server, check that setting too. Reconnect SSH using the current IP.
+
+Command reference: [sima-cli network](https://developer.sima.ai/software/tools/sima-cli/network/).
 
 ---
 

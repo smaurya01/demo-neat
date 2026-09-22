@@ -46,7 +46,7 @@ That is the whole thing — it finds the port and sets the baud rate for you.
 
 **To exit:** `Ctrl` + `A`, then `Ctrl` + `X`.
 
-Log in with `sima` / `edgeai`.
+Log in with username: `sima` / password: `edgeai`.
 
 ### If the output is garbled
 

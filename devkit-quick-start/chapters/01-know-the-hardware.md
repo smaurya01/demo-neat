@@ -7,7 +7,7 @@
 ## About the MLSoC Modalix
 
 The MLSoC Modalix is SiMa.ai's second-generation machine-learning system-on-chip. It combines an
-Arm Cortex-A65 application complex, a high-throughput Machine Learning Accelerator (MLA), an Image
+8-core Arm Cortex-A65 processor complex, a high-throughput Machine Learning Accelerator (MLA), an Image
 Signal Processor (ISP) for camera ingest, and a Computer Vision Unit (CVU) for classical vision
 workloads — all on a single die.
 
@@ -31,7 +31,7 @@ silicon.
 | **ISP** | Image Signal Processor — raw camera sensor ingest | Arm Mali-C71 @ 1.2 GHz |
 | **CVU** | Computer Vision Unit — pre/post-processing, resize, colour convert | Synopsys ARC EV74, 4-core, 750 16-bit GOPS |
 | **Codecs** | Hardware video encode and decode | H.264 / H.265 4Kp60 enc+dec · AV1 4Kp60 dec · MJPEG 4Kp30 enc, 4Kp60 dec |
-| **Memory** | Shared LPDDR5 | 32 GB, 128-bit (8 channels) |
+| **Memory** | Shared LPDDR5 | 32 GB / 16 GB, 128-bit (8 channels), 6400 Mbps |
 | **NoC** | Network-on-Chip — the interconnect all of the above share | — |
 
 ---
@@ -40,7 +40,7 @@ silicon.
 
 | | Size | Mounted at | Use it for |
 |---|---|---|---|
-| **eMMC** | 16 GB | `/` | The OS  |
+| **eMMC** | 16 GB / 32 GB | `/` | The OS  |
 | **NVMe** | 500 GB (M.2) | `/media/nvme` *(you mount it)* | Everything you create |
 
 

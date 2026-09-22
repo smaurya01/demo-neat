@@ -83,7 +83,7 @@ Follow the prompt. Do this **on both machines**, host and board.
 | `sima-cli login` | Authenticate for downloads |
 | `sima-cli update` | Update the board image — [Chapter 9](09-check-and-update-image.md) |
 | `sima-cli nvme remount` / `format` | Mount the NVMe — [Chapter 8](08-mount-nvme.md) |
-| `sima-cli network` | Guided network configuration |
+| `sima-cli network` | Switch DHCP / default static IP — [Chapter 5 walkthrough](05-internet-sharing.md#guided-configuration-with-sima-cli-optional) |
 | `sima-cli neat install <pkg>` | Install Neat packages on the board |
 | `sima-cli modelzoo` | Pre-compiled models for the MLA |
 
