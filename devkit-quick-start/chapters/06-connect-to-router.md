@@ -82,6 +82,12 @@ Find the MAC address with:
 sima@modalix:~$ ip link show end0
 ```
 
+To switch the board itself between DHCP and its default static profile, see
+[Chapter 5 · Guided configuration with sima-cli](05-internet-sharing.md#guided-configuration-with-sima-cli-optional).
+That optional menu requires `sima-cli` installed on the board ([Chapter 7](07-install-sima-cli.md#install-on-the-board));
+Chapter 5 also includes [`nmcli` commands](05-internet-sharing.md#to-dhcp) for returning to DHCP
+before the CLI is installed.
+
 ---
 
 | ← Previous | Contents | Next → |

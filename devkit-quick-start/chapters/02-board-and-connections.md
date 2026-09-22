@@ -22,8 +22,8 @@
 | USB keyboard and mouse | [Chapter 3](03-hdmi-and-peripherals.md), optional |
 | MIPI CSI cameras | Camera applications only |
 
-The Ethernet cable is the one that catches people out. It is not in the box and you cannot install
-anything without it.
+> **Note:** The Ethernet cable is the one that catches people out. It is not in the box and you
+> cannot install anything without it.
 
 ---
 
@@ -60,7 +60,7 @@ Internally there is an **M.2 slot with a 500 GB NVMe drive** — see [Chapter 8]
 The rear panel also carries **START** and **RESET** buttons, visible in the photo above next to the
 DC input. First boot takes a little longer than later ones.
 
-**Default credentials:** `sima` / `edgeai`
+**Default credentials:** Username: `sima` / Password: `edgeai`
 
 ---
 

@@ -13,7 +13,7 @@ straight to the one you need.
 > **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.0** ·
 > Neat Library **0.4.0** · Neat Apps **0.5.0**
 >
-> **Default login:** `sima` / `edgeai`
+> **Default login:** Username: `sima` / Password: `edgeai`
 
 ---
 
