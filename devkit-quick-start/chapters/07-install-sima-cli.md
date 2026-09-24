@@ -43,7 +43,7 @@ sima-user@host:~$ sima-cli --version
 
 The board needs its own copy. Get a shell on it — over SSH if the network is up
 ([Chapter 6](06-connect-to-router.md)), otherwise over
-[serial](02-board-and-connections.md#the-serial-console--your-safety-net) — and run the **same**
+[serial](04-serial-console.md) — and run the **same**
 command:
 
 ```bash

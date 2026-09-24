@@ -29,18 +29,6 @@ If neither applies, skip to [Chapter 4](04-serial-console.md).
 
 ---
 
-## Display limits
-
-| Resolution | Refresh |
-|---|---|
-| 4K (3840×2160) | 30 Hz |
-| 1080p (1920×1080) | 60 Hz |
-
-Output comes from the Silicon Motion **SM768** graphics controller over **HDMI 1.4**. This is a
-display path, not a gaming GPU — it is there to show a desktop and play back video.
-
----
-
 ## If the screen stays black
 
 Work through these in order:

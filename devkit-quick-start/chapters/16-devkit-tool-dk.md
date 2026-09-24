@@ -6,7 +6,7 @@
 
 ## What it does
 
-`dk` (also installed as `devkit-run`) executes something on the paired DevKit **from inside the SDK
+`dk` (also installed as `devkit-run`) executes commands on the paired DevKit **from inside the SDK
 container**, and streams the output back to your terminal. It is the piece that makes the
 host-side workflow worth having: you never open a second terminal, never `scp` a binary, and never
 guess which machine a log line came from.
@@ -34,11 +34,11 @@ sima-user@sdk:/workspace$ dk status
 ```
 
 It reports the paired DevKit IP, the mounted path, and which sync method is active — NFS, or rsync
-as a fallback. If `dk status` cannot name a DevKit, nothing else in this chapter will work; pair
-one first:
+as a fallback. If it shows `SSH status : not reachable`, nothing else in this chapter will work;
+pair the board again first:
 
 ```bash
-sima-user@sdk:/workspace$ sima-cli sdk setup --devkit <devkit-ip>
+sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 …pressing `n` at prompt 6 so you reuse the container you already built.
@@ -59,9 +59,6 @@ sima-user@sdk:/workspace$ dk hello_neat.py
 you do not need pyneat installed inside the SDK container for this to work. The script executes on
 the board; `print()` lands in your SDK terminal.
 
-This is the fast loop for the detector from [Chapter 12](12-object-detection.md): edit
-`detect.py` in VS Code attached to the container, then `dk detect.py --config config.yaml`.
-
 ---
 
 ## Running a compiled C++ binary
@@ -75,6 +72,9 @@ sima-user@sdk:/workspace$ dk build/my_app --config config.yaml
 
 Arguments after the binary are passed straight through, including file paths — `dk` translates
 them so the board resolves them correctly.
+
+The script or binary must be **under `/workspace`** — `dk` refuses anything else, because that is
+the folder the board can see.
 
 The binary must be **ARM64**. A binary built for your x86 host will not run on the board; that is
 what the SDK's cross-compilation toolchain is for. [Chapter 18](18-cpp-video-app.md) builds and
@@ -98,24 +98,6 @@ landed where the shared workspace said it would.
 
 ---
 
-## Keeping files in sync
-
-When `dk status` reports **NFS**, the workspace is mounted and there is nothing to do — a file
-saved on the host is immediately visible to the board.
-
-When it reports **rsync** — the fallback when NFS is unavailable — you push changes explicitly:
-
-```bash
-sima-user@sdk:/workspace$ dk sync                    # the default set
-sima-user@sdk:/workspace$ dk sync /workspace/apps    # one path
-sima-user@sdk:/workspace$ dk sync --all              # everything
-```
-
-Worth knowing which mode you are in: a stale binary on the board is a confusing way to spend
-twenty minutes.
-
----
-
 ## Command summary
 
 | Command | What it does |
@@ -124,9 +106,8 @@ twenty minutes.
 | `dk <script>.py` | Runs a Python script on the board in the DevKit pyneat environment |
 | `dk <binary> [args]` | Runs an ARM64 binary on the board, arguments and paths passed through |
 | `dk shell` | Interactive shell on the DevKit |
-| `dk sync [path]` | Pushes workspace changes when the sync method is rsync |
 
-`dk` is a shell function defined in `~/devkit-sync.rc` and loaded from `~/.bashrc`, so it exists in
+`dk` is a shell function defined in `~/.devkit-sync.rc` and loaded from `~/.bashrc`, so it exists in
 interactive SDK sessions. If the command is not found, source your profile — or you are not inside
 the SDK container.
 

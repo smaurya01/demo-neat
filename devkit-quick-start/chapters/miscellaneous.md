@@ -43,8 +43,7 @@ the fastest-moving information in the guide.
 | `sima-cli device discover` | Find boards on the network |
 | `sima-cli login` | Authenticate against SiMa's artifact server |
 | `sima-cli neat install sdk@release-2.1` | Install the SDK and pair it with a board |
-| `sima-cli sdk setup --devkit <ip>` | Re-pair after an IP change |
-| `sima-cli sdk neat` | Start / enter the SDK container |
+| `sima-cli sdk setup --devkit <ip>` | Start the SDK (and re-pair after an IP change) |
 | `ssh sima@modalix.local` | Connect by hostname |
 
 ### On the board
@@ -53,7 +52,7 @@ the fastest-moving information in the guide.
 |---|---|
 | `cat /etc/buildinfo` | What software the board is running |
 | `sima-cli login` | Authenticate for downloads |
-| `sima-cli update -v 2.1.3` | Update to a pinned version |
+| `sima-cli update` | Update the board software |
 | `sima-cli network` | Guided network configuration |
 | `sima-cli nvme remount` | Mount an existing NVMe partition |
 | `sima-cli nvme format` | Partition and format the NVMe — **erases it** |

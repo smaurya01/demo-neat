@@ -17,23 +17,18 @@
 
 | Item | Needed for |
 |---|---|
-| **Ethernet cable (RJ45)** | Chapters 4, 5 and 6. Nothing works without network access. |
+| **Ethernet cable (RJ45)** | Chapters 5 and 6 |
 | HDMI cable + monitor | [Chapter 3](03-hdmi-and-peripherals.md), optional |
 | USB keyboard and mouse | [Chapter 3](03-hdmi-and-peripherals.md), optional |
 | MIPI CSI cameras | Camera applications only |
-
-> **Note:** The Ethernet cable is the one that catches people out. It is not in the box and you
-> cannot install anything without it.
 
 ---
 
 ## The ports
 
-![The DevKit rear panel, with ports labelled on the chassis](../images/qsg-devkit-interfaces.jpg)
-
-The same interfaces, laid out schematically:
-
-![DevKit 3.0 external interfaces](../images/board-ports.svg)
+<p align="center">
+  <img src="../images/devkit-rear-white.jpg" alt="Modalix DevKit rear panel, labelled on the chassis: 12 VDC, HDMI, 4 x USB, END0 Ethernet, UART USB-C" width="760">
+</p>
 
 | Interface | Detail |
 |---|---|
@@ -43,7 +38,6 @@ The same interfaces, laid out schematically:
 | **USB 3.0 × 4** | Keyboard, mouse, storage, USB cameras. |
 | **HDMI 1.4** | 4K @ 30 Hz, or 1080p @ 60 Hz. Driven by a Silicon Motion SM768 controller. |
 | **MIPI CSI × 2** | Two 2-lane camera inputs. 22-pin on Rev 1 and Rev 3, **30-pin on Rev 2** — check yours before ordering a ribbon. |
-| **microSD** | Alternate boot media. |
 | **40-pin GPIO** | Expansion header. |
 
 Internally there is an **M.2 slot with a 500 GB NVMe drive** — see [Chapter 8](08-mount-nvme.md).
@@ -56,9 +50,6 @@ Internally there is an **M.2 slot with a 500 GB NVMe drive** — see [Chapter 8]
 2. Connect the Ethernet cable — to your router ([Chapter 6](06-connect-to-router.md)) or directly to
    your host ([Chapter 5](05-internet-sharing.md)).
 3. The red power LED lights and the board boots.
-
-The rear panel also carries **START** and **RESET** buttons, visible in the photo above next to the
-DC input. First boot takes a little longer than later ones.
 
 **Default credentials:** Username: `sima` / Password: `edgeai`
 

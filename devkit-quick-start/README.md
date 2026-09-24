@@ -65,6 +65,7 @@ Everything above runs on the board. This part sets up the host side.
 | 16 | [The `dk` command](chapters/16-devkit-tool-dk.md) | Run Python and C++ on the board from the SDK, output where you are |
 | 17 | [Neat Insight](chapters/17-neat-insight.md) | A browser console for streams, output and runtime state |
 | 18 | [A C++ video application](chapters/18-cpp-video-app.md) | **The capstone** — RTSP in, detection on the MLA, result in Insight |
+| 19 | [Agentic development](chapters/19-agentic-development.md) | Build Neat apps by prompting Codex or Claude Code with the SiMa skills |
 
 ### Reference
 
@@ -78,6 +79,19 @@ Everything above runs on the board. This part sets up the host side.
 You will need a **SiMa Developer Portal account**, and it must be approved before you can download
 the SDK or firmware images. Approval is not instant — [sign up](https://community.sima.ai/signup)
 now, then carry on reading while you wait.
+
+Have these ready:
+
+| What | Why |
+|---|---|
+| **Ethernet cable (RJ45)** | Not in the box. Puts the board on your network ([Chapters 5 and 6](chapters/06-connect-to-router.md)) |
+| **A host computer** — Ubuntu 22.04 or 24.04 recommended | Runs `sima-cli` and the Neat SDK. Windows 11 (through WSL2) and macOS 15.5+ on Apple Silicon also work |
+| **Administrator (`sudo`) rights** on the host | Installing `sima-cli`, Docker and the SDK needs them |
+| **Docker** (or Colima on macOS) | The Neat SDK runs as a container ([Chapter 15](chapters/15-install-neat-sdk.md)) |
+| **4 CPU cores, 16 GB RAM and 100 GB free disk** on the host | The official minimum for the Neat SDK ([Chapter 15](chapters/15-install-neat-sdk.md)) |
+| **A free USB port** on the host | The serial console cable is USB-A → USB-C ([Chapter 4](chapters/04-serial-console.md)) |
+| **VS Code** on the host | Editing and running code in the SDK ([Chapter 15](chapters/15-install-neat-sdk.md)) |
+| **This repository** checked out on the host *(optional)* | Sample images and the COCO labels file ([Chapters 12](chapters/12-object-detection.md) and [18](chapters/18-cpp-video-app.md)) |
 
 ---
 
