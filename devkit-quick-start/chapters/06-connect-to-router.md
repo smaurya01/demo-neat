@@ -21,19 +21,21 @@ laptop, and it stays reachable when you close your laptop lid.
 
 1. Plug the DevKit's Ethernet port into the same switch or router as your host PC.
 2. Power the board on.
-3. Find its address. Either from the board over [serial](02-board-and-connections.md#the-serial-console--your-safety-net):
+3. Open a serial connection to the board and log in (`sima` / `edgeai`) — see
+   [Chapter 4](04-serial-console.md).
+4. Find the board's IP address from that serial session:
 
    ```bash
    sima@modalix:~$ ip a | grep inet
    ```
 
-   Look for the address on `end0`. Or from your host:
+   Look for the address on `end0`. Alternatively, from your host:
 
    ```bash
    sima-user@host:~$ sima-cli device discover
    ```
 
-4. Connect:
+5. Connect:
 
    ```bash
    sima-user@host:~$ ssh sima@<board-ip>
