@@ -3,12 +3,14 @@
 Runnable demo apps, concept notebooks, a model-compilation reference, and a GenAI (LLM/VLM/ASR)
 track — all for SiMa **NEAT** on the **Modalix DevKit**.
 
-If you are opening this repo cold, do [`installation/`](installation/README.md) first, then pick a
-track below.
+If you are opening this repo cold, work through
+[`devkit-quick-start/`](devkit-quick-start/README.md) first — it takes a DevKit from a sealed box
+to a running C++ application, installation included — then pick a track below.
 
 | Where | What you get |
 | --- | --- |
-| [`installation/`](installation/README.md) | Set up the SDK container, pair the DevKit, attach VS Code. **Start here.** |
+| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 18 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app. **Start here.** |
+| [`installation/`](installation/README.md) | Long-form SDK install reference, with screenshots. Covered by the Quick Start Guide. |
 | [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, model options, RTSP, senders. |
 | [`apps/`](apps/README.md) | Complete, runnable applications: RTSP in → inference → annotated H.264/RTP UDP out. |
 | [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
@@ -48,7 +50,7 @@ written for the older apps will fail loudly rather than silently doing the wrong
 ## Table of Contents
 
 - [Tested on NEAT 0.4.0](#tested-on-neat-040)
-- [1. Installation](#1-installation)
+- [1. Start here — the Quick Start Guide](#1-start-here--the-quick-start-guide)
 - [2. Tutorial — learn the concepts](#2-tutorial--learn-the-concepts)
 - [3. Apps](#3-apps)
   - [Running one](#running-one)
@@ -60,16 +62,29 @@ written for the older apps will fail loudly rather than silently doing the wrong
 
 ---
 
-## 1. Installation
+## 1. Start here — the Quick Start Guide
 
-**[`installation/README.md`](installation/README.md)** — install the SDK, pair the DevKit, attach
-VS Code, and run your first thing on the board with `dk`.
+**[`devkit-quick-start/README.md`](devkit-quick-start/README.md)** — a chapter-by-chapter
+walkthrough from a sealed box to a running C++ application. Installation is part of it, so this is
+the only thing you need open the first time.
 
+| Part | Chapters | What it covers |
+| --- | --- | --- |
+| 1 | 1–4 | The hardware, the ports, the serial console |
+| 2 | 5–6 | Getting the board on the network |
+| 3 | 7–11 | `sima-cli`, the NVMe, board software, `simaai-sentinel`, `pyneat` |
+| 4 | 12–13 | First inference on the MLA, then a language model with LLiMa |
+| 5 | 14–18 | The Neat stack, the SDK, `dk`, Insight, and a full C++ video application |
+
+Work through it in order the first time; afterwards each chapter stands alone.
+
+**Longer-form references**, all linked from the relevant chapters:
+
+- **[`installation/README.md`](installation/README.md)** — the SDK install with a screenshot for
+  every prompt.
 - **[`neat_on_windows.md`](installation/neat_on_windows.md)** — the same stack on Windows, via WSL2.
-- **[`neat_insight.md`](installation/neat_insight.md)** — Neat Insight: browser-based RTSP sources,
-  video viewer, runtime metrics.
-- **[`components.md`](installation/components.md)** — what each piece of the stack is (Host, DevKit,
-  SDK, Neat Core, PyNeat, Model Compiler, Insight, Apps).
+- **[`neat_insight.md`](installation/neat_insight.md)** — Neat Insight in full.
+- **[`components.md`](installation/components.md)** — what each piece of the stack is.
 
 ---
 

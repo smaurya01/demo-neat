@@ -72,7 +72,7 @@ need the source, the issue tracker or the reference docs, this is where each pie
 | Object detection on the MLA ([Chapter 12](12-object-detection.md)) | `core` + `apps` |
 | `llima run` ([Chapter 13](13-llima.md)) | `llima` |
 
-The two you have not met yet are the **SDK** and **Insight** — the next two chapters.
+The two you have not met yet are the **SDK** and **Insight** — the rest of this part.
 
 ---
 

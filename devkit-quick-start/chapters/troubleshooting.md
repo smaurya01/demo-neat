@@ -186,4 +186,4 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 16 · Neat Insight](16-neat-insight.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |
+| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |

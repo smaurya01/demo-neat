@@ -155,7 +155,7 @@ If it prints, the runtime is live on the DevKit and the workspace share is worki
 | Thing | Where |
 |---|---|
 | Model Compiler, added later | `sima-cli install -v 2.1.3 tools/model-compiler/amd64` |
-| Neat Insight, already bundled with the SDK | [Chapter 16](16-neat-insight.md) |
+| Neat Insight, already bundled with the SDK | [Chapter 17](17-neat-insight.md) |
 | The long-form install guide, with screenshots | [installation/README.md](../../installation/README.md) |
 | Compatibility matrix | [developer.sima.ai](https://developer.sima.ai/software/getting-started/compatibility/) |
 
@@ -163,4 +163,4 @@ If it prints, the runtime is live on the DevKit and the workspace share is worki
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 14 · The Neat stack](14-neat-components.md) | [All chapters](../README.md) | [Chapter 16 · Neat Insight](16-neat-insight.md) |
+| [Chapter 14 · The Neat stack](14-neat-components.md) | [All chapters](../README.md) | [Chapter 16 · The `dk` command](16-devkit-tool-dk.md) |

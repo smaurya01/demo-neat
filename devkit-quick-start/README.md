@@ -62,7 +62,9 @@ Everything above runs on the board. This part sets up the host side.
 |---|---|---|
 | 14 | [The Neat stack](chapters/14-neat-components.md) | What each piece of Neat is, where it runs, which repo it lives in |
 | 15 | [Install the Neat SDK](chapters/15-install-neat-sdk.md) | Cross-compilation and one workspace shared by host, SDK and board |
-| 16 | [Neat Insight](chapters/16-neat-insight.md) | A browser console for streams, output and runtime state |
+| 16 | [The `dk` command](chapters/16-devkit-tool-dk.md) | Run Python and C++ on the board from the SDK, output where you are |
+| 17 | [Neat Insight](chapters/17-neat-insight.md) | A browser console for streams, output and runtime state |
+| 18 | [A C++ video application](chapters/18-cpp-video-app.md) | **The capstone** — RTSP in, detection on the MLA, result in Insight |
 
 ### Reference
 
