@@ -63,7 +63,7 @@ sima-user@host:~$ ssh sima@10.42.0.xxx
 The board ships with two NetworkManager profiles already defined: `end0-dhcp` and `end0-static`.
 Switching is a matter of bringing the one you want up.
 
-Do this over the [serial console](02-board-and-connections.md#the-serial-console--your-safety-net).
+Do this over the [serial console](04-serial-console.md).
 You are changing the network out from under yourself, so an SSH session will drop mid-command.
 
 ### To DHCP
@@ -131,7 +131,8 @@ Command reference: [sima-cli network](https://developer.sima.ai/software/tools/s
 
 ## Windows host
 
-*A Windows procedure, not a SiMa-specific one.*
+> **Not verified.** These steps have not been tested with the DevKit. They are the standard Windows
+> Internet Connection Sharing procedure, not a SiMa-specific one.
 
 1. **Control Panel → Network and Sharing Center → Change adapter settings**
 2. Right-click the adapter that **has** internet (Wi-Fi) → **Properties** → **Sharing**
@@ -145,7 +146,8 @@ Command reference: [sima-cli network](https://developer.sima.ai/software/tools/s
 
 ## macOS host
 
-*A macOS procedure, not a SiMa-specific one.*
+> **Not verified.** These steps have not been tested with the DevKit. They are the standard macOS
+> Internet Sharing procedure, not a SiMa-specific one.
 
 1. **System Settings → General → Sharing → Internet Sharing**
 2. **Share from:** Wi-Fi · **To computers using:** Ethernet

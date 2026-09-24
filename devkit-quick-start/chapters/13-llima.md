@@ -7,8 +7,8 @@
 ## What LLiMa is
 
 LLiMa is the on-board runtime for generative models — LLMs, VLMs and speech models — compiled for
-the MLA. It ships with the board software as `/usr/bin/llima`, so there is nothing to install if you
-are on 2.1.3.
+the MLA. It is installed on the board together with **Neat core** — the `sima-cli neat install
+core` step in [Chapter 11](11-install-pyneat.md) — so there is nothing extra to install.
 
 Check it is there:
 
@@ -114,14 +114,6 @@ sima@modalix:~$ df -h /media/nvme
 Run `simaai-sentinel` ([Chapter 10](10-install-simaai-sentinel.md)) in a second terminal. Generative
 models show a very different profile from vision models — memory-bound rather than compute-bound,
 with MLA utilisation that rises and falls per token rather than sitting flat.
-
----
-
-## Where to go next
-
-- [Chapter 12](12-object-detection.md) — vision inference, if you skipped it
-- [Tutorials](https://developer.sima.ai/software/tutorials) — the full series
-- [Troubleshooting](troubleshooting.md) — when something misbehaves
 
 ---
 

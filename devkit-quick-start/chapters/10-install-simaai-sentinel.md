@@ -40,7 +40,7 @@ sima@modalix:~$ simaai-sentinel table --once
 
 | Reading | What it tells you |
 |---|---|
-| **MLA utilisation** | Low while your app runs? The bottleneck is elsewhere — pre-processing, decode, or the CPU. |
+| **MLA utilisation** | The MLA memory in use, in MB. Low while your app runs? The bottleneck is elsewhere — pre-processing, decode, or the CPU. |
 | **CPU load** | A pinned core usually means CPU-side work that could move to the CVU or a hardware codec. |
 | **Temperature** | Sustained high temperature leads to throttling, and throughput that drifts down over minutes. |
 | **Power** | Typical draw is 8–12 W. |

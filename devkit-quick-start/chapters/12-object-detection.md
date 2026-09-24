@@ -18,11 +18,7 @@
 
 ## Get a compiled model
 
-Models for the MLA are distributed as compiled `.tar.gz` archives. Browse what is available:
-
-```bash
-sima@modalix:~$ sima-cli modelzoo
-```
+Models for the MLA are distributed as compiled `.tar.gz` archives.
 
 Set the Model Zoo release first — it can differ from your board software version:
 
@@ -46,28 +42,144 @@ letter after `yolo26` to trade accuracy for speed.
 
 ## Get the COCO labels
 
-The model returns class **ids**; the label file turns them into names. This repository ships the
-standard 80-class COCO list at
-[`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt) — copy it across from
-your checkout:
+The model returns class **ids**; the label file turns them into names — the standard 80-class COCO
+list, one name per line, in class-id order.
+
+**Option 1 — create the file on the board.** Copy the whole block below and paste it into the
+board's terminal. It writes the file in one go:
+
+<details>
+<summary>Show the command (80 labels)</summary>
+
+```bash
+cat > /media/nvme/example/models/coco_labels.txt << 'EOF'
+person
+bicycle
+car
+motorcycle
+airplane
+bus
+train
+truck
+boat
+traffic light
+fire hydrant
+stop sign
+parking meter
+bench
+bird
+cat
+dog
+horse
+sheep
+cow
+elephant
+bear
+zebra
+giraffe
+backpack
+umbrella
+handbag
+tie
+suitcase
+frisbee
+skis
+snowboard
+sports ball
+kite
+baseball bat
+baseball glove
+skateboard
+surfboard
+tennis racket
+bottle
+wine glass
+cup
+fork
+knife
+spoon
+bowl
+banana
+apple
+sandwich
+orange
+broccoli
+carrot
+hot dog
+pizza
+donut
+cake
+chair
+couch
+potted plant
+bed
+dining table
+toilet
+tv
+laptop
+mouse
+remote
+keyboard
+cell phone
+microwave
+oven
+toaster
+sink
+refrigerator
+book
+clock
+vase
+scissors
+teddy bear
+hair drier
+toothbrush
+EOF
+```
+
+</details>
+
+**Option 2 — copy it from your host.** If you have this repository checked out on your host, the
+same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt):
 
 ```bash
 sima-user@host:~$ scp demo-neat/tutorial/assets/coco_labels.txt \
                       sima@<devkit-ip>:/media/nvme/example/models/coco_labels.txt
 ```
 
-One class name per line, in class-id order. Any COCO-80 label file works if you have your own.
+Check it has 80 lines:
+
+```bash
+sima@modalix:~$ wc -l /media/nvme/example/models/coco_labels.txt
+80 /media/nvme/example/models/coco_labels.txt
+```
 
 ---
 
 ## Prepare some input images
 
+This repository ships six sample images for detection at
+[`tutorial/assets/images/`](../../tutorial/assets/images/). Create the folder on the board:
+
 ```bash
 sima@modalix:~$ mkdir -p /media/nvme/example/images
 ```
 
-Copy in a handful of JPEGs or PNGs. Anything with recognisable objects — people, vehicles, laptops,
-cups — works for a COCO-trained detector.
+Then copy the images across from your host checkout:
+
+```bash
+sima-user@host:~$ scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
+                      sima@<devkit-ip>:/media/nvme/example/images/
+```
+
+Check they arrived:
+
+```bash
+sima@modalix:~$ ls /media/nvme/example/images
+image.png  image1.png  image2.png  image3.png  image4.png  image5.png
+```
+
+Your own JPEGs or PNGs work too — anything with recognisable objects (people, vehicles, laptops,
+cups) suits a COCO-trained detector.
 
 ---
 
@@ -266,12 +378,10 @@ if __name__ == "__main__":
 ### What the code is actually doing
 
 - **The graph is fixed to the size it was built with.** Seeding `model.build(...)` lets the
-  planner tighten the pipeline's input to that exact width and height — you can see it in the
-  `appsrc ... caps="video/x-raw,format=BGR,width=…,height=…"` line the runtime prints on the first
-  run. Push a differently sized frame into that route and nothing comes back out; the run ends in
-  `RuntimeError: [runtime.pull] Run::run: timeout waiting for output`. Building for a fixed
-  640×640 frame and letterboxing every image into it keeps one graph valid for the whole folder,
-  whatever sizes the images are.
+  planner tighten the pipeline's input to that exact width and height. Push a differently sized
+  frame into that route and nothing comes back out. Building for a fixed 640×640 frame and
+  letterboxing every image into it keeps one graph valid for the whole folder, whatever sizes the
+  images are.
 - **Letterbox, not a plain resize.** `cv2.resize` straight to 640×640 stretches the image and
   distorts the objects in it, which costs you confidence and box accuracy. Letterboxing scales by
   the smaller ratio and pads the remainder, so nothing is squashed.
@@ -279,7 +389,7 @@ if __name__ == "__main__":
   applies the COCO/YOLO normalisation, runs the MLA and turns the raw head output into boxes,
   without round-tripping through Python.
 - **`BoxDecodeType.YoloV26` must match the model.** A YOLOv8 archive needs `YoloV8`, a YOLOX
-  archive `YoloX`. A mismatch does not error — it produces nonsense boxes.
+  archive `YoloX`. A mismatch either fails when the graph is built or gives wrong boxes.
 - **Boxes come back in the coordinates you pushed.** They describe the 640×640 letterboxed frame,
   so `to_original(...)` subtracts the padding and divides by the scale to put them back on the
   full-size image before drawing.
@@ -290,9 +400,15 @@ if __name__ == "__main__":
 
 ```bash
 sima@modalix:~$ source ~/pyneat/bin/activate
-(pyneat) sima@modalix:~$ pip install numpy opencv-python pyyaml
 (pyneat) sima@modalix:~$ cd /media/nvme/example
-(pyneat) sima@modalix:~$ python3 detect.py --config config.yaml
+(pyneat) sima@modalix:/media/nvme/example$ python3 detect.py --config config.yaml
+```
+
+The pyneat environment already includes everything the script imports. If you do get an import
+error, install the missing packages:
+
+```bash
+(pyneat) sima@modalix:~$ pip install numpy opencv-python pyyaml
 ```
 
 ---
@@ -302,10 +418,10 @@ sima@modalix:~$ source ~/pyneat/bin/activate
 A per-image line naming the detections found, then one annotated image written per input:
 
 ```text
-Found 5 images
-[1/5] image_01.jpg -> image_01.png (3 detections)
+Found 6 images
+[1/6] image.png -> image.png (10 detections)
 ...
-Done: 5/5 images
+Done: 6/6 images
 ```
 
 Open the output images in `/media/nvme/example/output` to confirm the boxes land on the right objects.

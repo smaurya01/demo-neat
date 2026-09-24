@@ -9,7 +9,7 @@ to a running C++ application, installation included — then pick a track below.
 
 | Where | What you get |
 | --- | --- |
-| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 18 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app. **Start here.** |
+| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 19 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development. **Start here.** |
 | [`installation/`](installation/README.md) | Long-form SDK install reference, with screenshots. Covered by the Quick Start Guide. |
 | [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, model options, RTSP, senders. |
 | [`apps/`](apps/README.md) | Complete, runnable applications: RTSP in → inference → annotated H.264/RTP UDP out. |
@@ -74,7 +74,7 @@ the only thing you need open the first time.
 | 2 | 5–6 | Getting the board on the network |
 | 3 | 7–11 | `sima-cli`, the NVMe, board software, `simaai-sentinel`, `pyneat` |
 | 4 | 12–13 | First inference on the MLA, then a language model with LLiMa |
-| 5 | 14–18 | The Neat stack, the SDK, `dk`, Insight, and a full C++ video application |
+| 5 | 14–19 | The Neat stack, the SDK, `dk`, Insight, a full C++ video application, and agentic development |
 
 Work through it in order the first time; afterwards each chapter stands alone.
 
@@ -131,7 +131,7 @@ config key that does not exist: [`usb-camera-yolo26m`](apps/usb-camera-yolo26m/R
 | [`quad-stream-quad-model`](apps/quad-stream-quad-model/README.md) | 4 streams × 4 **different** models (detection / segmentation / pose / YOLOX), all decoded on-device. |
 | [`detection-vlm-assistant`](apps/detection-vlm-assistant/README.md) | YOLO detection → trigger-gated crops → VLM captions. |
 | [`pcb-defect-detection-yolo26n`](apps/pcb-defect-detection-yolo26n/README.md) | A custom-trained YOLO26n on a non-COCO domain, compiled end to end. |
-| [`single-stream-yolo-yolov8n`](apps/single-stream-yolo-yolov8n/README.md) · [`-yolov8m`](apps/single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](apps/single-stream-yolo26n/README.md) | The same single-stream shape with other detectors. |
+| [`single-stream-yolo-yolov8m`](apps/single-stream-yolo-yolov8m/README.md) · [`single-stream-yolo26n`](apps/single-stream-yolo26n/README.md) | The same single-stream shape with other detectors. |
 | [`usb-camera-yolo26m`](apps/usb-camera-yolo26m/README.md) | **The one non-RTSP input:** a USB/UVC webcam on the board → YOLO26m → UDP out. 1080p @ 30 fps, camera-limited. C++ and Python. |
 | [`single-stream-yolov8n-seg`](apps/single-stream-yolov8n-seg/README.md) | Segmentation masks instead of boxes. |
 | [`single-stream-open-pose`](apps/single-stream-open-pose/README.md) | Pose keypoints and skeletons. `(TODO:: Stable Output)`|

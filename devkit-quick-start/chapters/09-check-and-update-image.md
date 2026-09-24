@@ -70,14 +70,11 @@ Log in first — the update downloads from SiMa's servers:
 sima@modalix:~$ sima-cli login
 ```
 
-Then pin the version explicitly:
+Then run the update:
 
 ```bash
-sima@modalix:~$ sima-cli update -v 2.1.3
+sima@modalix:~$ sima-cli update
 ```
-
-> Pin the version. A bare `sima-cli update` installs the latest GA release, which will be something
-> different in six months — and then your board no longer matches the SDK you installed alongside it.
 
 During the update:
 
@@ -85,25 +82,7 @@ During the update:
 - At `Proceed with eLxr update (y/N)`, answer **`y`**
 
 **The board may reboot partway through, and your serial connection will drop.** That is expected.
-Reconnect with `sima-cli serial` once it is back.
-
-### Other forms of the command
-
-```bash
-sima-cli update -v ga                                # latest general availability
-sima-cli update -v beta                              # latest beta
-sima-cli update -y                                   # auto-confirm after download
-sima-cli update https://your-server/image.tar.gz     # an image you host
-```
-
-| Flag | Purpose |
-|---|---|
-| `-v, --version` | Version, channel (`ga` / `beta`), or URL |
-| `--ip` | Target DevKit IP, for a remote update |
-| `-y, --yes` | Skip the post-download confirmation |
-| `-f, --flavor` | Image type: `headless`, `full`, or `auto` |
-| `-p, --passwd` | SSH password for the board (default `edgeai`) |
-| `--dryrun` | Validate the update path without executing it |
+Once it is back, reconnect over serial with `sima-cli serial`, or over SSH with `ssh sima@<board-ip>`.
 
 ---
 
@@ -137,7 +116,7 @@ This catches people out. Do not skip it.
 | Situation | What to do |
 |---|---|
 | `DISTRO = poky` (Yocto), or software 1.7 | Convert to eLxr first — follow the [eLxr Conversion Guide](https://developer.sima.ai/hardware/reference/tech-notes/elxr-conversion). `sima-cli update` cannot cross that boundary. |
-| Downgrade, or install a pre-release | [Net Boot Recovery](https://docs.sima.ai/pages/overview/firmware_update/netboot.html). `sima-cli update` only moves forward to published releases. |
+| Downgrade, or install a pre-release | [Net Boot Recovery](https://developer.sima.ai/hardware/getting-started/firmware-update/net-boot). `sima-cli update` only moves forward to published releases. |
 | Board will not boot | Net Boot Recovery, or write fresh boot media with `sima-cli bootimg`. |
 | Board has no network at all | Write an SD card / USB / NVMe boot image on the host with `sima-cli bootimg`. |
 

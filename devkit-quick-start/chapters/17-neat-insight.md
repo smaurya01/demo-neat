@@ -6,13 +6,19 @@
 
 ## What it is
 
-Insight is a browser-based inspection and test console for Neat vision applications. It answers the
-questions that are tedious to answer from a terminal: is the video arriving, on which channel, is
-the metadata aligned with the frames, what is in the workspace, and what did the runtime log while
-it all happened.
+Insight is a browser-based console for Neat vision applications. It has two main jobs:
 
-It also solves the practical problem of having no camera on your desk — upload a video file and
-Insight turns it into a live RTSP source your application can consume.
+1. **Visualising your application's output.** Your application sends Insight the video frames and,
+   alongside them, the metadata for each frame — the frame ID and the detections (bounding boxes,
+   labels, confidence scores). Insight pairs the metadata with its frame and **draws the overlay**
+   in the browser. Your application never has to render boxes itself: it sends frames and
+   detections, and Insight does the visualisation.
+
+2. **Creating RTSP streams.** No camera on your desk? Import a video file and Insight turns it into
+   a live RTSP source your application can consume, exactly as it would a real camera.
+
+Around those two, it also shows what is in the workspace and what the runtime logged — useful when
+the output is not what you expected.
 
 The development loop it supports:
 
@@ -84,7 +90,7 @@ sima-user@sdk:/workspace$ insight-admin status
 | **Video Viewer** | WebRTC output with metadata overlays — detection, classification, pose, segmentation, tracking |
 | **Stats** | System and application metrics |
 
-Before you start a stream, check two things: the **NMS mount** is present on the workspace, and the
+Before you start a stream, check two things: the **NFS mount** is present on the workspace, and the
 paired **devkit-ip** shows in the top-right corner of the UI.
 
 ---
@@ -115,7 +121,7 @@ the asset, then pick the encoding you actually want:
 | Control | What it gives you |
 |---|---|
 | **Resolution & FPS** | From small previews up to `1080p120` — so you can choose `720p30` and match it exactly in your application config |
-| **Codec** | H.264 or H.265, which is what your `source.codec` setting has to agree with |
+| **Codec** | H.264 or H.265. The [Chapter 18](18-cpp-video-app.md) app expects H.264 |
 | Variant list | Every combination, each with its download size — `1080p120 / 120 fps / H.264 / 1920×1080`, 53.6 MB |
 
 Selecting a variant shows its path and total size before you commit:
@@ -147,7 +153,8 @@ deployment when you have neither your own footage nor a catalog asset that fits.
      <img src="../images/insight-rtsp.jpg" alt="Insight RTSP Source tab with media assigned to source slots" width="720">
    </p>
 
-3. Point your application at the source — `rtsp://127.0.0.1:8554/src1` — and run it.
+3. Point your application at the source — `rtsp://<host-ip>:8554/src1`, where `<host-ip>` is the
+   Insight host from the **Insight Web UI** row of `neat` — and run it.
 
 4. Watch the result in **Video Viewer**, where you can confirm that frames are arriving on the
    channel you expect and that the overlays line up with them.

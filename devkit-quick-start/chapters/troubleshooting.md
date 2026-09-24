@@ -18,7 +18,7 @@ power problem, and nothing else in this guide will help until it is lit.
 2. Re-seat the HDMI cable and **reboot** — HDMI is detected at boot, so a cable plugged in
    afterwards may not be seen.
 3. Confirm the resolution is within limits: 4K @ 30 Hz or 1080p @ 60 Hz.
-4. Confirm the board is alive over [serial](02-board-and-connections.md#the-serial-console--your-safety-net).
+4. Confirm the board is alive over [serial](04-serial-console.md).
    A serial prompt means the board is fine and the fault is purely in the display path.
 
 ### Serial console output is garbled
@@ -49,7 +49,7 @@ Then `ssh sima@<devkit-ip>`.
 
 - Host and board are on different subnets, or discovery traffic is blocked.
 - The board is on **older firmware** that does not advertise itself. Reach it over
-  [serial](02-board-and-connections.md#the-serial-console--your-safety-net), run
+  [serial](04-serial-console.md), run
   `cat /etc/buildinfo`, and [update it](09-check-and-update-image.md).
 
 ### The board has an IP but no internet
@@ -176,6 +176,130 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 ---
 
+## Neat SDK and `dk`
+
+### Setup reinstalled everything, or there are now two SDK containers
+
+You pressed `y` at setup prompt 6. Run setup again and press `n` to reuse the container you
+already have:
+
+```bash
+sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+```
+
+### Pairing fails
+
+The host and the board must be on the same network and able to reach each other:
+
+```bash
+sima-user@host:~$ ping -c3 <devkit-ip>
+```
+
+If the ping fails, fix the network first ([Chapter 5](05-internet-sharing.md) or
+[Chapter 6](06-connect-to-router.md)). If the board's IP has changed, run setup again with the new
+one.
+
+### `dk: command not found`
+
+You are not in the SDK container. Use the terminal in the VS Code window attached to the
+`sima-neat/sdk` container ([Chapter 15](15-install-neat-sdk.md)). If you are in the container and it
+is still missing, reload your shell:
+
+```bash
+sima-user@sdk:/workspace$ source ~/.bashrc
+```
+
+### `dk status` shows `SSH status : not reachable`
+
+The board is off, or its IP has changed since pairing. Check it is up, then run setup again on the
+host with the current IP.
+
+### `Path must be inside /workspace`
+
+`dk` only runs files under `/workspace`, because that is the folder the board can see. Move the
+script or binary into your project under `/workspace` and run it from there.
+
+### `Refusing to run non-ARM64 binary`
+
+The binary was built for your host, not for the board. Build it inside the SDK container, which
+cross-compiles for the board ([Chapter 18](18-cpp-video-app.md), Step 5).
+
+---
+
+## Running apps on the board
+
+### The next run hangs, or fails to load the model
+
+A previous run is still going on the board and holding the MLA. This happens easily: stopping an
+`ssh` command with `Ctrl-C` or `timeout` only stops it on your side, and the app keeps running on
+the board. The next run then hangs while the graph builds, or fails with errors such as
+`gstreamer.unclassified_element_failure` or `Input buffer allocation failed`.
+
+Find it from a board shell (`dk shell`):
+
+```bash
+sima@modalix:~$ ps -eo pid,etime,cmd | grep -E 'python|rtsp_detector' | grep -v grep
+```
+
+Stop only the process you recognise as yours:
+
+```bash
+sima@modalix:~$ kill <pid>
+```
+
+**Never kill `mla_rt_service`** — it is the system service that runs the MLA.
+
+---
+
+## Building C++ apps
+
+### `Could not find a package configuration file provided by "SimaNeat"`
+
+CMake cannot see the SDK's copy of Neat. Configure with the prefix path, after deleting the failed
+build:
+
+```bash
+sima-user@sdk:/workspace/rtsp-detector$ rm -rf build
+sima-user@sdk:/workspace/rtsp-detector$ cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
+```
+
+### A binary that used to work no longer starts
+
+It was built against an older Neat Library. Delete `build/` and build it again.
+
+---
+
+## Neat Insight
+
+### The page will not load
+
+Run `neat` in the SDK and check the `neat-insight` line says `status=Running`. Open the exact
+address on the **Insight Web UI** row — it is `https://`, not `http://`, and the port is not
+always 9900. Accept the certificate warning.
+
+### No `devkit-ip` in the top-right corner
+
+The SDK is not paired with a board. Run `sima-cli sdk setup --devkit <devkit-ip>` on the host.
+
+### The application times out waiting for frames
+
+The RTSP source is not running. In Insight's **RTSP Source** tab, start `src1` again, and check the
+URL in your config matches the one Insight shows.
+
+### No video in the Video Viewer
+
+- `insight_host` in your config must be the Insight host's IP — the address on the Insight Web UI
+  row of `neat` — and the board must be able to reach it.
+- `video_port` must match the `videoUDP` row of `neat`.
+
+### Video, but no boxes
+
+- `metadata_port` must match the `metadataUDP` row of `neat`.
+- Lower `min_score` in the config — the threshold may be filtering out every detection.
+
+---
+
 ## Still stuck?
 
 - [Miscellaneous](miscellaneous.md) — command reference and links
@@ -186,4 +310,4 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |
+| [Chapter 19 · Agentic development](19-agentic-development.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |

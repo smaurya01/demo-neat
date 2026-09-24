@@ -26,8 +26,12 @@ sima@modalix:~$ sima-cli login
 Then install the library, pinned to the version that matches board software 2.1.3:
 
 ```bash
-sima@modalix:~$ sima-cli neat install core@v0.4.0
+sima@modalix:~$ cd /media/nvme && mkdir -p neat && cd neat
+sima@modalix:/media/nvme/neat$ sima-cli neat install core@v0.4.0
 ```
+
+Run it from `/media/nvme/neat`: the installer downloads its packages into the current directory,
+and your home directory is on the small eMMC.
 
 If a selection screen appears, the useful extras are:
 

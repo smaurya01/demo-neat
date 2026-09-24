@@ -32,14 +32,19 @@ Insight draw each box on the frame it came from.
 | Neat SDK installed and paired | [15](15-install-neat-sdk.md) |
 | `dk status` names your DevKit | [16](16-devkit-tool-dk.md) |
 | Insight reachable in a browser | [17](17-neat-insight.md) |
-| A YOLO26 model on the board | [12](12-object-detection.md) |
-| A **720p** video file to stream | Any `mp4` with people, cars or traffic in it |
+| An **H.264, 1280×720, 30 fps** video to stream | Insight's catalog has one — see Step 3 |
 
 ---
 
 ## Step 1 — Start the SDK and attach VS Code
 
-Start the SDK container on the host, then attach the editor to it:
+Start the SDK from a host terminal, pressing `n` at prompt 6 to reuse your container:
+
+```bash
+sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+```
+
+Then attach the editor to the SDK container:
 
 1. Open VS Code on the host.
 2. Command Palette (`Ctrl+Shift+P`) → **Dev Containers: Attach to Running Container…**
@@ -96,8 +101,7 @@ afterwards ([Chapter 17](17-neat-insight.md#getting-test-media-in)):
 
 **Use 1280×720 at 30 fps.** Every other number in this chapter follows from it: the `stream_*`
 values in `config.yaml`, the frame size the encoder is built for, and the input bounds the model
-is given. A 120 fps or 1080p variant will run, but you would have to change all three together,
-and a mismatch between the stream and the config is the most tedious failure to debug here.
+is given. A 120 fps or 1080p variant will run, but you would have to change all three together.
 
 Uploading your own clip through **Local files** works equally well — as long as it is **H.264,
 1280×720, 30 fps**. Select it after import and confirm those numbers on the metadata panel.
@@ -112,7 +116,7 @@ picking it in the slot's dropdown or with **auto-assign**.
 show its URL:
 
 ```text
-rtsp://<insight-host>:8554/src1
+rtsp://<host-ip>:8554/src1
 ```
 
 Copy that URL exactly — it goes straight into the config. Leave the stream running.
@@ -135,9 +139,134 @@ sima-user@sdk:/workspace$ mkdir -p /workspace/rtsp-detector && cd /workspace/rts
 /workspace/rtsp-detector/
 ├── CMakeLists.txt
 ├── config.yaml
-├── coco_labels.txt      ← copy from tutorial/assets/coco_labels.txt
+├── coco_labels.txt                          ← the COCO labels, created below
 ├── main.cpp
-└── build/               ← created by cmake
+├── yolo26m-det-bf16-mla_tess-b1.tar.gz      ← the model, downloaded below
+└── build/                                   ← created by cmake
+```
+
+### The model
+
+Download the YOLO26 archive into the project folder, from the SDK shell. The workspace is shared,
+so the board sees it at the same path:
+
+```bash
+sima-user@sdk:/workspace/rtsp-detector$ export MODELZOO_VERSION="2.1.3"
+sima-user@sdk:/workspace/rtsp-detector$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+```
+
+If the download asks you to log in, run `sima-cli login` in the SDK shell first.
+
+### The labels
+
+The app needs the 80 COCO class names, one per line, in class-id order.
+
+**Option 1 — create the file in the SDK shell.** Copy the whole block below and paste it into the
+SDK terminal. It writes `coco_labels.txt` into the project folder in one go:
+
+<details>
+<summary>Show the command (80 labels)</summary>
+
+```bash
+cat > /workspace/rtsp-detector/coco_labels.txt << 'EOF'
+person
+bicycle
+car
+motorcycle
+airplane
+bus
+train
+truck
+boat
+traffic light
+fire hydrant
+stop sign
+parking meter
+bench
+bird
+cat
+dog
+horse
+sheep
+cow
+elephant
+bear
+zebra
+giraffe
+backpack
+umbrella
+handbag
+tie
+suitcase
+frisbee
+skis
+snowboard
+sports ball
+kite
+baseball bat
+baseball glove
+skateboard
+surfboard
+tennis racket
+bottle
+wine glass
+cup
+fork
+knife
+spoon
+bowl
+banana
+apple
+sandwich
+orange
+broccoli
+carrot
+hot dog
+pizza
+donut
+cake
+chair
+couch
+potted plant
+bed
+dining table
+toilet
+tv
+laptop
+mouse
+remote
+keyboard
+cell phone
+microwave
+oven
+toaster
+sink
+refrigerator
+book
+clock
+vase
+scissors
+teddy bear
+hair drier
+toothbrush
+EOF
+```
+
+</details>
+
+**Option 2 — copy it from your host.** If you have this repository checked out on your host, the
+same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). Copy it
+into the workspace folder you chose at setup prompt 4:
+
+```bash
+sima-user@host:~$ cp demo-neat/tutorial/assets/coco_labels.txt ~/workspace/rtsp-detector/
+```
+
+Check it has 80 lines:
+
+```bash
+sima-user@sdk:/workspace/rtsp-detector$ wc -l coco_labels.txt
+80 coco_labels.txt
 ```
 
 ### `CMakeLists.txt`
@@ -163,7 +292,7 @@ YAML library:
 
 ```yaml
 # Model
-model_path: /media/nvme/example/models/yolo26m-det-bf16-mla_tess-b1.tar.gz
+model_path: /workspace/rtsp-detector/yolo26m-det-bf16-mla_tess-b1.tar.gz
 labels: /workspace/rtsp-detector/coco_labels.txt
 
 # Source
@@ -554,6 +683,11 @@ sima@modalix:~$ ls ~/prebuilt-apps/examples/object-detection/
 
 | Next | Where |
 |---|---|
+| Build apps by prompting a coding agent | [Chapter 19](19-agentic-development.md) |
+| Neat concepts as runnable notebooks | [`tutorial/`](../../tutorial/README.md) in this repository |
+| More complete applications | [`apps/`](../../apps/README.md) in this repository |
+| Compile your own model | [`model-compilation/`](../../model-compilation/README.md) in this repository |
+| LLMs, VLMs and speech | [`llima/`](../../llima/README.md) in this repository |
 | Multiple streams at once | `multi-stream-object-detector` in the apps bundle |
 | Tracking, pose, segmentation | The other categories under `prebuilt-apps/examples/` |
 | The C++ API reference | [developer.sima.ai](https://developer.sima.ai/software/develop-apps/) |
@@ -562,4 +696,4 @@ sima@modalix:~$ ls ~/prebuilt-apps/examples/object-detection/
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 17 · Neat Insight](17-neat-insight.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 17 · Neat Insight](17-neat-insight.md) | [All chapters](../README.md) | [Chapter 19 · Agentic development](19-agentic-development.md) |

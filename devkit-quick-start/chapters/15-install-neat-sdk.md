@@ -26,12 +26,12 @@ loop.
 |---|---|
 | **Host OS** | Ubuntu 22.04 / 24.04 (recommended), Windows 11 via WSL2 (x86_64), or macOS 15.5+ Apple Silicon |
 | **Tools** | `sudo`, Git, `curl` / `wget`, and a container runtime — Docker or Colima |
-| **Disk** | ~10 GB free, plus ~10 GB more if you add the Model Compiler |
+| **CPU, RAM, disk** | 4 cores, 16 GB RAM and 100 GB free disk, minimum |
 | **Network** | Host and DevKit must reach each other — confirm `ping <devkit-ip>` works from the host |
 | **DevKit IP** | From [Chapter 6](06-connect-to-router.md). You can install without it and pair later |
 
-Install `sima-cli` on the **host** — this is the host copy, separate from the one you installed on
-the board in [Chapter 7](07-install-sima-cli.md):
+If `sima-cli` is not already installed on the host, install it — see
+[Chapter 7](07-install-sima-cli.md#install-on-the-host):
 
 ```bash
 sima-user@host:~$ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
@@ -39,7 +39,10 @@ sima-user@host:~$ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.s
 
 ---
 
-## Install
+## Install SDK
+
+> Screenshots of every step are in the
+> [full installation guide](../../installation/README.md#walkthrough).
 
 One command, on the host:
 
@@ -78,7 +81,7 @@ Setup is a series of prompts. Everything you actually have to decide is here; th
 | 1 | Pair this SDK with a DevKit now? `[y/N]` | `y`, then the DevKit IP | `N` is fine too — the workspace is still created, and you can pair later with `sima-cli sdk setup --devkit <devkit-ip>` |
 | 2 | Some system checks failed — continue anyway? `[y/N]` | `y` **if** the only failure is a `Firewall` warning | Anything else is worth reading before you continue |
 | 3 | SDK Docker image | `Enter` | The image you just downloaded is pre-selected |
-| 4 | Host workspace path | `Enter` | Or type your own. This is the folder that gets shared |
+| 4 | Host workspace path | **`~/workspace`** | ⚠️ Use `~/workspace` as the workspace folder. This is the folder shared by host, SDK and board |
 | 5 | SDK extension | `Enter` | |
 | 6 | Create a new SDK container? | **First install:** create it. **Every later run:** `n` | ⚠️ The one that matters. `y` on a repeat run builds a second container and reinstalls from scratch |
 | 7 | Install the Model Compiler extension? | `n`, unless you need to compile ONNX or GenAI models | ~15 minutes and ~10 GB. You can add it later |
@@ -88,13 +91,22 @@ Setup is a series of prompts. Everything you actually have to decide is here; th
   <img src="../images/devkit-workspace.svg" alt="Host, SDK container and DevKit sharing one workspace folder" width="760">
 </p>
 
-**Running setup again later** re-pulls nothing:
+---
 
-```bash
-sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
-```
+## Start the SDK
 
-…and press `n` at prompt 6 to reuse the container you already have.
+> **To start the SDK, run this one command on the host — nothing else:**
+>
+> ```bash
+> sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+> ```
+>
+> Press `n` at prompt 6 to reuse the container you already have. It re-pulls nothing.
+
+Use it every time you come back to the SDK, and after the board's IP address changes.
+
+Every `sima-user@sdk` command in the rest of this guide runs in the SDK container — use the
+VS Code terminal once you have attached, below.
 
 ---
 
@@ -112,9 +124,6 @@ sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
    `sima-neat/sdk` container.
 
 4. In the attached window, open `/workspace`.
-
-Screenshots of every step are in the
-[full installation guide](../../installation/README.md#walkthrough).
 
 ---
 
