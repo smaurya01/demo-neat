@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect x="0" y="0" width="760" height="300" fill="#f6f8fa" rx="8"/>
+  <text x="380" y="30" text-anchor="middle" font-size="17" font-weight="700" fill="#1f2328">Where your files belong</text>
+  <text x="380" y="50" text-anchor="middle" font-size="12" fill="#57606a">The root filesystem is small. Almost everything you create should go on the NVMe.</text>
+
+  <rect x="50" y="76" width="320" height="150" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.5"/>
+  <text x="210" y="102" text-anchor="middle" font-size="14" font-weight="700" fill="#82071e">eMMC</text>
+  <text x="210" y="124" text-anchor="middle" font-size="12" fill="#82071e">mounted at /  (root filesystem)</text>
+  <text x="210" y="150" text-anchor="middle" font-size="13" font-weight="700" fill="#cf222e">fills up fast</text>
+  <text x="210" y="176" text-anchor="middle" font-size="11.5" fill="#82071e">OS, packages, your home directory</text>
+  <text x="210" y="200" text-anchor="middle" font-size="11.5" font-weight="700" fill="#cf222e">Do NOT put models or video here</text>
+
+  <rect x="390" y="76" width="320" height="150" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+  <text x="550" y="102" text-anchor="middle" font-size="14" font-weight="700" fill="#0f5323">NVMe — 500 GB</text>
+  <text x="550" y="124" text-anchor="middle" font-size="12" fill="#0f5323">mount at /media/nvme</text>
+  <text x="550" y="150" text-anchor="middle" font-size="13" font-weight="700" fill="#1a7f37">room to work</text>
+  <text x="550" y="176" text-anchor="middle" font-size="11.5" fill="#0f5323">model archives, datasets, captured video</text>
+  <text x="550" y="200" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a7f37">Put everything here</text>
+
+  <rect x="50" y="244" width="660" height="42" rx="6" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="70" y="270" font-size="11.5" fill="#57606a">A full root filesystem is the most common self-inflicted failure on a DevKit: installs fail, logs stop, and the board misbehaves in confusing ways.</text>
+</svg>

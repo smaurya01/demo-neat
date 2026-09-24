@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect x="0" y="0" width="760" height="330" fill="#f6f8fa" rx="8"/>
+  <text x="380" y="30" text-anchor="middle" font-size="17" font-weight="700" fill="#1f2328">Option A — host shares its internet</text>
+  <text x="380" y="50" text-anchor="middle" font-size="12" fill="#57606a">One cable, host to board. No router, no switch. Ubuntu hands out the address.</text>
+
+  <rect x="40" y="80" width="180" height="96" rx="8" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+  <text x="130" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="#633c01">Internet</text>
+  <text x="130" y="128" text-anchor="middle" font-size="11" fill="#633c01">Wi-Fi or second NIC</text>
+  <text x="130" y="150" text-anchor="middle" font-size="11" fill="#633c01">on the host</text>
+
+  <rect x="290" y="80" width="180" height="96" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+  <text x="380" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="#0a3069">Host PC (Ubuntu)</text>
+  <text x="380" y="128" text-anchor="middle" font-size="12" font-weight="700" fill="#0969da">10.42.0.1</text>
+  <text x="380" y="150" text-anchor="middle" font-size="11" fill="#0a3069">wired: Shared to others</text>
+
+  <rect x="540" y="80" width="180" height="96" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+  <text x="630" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="#0f5323">Modalix DevKit</text>
+  <text x="630" y="128" text-anchor="middle" font-size="12" font-weight="700" fill="#1a7f37">10.42.0.x (DHCP)</text>
+  <text x="630" y="150" text-anchor="middle" font-size="11" fill="#0f5323">leave as DHCP</text>
+
+  <line x1="220" y1="128" x2="290" y2="128" stroke="#9a6700" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <line x1="470" y1="128" x2="540" y2="128" stroke="#1a7f37" stroke-width="3"/>
+  <text x="505" y="118" text-anchor="middle" font-size="10" font-weight="700" fill="#0f5323">RJ45</text>
+
+  <rect x="40" y="200" width="680" height="110" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="60" y="224" font-size="13" font-weight="700" fill="#1f2328">Set it on the host</text>
+  <text x="60" y="246" font-size="11.5" fill="#57606a">Settings to Network to Wired to IPv4 to "Shared to other computers"</text>
+  <text x="60" y="272" font-size="13" font-weight="700" fill="#cf222e">Trade-off</text>
+  <text x="60" y="294" font-size="11.5" fill="#57606a">Simplest to set up, but the board is only reachable from this host — nothing else on your LAN can see it.</text>
+</svg>
