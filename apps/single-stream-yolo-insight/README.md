@@ -195,10 +195,10 @@ dk ./main.py --config ./config/default.conf --frames 30
 
 ## How To See The Output
 
-Open **`https://192.168.131.12:9900`** in a browser → **Video Viewer** tab → select the channel
-configured as `channel` (default 0). *It is **HTTPS**, not HTTP; the SDK uses a local mkcert
-certificate, so accept the browser warning the first time.* Replace the IP with your own host if
-Insight runs elsewhere.
+Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+`insight.webUiUrl`), in a browser → **Video Viewer** tab → select the channel configured as
+`channel` (default 0). *It is **HTTPS**, not HTTP; the SDK uses a local mkcert certificate, so
+accept the browser warning the first time.*
 
 Unlike the other apps, this one sends **two** streams per channel, and both must line up:
 
@@ -210,8 +210,8 @@ Unlike the other apps, this one sends **two** streams per channel, and both must
 So for the default `channel=0`, set the viewer's **Port** to **9000**. The viewer decodes the video
 and draws the boxes from the `object-detection` metadata arriving on the paired metadata port —
 the frames themselves are clean by design. `insight_host` must point at the machine running
-Insight. The SDK exposes **4 video channels (9000-9003)**; if the defaults are taken, read the real
-ports from `neat --json` (`exposedPorts[*].hostPortStart`).
+Insight. The number of video channels is set by the SDK's port map; read the range from `neat --json`
+(`exposedPorts`, `videoUDP`).
 
 Verify delivery in order (both are UDP — fire-and-forget):
 
@@ -219,12 +219,6 @@ Verify delivery in order (both are UDP — fire-and-forget):
    video port (`packets_received`, `seen_sps`)?
 2. `GET /api/egress/stats` — `frames_decoded` climbing?
 3. Video Viewer tile for the channel — boxes appear over the live video.
-
-To sanity-check the raw video leg without Insight (no boxes — the frames are clean by design):
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
 
 Expected output: live video in the Insight viewer with YOLO11 boxes drawn from metadata. If you
 see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadata` block:

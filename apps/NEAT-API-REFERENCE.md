@@ -273,11 +273,11 @@ Read the app in the rightmost column that matches what you are building.
 | App | RTSP in | Custom src | VideoSender | Metadata | Branch | Combine | bbox | seg | pose |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
-| [`single-stream-yolo-yolov8n`](single-stream-yolo-yolov8n/README.md) · [`-yolov8m`](single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](single-stream-yolo26n/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
+| [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) · [`-yolov8m`](single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](single-stream-yolo26n/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-yolov8n-seg`](single-stream-yolov8n-seg/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-open-pose`](single-stream-open-pose/README.md) | ✅ | | ✅ | | | | | | |
 | [`multi-stream-yolo-yolo11`](multi-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | | | ✅ | | |
-| [`high-density-multi-stream-insight`](high-density-multi-stream-insight/README.md) | ✅ | | ✅ | ✅ | | | ✅ | | *16/24/48 streams, one shared model, encoded video passthrough* |
+| [`high-density-multi-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/high-density-multi-stream-object-detector) (official Apps example) | ✅ | | ✅ | ✅ | | | ✅ | | *16/24/48 streams, one shared model, encoded video passthrough* |
 | [`quad-stream-quad-model`](quad-stream-quad-model/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | ✅ |
 | [`multi-model-load-probe`](multi-model-load-probe/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | |
 | [`usb-camera-yolo26m`](usb-camera-yolo26m/README.md) | | ✅ | ✅ | ✅ | ✅ | | ✅ | | |
