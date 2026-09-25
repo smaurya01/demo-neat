@@ -26,7 +26,7 @@ below.
 
 ## Recommended path
 
-**[Quick Start Guide](devkit-quick-start/README.md)** → **[Tutorial I · Easy](tutorial/README.md#i--easy)** → **[YOLO26n](apps/single-stream-yolo26n/README.md)** → **[YOLO + Insight](apps/single-stream-yolo-insight/README.md)** → **[4 streams, 4 models](apps/quad-stream-quad-model/README.md)** → **[USB camera](apps/usb-camera-yolo26m/README.md)** → **[Benchmark](apps/benchmark/README.md)** → **GenAI** ([LLM](llima/02-run-llm-vlm/01_run_llm.ipynb), [VLM](llima/02-run-llm-vlm/02_run_vlm.ipynb), [ASR](llima/02-run-llm-vlm/03_audio_input_asr.ipynb)) → **[Model compilation](model-compilation/README.md)** → **The rest**: [Tutorial II and III](tutorial/README.md#ii--medium), [the other apps](apps/README.md), [the other LLiMa notebooks](llima/README.md)
+[Quick Start Guide](devkit-quick-start/README.md) → [Tutorial I · Easy](tutorial/README.md#i--easy) → [YOLO26n](apps/single-stream-yolo26n/README.md) → [YOLO + Insight](apps/single-stream-yolo-insight/README.md) → [4 streams, 4 models](apps/quad-stream-quad-model/README.md) → [USB camera](apps/usb-camera-yolo26m/README.md) → [Benchmark](apps/benchmark/README.md) → GenAI ([LLM](llima/02-run-llm-vlm/01_run_llm.ipynb), [VLM](llima/02-run-llm-vlm/02_run_vlm.ipynb), [ASR](llima/02-run-llm-vlm/03_audio_input_asr.ipynb)) → [Model compilation](model-compilation/README.md) → The rest: [Tutorial II and III](tutorial/README.md#ii--medium), [the other apps](apps/README.md), [the other LLiMa notebooks](llima/README.md)
 
 ---
 
