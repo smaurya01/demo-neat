@@ -52,14 +52,13 @@ Work through it in order the first time; afterwards each chapter stands alone.
 object model one piece at a time. Each is a concept cell, a short runnable cell, then an
 interpretation. Start at `I-easy/01` and work down.
 
-| Level | | | |
-| --- | --- | --- | --- |
-| **I — Easy** | [1. Neat Tensor](tutorial/I-easy/01_neat_tensor.ipynb) | [2. Node and Graph](tutorial/I-easy/02_node_and_graph.ipynb) | [3. Interpret Model Output Samples](tutorial/I-easy/03_interpret_model_output_samples.ipynb) |
-|  | [4. Image Classification with ResNet-50](tutorial/I-easy/04_image_classification_resnet.ipynb) | [5. YOLO CPU Decode](tutorial/I-easy/05_yolo_cpu_decode.ipynb) | [6. YOLOv8 Image Detection Pipeline](tutorial/I-easy/06_yolov8_image_detection_pipeline.ipynb) |
-| **II — Medium** | [1. ModelOptions](tutorial/II-medium/01_model_options.ipynb) | [2. RTSP Input And Decode Options](tutorial/II-medium/02_rtsp_input_and_decode_options.ipynb) | [3. RunOptions](tutorial/II-medium/03_run_options.ipynb) |
-|  | [4. InputOptions And OutputOptions](tutorial/II-medium/04_input_output_options.ipynb) | [5. VideoSender And VideoSenderOptions](tutorial/II-medium/05_video_sender_options.ipynb) | [6. MetadataSender And MetadataSenderOptions](tutorial/II-medium/06_metadata_sender_options.ipynb) |
-|  | [7. RTSP To Insight: Decode, Encode, Annotate, Send](tutorial/II-medium/07_rtsp_decode_encode_metadata_to_insight.ipynb) |  |  |
-| **III — Advanced** | [1. GenAI Model In A Graph](tutorial/III-advance/01_genai_model_in_graph.ipynb) |  |  |
+| Level | | | | |
+| --- | --- | --- | --- | --- |
+| **I&nbsp;·&nbsp;Easy** | [1.&nbsp;Tensor](tutorial/I-easy/01_neat_tensor.ipynb) | [2.&nbsp;Node&nbsp;and&nbsp;Graph](tutorial/I-easy/02_node_and_graph.ipynb) | [3.&nbsp;Model&nbsp;output](tutorial/I-easy/03_interpret_model_output_samples.ipynb) | [4.&nbsp;ResNet-50](tutorial/I-easy/04_image_classification_resnet.ipynb) |
+|  | [5.&nbsp;YOLO&nbsp;CPU&nbsp;decode](tutorial/I-easy/05_yolo_cpu_decode.ipynb) | [6.&nbsp;YOLOv8&nbsp;detection](tutorial/I-easy/06_yolov8_image_detection_pipeline.ipynb) |  |  |
+| **II&nbsp;·&nbsp;Medium** | [1.&nbsp;ModelOptions](tutorial/II-medium/01_model_options.ipynb) | [2.&nbsp;RTSP&nbsp;input](tutorial/II-medium/02_rtsp_input_and_decode_options.ipynb) | [3.&nbsp;RunOptions](tutorial/II-medium/03_run_options.ipynb) | [4.&nbsp;I/O&nbsp;options](tutorial/II-medium/04_input_output_options.ipynb) |
+|  | [5.&nbsp;VideoSender](tutorial/II-medium/05_video_sender_options.ipynb) | [6.&nbsp;MetadataSender](tutorial/II-medium/06_metadata_sender_options.ipynb) | [7.&nbsp;RTSP&nbsp;to&nbsp;Insight](tutorial/II-medium/07_rtsp_decode_encode_metadata_to_insight.ipynb) |  |
+| **III&nbsp;·&nbsp;Advanced** | [1.&nbsp;GenAI&nbsp;in&nbsp;a&nbsp;Graph](tutorial/III-advance/01_genai_model_in_graph.ipynb) |  |  |  |
 
 Run them **on the DevKit**, so the kernel can import `pyneat` — the tutorial README has the
 `jupyter notebook` command and the URL to open.
@@ -71,16 +70,14 @@ Once the concepts land, move on to a complete application below.
 ## 3. Apps
 
 Complete, runnable applications for the DevKit. **[`apps/README.md`](apps/README.md)** describes
-each one and how to run it. New to the apps? Start with **single-stream-yolo-yolo11**.
+each one and how to run it. New to the apps? Start with single-stream **YOLO11**.
 
-| Category | | | |
-| --- | --- | --- | --- |
-| **Single stream** | [single-stream-yolo-yolo11](apps/single-stream-yolo-yolo11/README.md) | [single-stream-yolo-yolov8m](apps/single-stream-yolo-yolov8m/README.md) | [single-stream-yolo26n](apps/single-stream-yolo26n/README.md) |
-| | [single-stream-yolov8n-seg](apps/single-stream-yolov8n-seg/README.md) | [single-stream-yolo-insight](apps/single-stream-yolo-insight/README.md) | [single-stream-open-pose](apps/single-stream-open-pose/README.md) |
-| **Multi-stream / multi-model** | [multi-stream-yolo-yolo11](apps/multi-stream-yolo-yolo11/README.md) | [quad-stream-quad-model](apps/quad-stream-quad-model/README.md) | [16stream4model](apps/16stream4model/README.md) |
-| | [multi-model-load-probe](apps/multi-model-load-probe/README.md) | | |
-| **Other inputs / tasks** | [usb-camera-yolo26m](apps/usb-camera-yolo26m/README.md) | [pcb-defect-detection-yolo26n](apps/pcb-defect-detection-yolo26n/README.md) | [detection-vlm-assistant](apps/detection-vlm-assistant/README.md) |
-| | [benchmark](apps/benchmark/README.md) | | |
+| Type | | | | |
+| --- | --- | --- | --- | --- |
+| **Single&nbsp;stream** | [YOLO11](apps/single-stream-yolo-yolo11/README.md) | [YOLOv8m](apps/single-stream-yolo-yolov8m/README.md) | [YOLO26n](apps/single-stream-yolo26n/README.md) | [YOLOv8n&nbsp;seg](apps/single-stream-yolov8n-seg/README.md) |
+|  | [YOLO&nbsp;+&nbsp;Insight](apps/single-stream-yolo-insight/README.md) | [OpenPose](apps/single-stream-open-pose/README.md) |  |  |
+| **Multi-stream** | [2&nbsp;streams,&nbsp;YOLO11](apps/multi-stream-yolo-yolo11/README.md) | [4&nbsp;streams,&nbsp;4&nbsp;models](apps/quad-stream-quad-model/README.md) | [16&nbsp;streams,&nbsp;4&nbsp;models](apps/16stream4model/README.md) | [Multi-model&nbsp;probe](apps/multi-model-load-probe/README.md) |
+| **Other** | [USB&nbsp;camera](apps/usb-camera-yolo26m/README.md) | [PCB&nbsp;defects](apps/pcb-defect-detection-yolo26n/README.md) | [Detection&nbsp;+&nbsp;VLM](apps/detection-vlm-assistant/README.md) | [Benchmark](apps/benchmark/README.md) |
 
 ---
 
@@ -91,15 +88,14 @@ the ten prebuilt archives, or set up to compile them yourself.
 
 Models with a compile recipe (each links to its commands):
 
-| Task | | | |
-| --- | --- | --- | --- |
-| **Classification** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) |
-|  | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |  |  |
-| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) |
-|  | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-no-dfl-rebuild) | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) |  |
-| **Segmentation** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |
-| **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |
-| **Open-vocabulary detection** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |
+| Task | | | | |
+| --- | --- | --- | --- | --- |
+| **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
+| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-no-dfl-rebuild) |
+|  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) |  |  |  |
+| **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
+| **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
+| **Open-vocab** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |  |
 
 **[`model-compilation/COMPILE-COMMANDS.md`](model-compilation/COMPILE-COMMANDS.md)** — the commands.
 `compile_all.sh` for eleven of the twelve (`yolov8s-worldv2` needs bf16 and is built separately), or
@@ -119,13 +115,12 @@ No weights, ONNX graphs or compiled archives are committed — you regenerate th
 `pyneat.genai` API (which *runs* them from your app), bring-your-own compilation, and an
 OpenAI-compatible GenAI server.
 
-| Topic | | | |
-| --- | --- | --- | --- |
-| **Basics** | [LLiMa Introduction](llima/01-llima-basics/llima-introduction.ipynb) |  |  |
-| **Run LLM / VLM / ASR** | [Run an LLM from Python](llima/02-run-llm-vlm/01_run_llm.ipynb) | [Run a VLM from Python](llima/02-run-llm-vlm/02_run_vlm.ipynb) | [Transcribe audio (ASR)](llima/02-run-llm-vlm/03_audio_input_asr.ipynb) |
-| **YOLO + VLM** | [YOLO detection + a VLM](llima/03-yolo-plus-vlm/01_detection_to_vlm.ipynb) |  |  |
-| **Compilation** | [Bring-your-own LLM](llima/04-llm-vlm-compilation/01_llm_compilation.ipynb) | [VLM specifics: vision encoder + language model](llima/04-llm-vlm-compilation/02_vlm_compilation.ipynb) |  |
-| **GenAI server** | [GenAIServer: one HTTP server for LLM, VLM and ASR](llima/05-genai-server/01_genai_server.ipynb) |  |  |
+| Topic | | | | |
+| --- | --- | --- | --- | --- |
+| **Basics** | [Introduction](llima/01-llima-basics/llima-introduction.ipynb) |  |  |  |
+| **Run** | [LLM](llima/02-run-llm-vlm/01_run_llm.ipynb) | [VLM](llima/02-run-llm-vlm/02_run_vlm.ipynb) | [ASR&nbsp;(audio)](llima/02-run-llm-vlm/03_audio_input_asr.ipynb) |  |
+| **Apply** | [YOLO&nbsp;+&nbsp;VLM](llima/03-yolo-plus-vlm/01_detection_to_vlm.ipynb) | [GenAI&nbsp;server](llima/05-genai-server/01_genai_server.ipynb) |  |  |
+| **Compile** | [Your&nbsp;own&nbsp;LLM](llima/04-llm-vlm-compilation/01_llm_compilation.ipynb) | [Your&nbsp;own&nbsp;VLM](llima/04-llm-vlm-compilation/02_vlm_compilation.ipynb) |  |  |
 
 ---
 
