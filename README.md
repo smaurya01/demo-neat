@@ -24,6 +24,10 @@ below.
   Silicon, also work), with Docker, `sudo` rights, 4 CPU cores, 16 GB RAM and 100 GB free disk.
 - **A SiMa developer account**, for downloading the SDK and board software.
 
+## Recommended path
+
+**[Quick Start Guide](devkit-quick-start/README.md)** → **[Tutorial I · Easy](tutorial/README.md#i--easy)** → **[YOLO26n](apps/single-stream-yolo26n/README.md)** → **[YOLO + Insight](apps/single-stream-yolo-insight/README.md)** → **[4 streams, 4 models](apps/quad-stream-quad-model/README.md)** → **[USB camera](apps/usb-camera-yolo26m/README.md)** → **[Benchmark](apps/benchmark/README.md)** → **GenAI** ([LLM](llima/02-run-llm-vlm/01_run_llm.ipynb), [VLM](llima/02-run-llm-vlm/02_run_vlm.ipynb), [ASR](llima/02-run-llm-vlm/03_audio_input_asr.ipynb)) → **[Model compilation](model-compilation/README.md)** → **The rest**: [Tutorial II and III](tutorial/README.md#ii--medium), [the other apps](apps/README.md), [the other LLiMa notebooks](llima/README.md)
+
 ---
 
 ## 1. Start here — the Quick Start Guide
@@ -70,7 +74,7 @@ Once the concepts land, move on to a complete application below.
 ## 3. Apps
 
 Complete, runnable applications for the DevKit. **[`apps/README.md`](apps/README.md)** describes
-each one and how to run it. New to the apps? Start with single-stream **YOLO11**.
+each one and how to run it.
 
 | Type | | | | |
 | --- | --- | --- | --- | --- |
