@@ -41,10 +41,11 @@ camera is.
 
 - Application: `usb_camera_yolo26m` (C++) / `main.py` (Python) — identical topology, identical results
 - Model: `yolo26m-det-bf16-mla_tess-b1.tar.gz` (an INT8 build is also supported — see the appendix)
-- Input: USB/UVC camera, MJPEG 1920x1080@30 (`/dev/video16`)
+- Input: USB/UVC camera, MJPEG 1920x1080@30 (`/dev/video96` in the shipped config; the node number varies)
 - Output: one UDP/RTP H.264 stream with labeled boxes; optional detection JSON to Neat Insight
 - Runtime config: `./config/default.conf`
-- Validated on: Modalix DevKit, Neat runtime `0.2.2`, Logitech Brio 100 (`046d:094c`)
+- Validated on: Modalix DevKit, Logitech Brio 100 (`046d:094c`); first on Neat runtime `0.2.2`,
+  re-verified on NEAT 0.4.0 (30.0 fps C++, 28.4 fps Python)
 
 Pipeline:
 
@@ -75,12 +76,13 @@ Find your camera's capture node on the DevKit before you start:
 
 ```bash
 v4l2-ctl --list-devices                       # which /dev/videoN is the camera
-v4l2-ctl -d /dev/video16 --list-formats-ext   # confirm MJPEG 1920x1080 @ 30
+v4l2-ctl -d /dev/videoN --list-formats-ext    # confirm MJPEG 1920x1080 @ 30 on the capture node
 ```
 
 A UVC camera registers **two** nodes: a *Video Capture* node (use this one) and a *Metadata Capture*
-node. On this DevKit they are `/dev/video16` and `/dev/video17`. Opening the metadata node as a
-camera yields nothing. See [Appendix: Camera Setup](#appendix-camera-setup).
+node. The numbers depend on how the camera enumerates: the Brio 100 has shown up as
+`/dev/video16`/`/dev/video17` and, on the NEAT 0.4.0 re-test, as `/dev/video96`, which is what the
+shipped config uses. Opening the metadata node as a camera yields nothing. See [Appendix: Camera Setup](#appendix-camera-setup).
 
 ## Model Download Command
 
@@ -111,7 +113,7 @@ sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yol
 Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
-camera_device=/dev/video16
+camera_device=/dev/video96
 model_path=./assets/models/yolo26m-det-bf16-mla_tess-b1.tar.gz
 udp_host=<host-ip>
 udp_port=9000
@@ -129,7 +131,8 @@ For a bounded smoke test, set `frames=200` in `./config/default.conf`.
 
 <br>
 
-`camera_device`: The camera's *Video Capture* node, e.g. `/dev/video16`. Not the metadata node.
+`camera_device`: The camera's *Video Capture* node, e.g. `/dev/video96` (check yours with
+`v4l2-ctl --list-devices`). Not the metadata node.
 
 `width`, `height`: Capture resolution. `1920x1080` is the Brio 100's maximum.
 
@@ -262,35 +265,16 @@ See [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile).
 **Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
 and it works from any device that can reach the host.
 
-1. Open **`https://192.168.131.12:9900`** in a browser.
-   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
-   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+1. Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+   `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
+   certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
 3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
    Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
-where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
-9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
-(`exposedPorts[*].hostPortStart`) rather than assuming.
-
-### gst-launch (alternative, no Insight needed)
-
-Install host viewer tools if needed:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-```
-
-Run this on the machine at `udp_host`:
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
-> over SSH.
+where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
+read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
 <details>
 <summary><h2>Appendix: Camera Setup</h2></summary>
@@ -301,6 +285,8 @@ gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-
 
 The `video0*`–`video3*` nodes with `m2m` / `meta` / `out` / `raw` suffixes are SiMa's own ISP and
 codec devices (`arm-isp-*`), unrelated to USB. A USB camera appears as plain numeric nodes:
+
+Example (the numbers on your board may differ):
 
 ```text
 Brio 100 (usb-0003:01:00.0-3.1):
@@ -477,7 +463,7 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
   (`strings /usr/lib/libsima_neat.so.2.1.2 | grep -c neatcamerabridge` -> `0`). Keep
   `pipeline_mode=push`.
 - **The stream cannot be viewed on the DevKit itself.** No `avdec_h264`; `openh264dec` fails on
-  RTP-depayed H.264 (including a synthetic control). View on a desktop.
+  RTP-depayed H.264 (including a synthetic control). View it in Insight from a desktop browser.
 - **~48 s startup** while the model is unpacked and staged into `/tmp/simaai/`. This happens per run.
 - **`jpegparse` logs `Failed to parse app0 segment`** repeatedly. Harmless — the Brio 100 writes a
   non-standard JPEG APP0 header. Decoding is unaffected.

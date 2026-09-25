@@ -140,7 +140,7 @@ dk hello_neat.py            # a PyNeat script
 ```
 
 If that prints, the runtime is live on the DevKit. Next: the
-[tutorial notebooks](../tutorial/README.md), or straight to an [app](../README.md#apps).
+[tutorial notebooks](../tutorial/README.md), or straight to an [app](../README.md#3-apps).
 
 ---
 
