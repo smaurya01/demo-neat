@@ -1,148 +1,181 @@
-# Appendix — Host Setup & DevKit Recovery
+# Appendix: Neat Insight and DevKit recovery
 
-Operational recipes that every app in this repo needs but none of them owns: how to stand up an
-RTSP source on the host, how to watch the UDP/RTP output the apps publish, and how to un-wedge the
-DevKit when the MLA stops responding.
+Operational recipes the apps in this repo need but none of them owns:
+
+- **Neat Insight** serves the RTSP test sources the apps read, and displays the video and
+  detections the apps send back, in a browser, with nothing to install on your machine.
+- **Recovery:** how to un-wedge the DevKit when the MLA or a decoder stops responding.
 
 ← Back to the [repo README](README.md)
 
 ## Table of Contents
 
-- [1. Host: a local RTSP source](#1-host-a-local-rtsp-source)
-  - [1.1 Start the RTSP server](#11-start-the-rtsp-server)
-  - [1.2 Publish a video file into it, on a loop](#12-publish-a-video-file-into-it-on-a-loop)
-  - [1.3 Confirm it before blaming the app](#13-confirm-it-before-blaming-the-app)
-- [2. Host: viewing the UDP/RTP output](#2-host-viewing-the-udprtp-output)
-  - [2.1 One stream, with a live FPS readout](#21-one-stream-with-a-live-fps-readout)
-  - [2.2 Four streams at once, in a 2×2 grid](#22-four-streams-at-once-in-a-22-grid)
-- [3. DevKit: recovery when the MLA wedges](#3-devkit-recovery-when-the-mla-wedges)
-  - [3.1 The MLA is blocked / the app hangs on model load](#31-the-mla-is-blocked--the-app-hangs-on-model-load)
-  - [3.2 An LLiMa model stops loading after a few sessions](#32-an-llima-model-stops-loading-after-a-few-sessions)
-  - [3.3 NEAT install blocked by `simaai-memory-lib`](#33-neat-install-blocked-by-simaai-memory-lib)
-  - [3.4 Helper commands — find and clear what is holding the hardware](#34-helper-commands--find-and-clear-what-is-holding-the-hardware)
+- [1. Neat Insight: sources in, video out](#1-neat-insight-sources-in-video-out)
+  - [1.1 Open Insight](#11-open-insight)
+  - [1.2 Serve a video as an RTSP source](#12-serve-a-video-as-an-rtsp-source)
+  - [1.3 Confirm the source before blaming the app](#13-confirm-the-source-before-blaming-the-app)
+  - [1.4 Send an app's output to Insight](#14-send-an-apps-output-to-insight)
+  - [1.5 Watch it in the Video Viewer](#15-watch-it-in-the-video-viewer)
+- [2. DevKit: recovery when the hardware wedges](#2-devkit-recovery-when-the-hardware-wedges)
+  - [2.1 A leftover app is still holding the hardware](#21-a-leftover-app-is-still-holding-the-hardware)
+  - [2.2 The MLA is blocked / the app hangs on model load](#22-the-mla-is-blocked--the-app-hangs-on-model-load)
+  - [2.3 An LLiMa model stops loading after a few sessions](#23-an-llima-model-stops-loading-after-a-few-sessions)
+  - [2.4 NEAT install blocked by `simaai-memory-lib`](#24-neat-install-blocked-by-simaai-memory-lib)
+  - [2.5 Helper commands: find what is holding the hardware](#25-helper-commands-find-what-is-holding-the-hardware)
   - [Suggested order](#suggested-order)
-- [4. Quick reference](#4-quick-reference)
+- [3. Quick reference](#3-quick-reference)
 
 ---
 
-## 1. Host: a local RTSP source
+## 1. Neat Insight: sources in, video out
 
-The apps take an RTSP URL as input. If you do not have a camera, serve a video file instead. Two
-pieces: an RTSP **server** (`mediamtx`) and an RTSP **publisher** (`ffmpeg`) that loops a file into it.
+Insight runs inside the SDK container. It hosts the RTSP test sources the apps read, and it
+receives the H.264/RTP video (and, for some apps, JSON metadata) the apps send back, drawing both
+in a browser viewer.
 
-### 1.1 Start the RTSP server
-
-```bash
-docker run --rm -it --network=host -e MTX_RTSPADDRESS=:8555 bluenviron/mediamtx
+```
+            RTSP  rtsp://<sdk-host-ip>:8554/srcN
+Insight  ─────────────────────────────────────────►  DevKit app
+(SDK)    ◄─────────────────────────────────────────
+            video  UDP <sdk-host-ip>:9000+N   (channel N)
+            metadata UDP <sdk-host-ip>:9100+N (apps that send it)
 ```
 
-- `--network=host` — the server must be reachable from the DevKit, not just from localhost.
-- `MTX_RTSPADDRESS=:8555` — listen on 8555. Every config in this repo assumes port **8555**.
-- `--rm -it` — foreground, and it cleans up on Ctrl-C. Leave it running in its own terminal.
+Full documentation: [developer.sima.ai/software/tools/insight](https://developer.sima.ai/software/tools/insight/).
 
-### 1.2 Publish a video file into it, on a loop
+### 1.1 Open Insight
+
+In the SDK shell:
 
 ```bash
-ffmpeg -re -stream_loop -1 -i aa1.mp4 \
-  -c:v libx264 -preset ultrafast -tune zerolatency \
-  -b:v 4M -maxrate 8M -bufsize 10M \
-  -pix_fmt yuv420p -g 30 \
-  -f rtsp rtsp://192.168.2.105:8555/stream
+neat --json
 ```
 
-Replace `192.168.2.105` with **your host's LAN IP** — the address the DevKit will connect back to.
-Not `127.0.0.1`: the board has to reach it.
+- `insight.webUiUrl` is the Insight UI, `https://<host>:9900`, for your browser. The certificate is
+  self-signed, so accept the browser warning the first time.
+- `exposedPorts` lists the ports the DevKit must use: `rtsp.tcp` (RTSP sources, default 8554),
+  `videoUDP` (video in, default from 9000) and `metadataUDP` (metadata in, default from 9100).
+  **Use this map, not the defaults.** If a default port was taken, the SDK maps a different one,
+  and the range also sets how many viewer channels you have.
+- `curl -sk https://127.0.0.1:9900/api/server-ip` reports the host address the **DevKit** should
+  connect to. That is `<sdk-host-ip>` everywhere below. It can differ from the host in `webUiUrl`
+  when the host has more than one network, so always use `/api/server-ip` for RTSP URLs,
+  `udp_host` and `insight_host`. Never give the DevKit `127.0.0.1`: that is the board itself.
 
-Why each flag matters:
+### 1.2 Serve a video as an RTSP source
 
-| Flag | Why |
-| --- | --- |
-| `-re` | Publish at **real time**, not as fast as ffmpeg can read. Without it you flood the server and the stream is meaningless as a frame-rate reference. |
-| `-stream_loop -1` | Loop the file forever, so the stream does not die mid-test. |
-| `-preset ultrafast -tune zerolatency` | Keep encoder latency out of your measurements. |
-| `-pix_fmt yuv420p` | The pixel format the SiMa H.264 decoder expects. |
-| `-g 30` | Keyframe every 30 frames, so a receiver joining late gets a picture within ~1 s instead of waiting. |
+Insight's media sources are numbered slots, `src1`, `src2` and so on, each looping one video
+file. In the UI, open **Media Sources**, assign a video to a slot, and start it. Use a catalog
+video, or upload your own.
 
-The stream is now at `rtsp://<host-ip>:8555/stream` — put that in the app's `config/default.conf`.
+The same from the SDK shell:
 
-### 1.3 Confirm it before blaming the app
+```bash
+curl -sk -F "file=@my_video.mp4" https://127.0.0.1:9900/api/upload/media     # optional: your own clip
+curl -sk https://127.0.0.1:9900/api/mediasrc/videos                          # what can be assigned
+curl -sk -H "Content-Type: application/json" \
+  -d '{"index":1,"file":"my_video.mp4","transport":"rtsp"}' \
+  https://127.0.0.1:9900/api/mediasrc/assign
+curl -sk -H "Content-Type: application/json" -d '{"index":1}' \
+  https://127.0.0.1:9900/api/mediasrc/start
+```
 
-**Always probe the source before debugging an app.** The source frame rate is the hard ceiling on
-any FPS an app can claim, and a stream that is not actually publishing looks identical to a broken
+The DevKit then reads `rtsp://<sdk-host-ip>:8554/src1` (8554, or the mapped `rtsp.tcp` port from
+`neat --json`). That is the `<rtsp-url>` to put in an app's `config/default.conf`. For many sources at once, assign several slots and start them
+together with `/api/mediasrc/start-bulk` (`{"count": N}` starts the first N *assigned* slots in
+index order).
+
+Use **H.264 with no B-frames** for the apps. Insight re-encodes uploaded H.264 `.mp4` files for
+low-latency RTSP (baseline profile, no B-frames, frame rate kept), and its catalog clips are already
+in that form. H.265 and MJPEG uploads are served as they are.
+
+### 1.3 Confirm the source before blaming the app
+
+**Always check the source before debugging an app.** The source frame rate is the hard ceiling
+on any fps an app can claim, and a source that is not playing looks identical to a broken
 pipeline.
 
-```bash
-ffprobe -hide_banner -rtsp_transport tcp rtsp://192.168.2.105:8555/stream
+- In **Media Sources**, the slot must show the right file and state **playing**.
+- Check the clip's resolution and frame rate:
+
+  ```bash
+  curl -sk -H "Content-Type: application/json" -d '{"path":"my_video.mp4"}' \
+    https://127.0.0.1:9900/api/media-info
+  # {"codec":"H.264","frame_rate":"30/1","width":1280,"height":720,...}
+  ```
+
+  Apps that pin the source rate need an exact integer rate such as `30/1`. A `30000/1001`
+  (29.97) clip fails caps negotiation.
+- `curl -sk https://127.0.0.1:9900/api/mediasrc` lists every slot's file and state. The RTSP URLs
+  it returns use `127.0.0.1`, which only works inside the SDK container. For the DevKit, replace
+  that host with `<sdk-host-ip>`.
+
+### 1.4 Send an app's output to Insight
+
+Every app that streams video sends it to UDP port **9000** (single-stream apps) or **9000 + i** for
+stream `i` (multi-stream apps; some also take a `udp_port_stride` or a per-stream port override).
+`pcb-defect-detection-yolo26n` writes JPEGs and `benchmark` writes JSON, so they send nothing.
+Those ports are Insight's viewer channels: port `9000 + N` is channel `N`. To see the output, set
+the app's output host to the Insight host:
+
 ```
+udp_host=<sdk-host-ip>            # most apps
+insight_host=<sdk-host-ip>        # single-stream-yolo-insight, 16stream4model
+```
+
+- **Burned-in overlays:** most apps draw the boxes into the video before sending it, so video
+  alone is enough.
+- **Metadata overlays:** `single-stream-yolo-insight` and `16stream4model` send the original
+  video untouched and the detections as JSON metadata on `9100 + N`. Insight matches the two on
+  the RTP timestamp and draws the boxes itself. `usb-camera-yolo26m` can also send metadata
+  (set `metadata_host`; off by default).
+- Channel `N` exists only if the SDK maps port `9000 + N`. Check `videoUDP` in `neat --json`
+  before running an app with more streams than you have channels.
+
+### 1.5 Watch it in the Video Viewer
+
+In the Insight UI, open **Video Viewer** and select the channels. Or get a direct link for, say,
+channels 0–3:
+
+```bash
+curl -sk "https://127.0.0.1:9900/api/viewer-url?src=0,1,2,3"
+```
+
+The link it returns is on the viewer's own port (`videoUI`, default 8081) at `127.0.0.1`, so it
+opens only in a browser on the SDK host. From another machine, replace `127.0.0.1` with the host's
+address.
+
+- A channel with no picture is not receiving. Check that the app is running, that its
+  `udp_host` / `insight_host` is the Insight host's address as the DevKit sees it, and that the
+  port is in the mapped range.
+- **Keep one viewer open** while checking metadata overlays. Insight renders metadata reliably
+  for a single viewer only.
+- The fps each app prints is its own measurement. The viewer shows what actually arrived.
 
 ---
 
-## 2. Host: viewing the UDP/RTP output
+## 2. DevKit: recovery when the hardware wedges
 
-The apps encode H.264 and push it out as RTP over UDP to `udp_host:udp_port` from their config. Run
-these **on the machine you set as `udp_host`**.
+A crashed or force-killed app can leave the MLA, its mailbox devices, or the hardware decoders
+claimed. The next run then hangs, fails to load a model, or fails at decoder setup, and nothing
+in the error message points at the real cause.
 
-### 2.1 One stream, with a live FPS readout
+> **These are recovery commands, not routine ones.** Several kill processes bluntly. Know what
+> else is running on the board before you fire them.
 
-Example for port **5205**:
+### 2.1 A leftover app is still holding the hardware
 
-```bash
-gst-launch-1.0 \
-  udpsrc port=5205 buffer-size=2097152 \
-    caps="application/x-rtp,media=video,encoding-name=H264,payload=96" \
-  ! rtpjitterbuffer latency=100 \
-  ! rtph264depay ! h264parse ! decodebin \
-  ! videoconvert \
-  ! fpsdisplaysink video-sink=autovideosink sync=false \
-      text-overlay=true signal-fps-measurements=true
-```
-
-- `buffer-size=2097152` — a 2 MB socket buffer. At 1080p the default is too small and you lose
-  packets, which shows up as a corrupt or undecodable picture rather than as an error.
-- `rtpjitterbuffer latency=100` — reorders packets. Without it, out-of-order UDP looks like corruption.
-- `decodebin` — picks whatever H.264 decoder the host has. More portable than naming `avdec_h264`.
-- `sync=false` — render on arrival. With `sync=true` the sink paces to timestamps and appears to stall.
-- `fpsdisplaysink … text-overlay=true` — burns the measured FPS into the window. This is your
-  independent check on the app's own reported number.
-
-### 2.2 Four streams at once, in a 2×2 grid
-
-For the multi-stream apps. Each `udpsrc` is scaled to 640×360 and composited into one 1280×720 window:
+An app started with `dk` or over SSH can outlive the session that started it, for example when
+it runs until Ctrl-C and the terminal closes. It keeps the decoders and the MLA, so the next run
+fails, often at decoder setup (`runtime.element_failed` on a `decoder_*` stage). Look for it
+first:
 
 ```bash
-gst-launch-1.0 -e \
-  compositor name=mix background=black \
-    sink_0::xpos=0   sink_0::ypos=0 \
-    sink_1::xpos=640 sink_1::ypos=0 \
-    sink_2::xpos=0   sink_2::ypos=360 \
-    sink_3::xpos=640 sink_3::ypos=360 \
-  ! videoconvert ! autovideosink sync=false \
-  udpsrc port=5206 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! decodebin ! videoscale ! videoconvert ! video/x-raw,width=640,height=360 ! queue ! mix.sink_0 \
-  udpsrc port=5208 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! decodebin ! videoscale ! videoconvert ! video/x-raw,width=640,height=360 ! queue ! mix.sink_1 \
-  udpsrc port=5210 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! decodebin ! videoscale ! videoconvert ! video/x-raw,width=640,height=360 ! queue ! mix.sink_2 \
-  udpsrc port=5212 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! decodebin ! videoscale ! videoconvert ! video/x-raw,width=640,height=360 ! queue ! mix.sink_3
+pgrep -fa <app-binary-or-script>     # e.g. pgrep -fa 16stream4model
+kill <PID>                           # a clean stop first; kill -9 only if it will not exit
 ```
 
-- Ports step by **2** (5206, 5208, 5210, 5212) because each channel reserves a pair. Match them to the
-  app's `udp_port` / `video_port_base` plus its channel index — check the app's config before assuming.
-- `sink_N::xpos/ypos` place each tile. `queue` before each sink pad is required: without it, one slow
-  stream stalls the whole compositor.
-- `-e` sends EOS on Ctrl-C so the window closes cleanly instead of hanging.
-
-A tile that stays black means **that** port is not receiving — the other three still render, which
-makes this a quick way to see which stream died.
-
----
-
-## 3. DevKit: recovery when the MLA wedges
-
-A crashed or force-killed app can leave the MLA and its mailbox devices claimed. The next run then
-hangs or fails to load a model, and nothing in the error message points at the real cause.
-
-> **These are recovery commands, not routine ones.** Several kill processes bluntly. Know what else is
-> running on the board before you fire them.
-
-### 3.1 The MLA is blocked / the app hangs on model load
+### 2.2 The MLA is blocked / the app hangs on model load
 
 1. Find the stuck process and kill it:
 
@@ -157,9 +190,9 @@ hangs or fails to load a model, and nothing in the error message points at the r
    bash /usr/bin/fix_devkit_runtime.sh
    ```
 
-This is the first thing to try. Most "the model will not load" and "the MLA is stuck" symptoms clear here.
+This clears most "the model will not load" and "the MLA is stuck" symptoms.
 
-### 3.2 An LLiMa model stops loading after a few sessions
+### 2.3 An LLiMa model stops loading after a few sessions
 
 Repeated load/unload cycles can leave the app-complex service in a bad state:
 
@@ -167,53 +200,56 @@ Repeated load/unload cycles can leave the app-complex service in a bad state:
 sudo systemctl restart simaai-appcomplex
 ```
 
-### 3.3 NEAT install blocked by `simaai-memory-lib`
+### 2.4 NEAT install blocked by `simaai-memory-lib`
 
-If installing NEAT core fails because of a conflict with the memory library, remove it and retry the
-install. **Run this on the Modalix board:**
+Only if installing NEAT core **fails with a conflict** against the memory library: remove it and
+retry the install. A working board has it installed, so do not remove it otherwise. Run this on
+the Modalix board:
 
 ```bash
 sudo apt remove --purge simaai-memory-lib simaai-memory-lib-dev
 ```
 
-### 3.4 Helper commands — find and clear what is holding the hardware
+### 2.5 Helper commands: find what is holding the hardware
 
 Run on the Modalix board. Use these when `fix_devkit_runtime.sh` alone did not clear it.
 
 | Command | What it does |
 | --- | --- |
-| `sudo fuser -v /dev/m4_lp_mbox` | Show which process holds the **MLA mailbox**. This is usually the culprit. |
-| `sudo fuser -v /dev/rpm*` | Show what holds the RPM devices. |
+| `sudo fuser -v /dev/m4_lp_mbox` | Show which process holds the **MLA mailbox**. On a healthy board that is `mlashmcomplex`, the app-complex daemon: **never kill it**. Any other holder (a user app or a pyneat process) is the culprit. |
+| `sudo fuser -v /dev/rpmsg*` | Show what holds the RPMsg devices. |
 | `ps aux \| grep pyneat \| grep -v grep` | Find leftover `pyneat` processes still holding the runtime. |
-| `fuser -k 5001/tcp` | Kill whatever holds TCP **5001** (a stale server socket blocking a restart). |
-
-**Blast-radius warning, because this bites:**
-
-- `fuser -k 5001/tcp` kills the process holding the port, not just the socket.
+| `sudo fuser -v <port>/tcp` | Show what holds a server port, for example `9998` for the GenAI server when a restart fails with "address in use". |
+| `sudo fuser -k <port>/tcp` | Kill that process. **It kills the whole process, not just the socket.** |
 
 ### Suggested order
 
-Escalate — do not start at the bottom.
+Escalate; do not start at the bottom.
 
-1. `top` → kill the specific hung PID.
-2. `bash /usr/bin/fix_devkit_runtime.sh`
-3. `sudo fuser -v /dev/m4_lp_mbox` → kill the PID it names.
-4. `ps aux | grep pyneat` → kill leftovers by PID.
-5. `sudo systemctl restart simaai-appcomplex` (LLiMa / app-complex issues).
-6. Only then the blunt instrument: `fuser -k 5001/tcp`.
-7. Still stuck → reboot the board.
+1. `pgrep -fa <app>`: stop a leftover app.
+2. `top`: kill the specific hung PID.
+3. `bash /usr/bin/fix_devkit_runtime.sh`. It also stops and restarts `simaai-appcomplex` itself.
+4. `sudo fuser -v /dev/m4_lp_mbox`: kill the PID it names **only if it is not `mlashmcomplex`**.
+5. `ps aux | grep pyneat`: kill leftovers by PID.
+6. Only then the blunt instrument: `sudo fuser -k <port>/tcp`.
+7. Still stuck: reboot the board.
+
+For LLiMa models that stop loading, restarting `simaai-appcomplex` (§2.3) is the direct fix.
 
 ---
 
-## 4. Quick reference
+## 3. Quick reference
 
 | I want to… | Do this |
 | --- | --- |
-| Serve a video file as RTSP | `docker run --rm -it --network=host -e MTX_RTSPADDRESS=:8555 bluenviron/mediamtx`, then the `ffmpeg -re -stream_loop -1 …` publisher |
-| Check the RTSP source is alive, and its true FPS | `ffprobe -hide_banner -rtsp_transport tcp rtsp://<host>:8555/stream` |
-| Watch one app's output, with FPS | `udpsrc port=<udp_port> … ! fpsdisplaysink` (§2.1) |
-| Watch four streams at once | the `compositor` 2×2 pipeline (§2.2) |
+| Find the Insight UI and port map | `neat --json` (`insight.webUiUrl`, `exposedPorts`) |
+| Find the address the DevKit should use | `curl -sk https://127.0.0.1:9900/api/server-ip` |
+| Serve a video as RTSP | Insight **Media Sources**: assign a clip to `srcN` and start it → `rtsp://<sdk-host-ip>:8554/srcN` (or the mapped `rtsp.tcp` port) |
+| Check a source's fps and resolution | `/api/media-info` (§1.3) |
+| See an app's output | set `udp_host` / `insight_host` to the Insight host; open **Video Viewer** channel `N` (port `9000 + N`) |
+| Get a viewer link | `curl -sk "https://127.0.0.1:9900/api/viewer-url?src=0,1,2,3"` |
+| Next run fails at decoder setup | `pgrep -fa <app>`: a leftover run is holding the hardware |
 | Un-wedge the MLA | kill the PID, then `bash /usr/bin/fix_devkit_runtime.sh` |
-| Find what is holding the MLA | `sudo fuser -v /dev/m4_lp_mbox` |
+| Find what is holding the MLA | `sudo fuser -v /dev/m4_lp_mbox`  |
 | LLiMa stopped loading models | `sudo systemctl restart simaai-appcomplex` |
 | NEAT install blocked by the memory lib | `sudo apt remove --purge simaai-memory-lib simaai-memory-lib-dev` |

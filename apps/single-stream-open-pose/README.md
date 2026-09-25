@@ -1,4 +1,9 @@
-# Single Stream OpenPose (TODO:: Stable Output)
+# Single Stream OpenPose
+
+> **Status:** three decode defects were fixed in the NEAT 0.4.0 migration (input range, peak
+> suppression radius, person-merge conflict check). Detections went from 2–5 persons / 21–44
+> keypoints to 4–10 / 38–86 per frame, but the skeleton output has not yet been visually
+> re-verified.
 
 ## Table of Contents
 
@@ -67,7 +72,7 @@ Edit `./config/default.conf` before running. At minimum, set:
 rtsp_url=<rtsp-url>
 model_path=./assets/models/open_pose_mpk.tar.gz
 udp_host=<host-ip>
-udp_port_base=5204
+udp_port_base=9000
 ```
 
 OpenPose uses packaged 480x480 model geometry internally. Download the model before running,
@@ -134,35 +139,16 @@ For a bounded smoke test, set `frames=30` in `./config/default.conf`, then run t
 **Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
 and it works from any device that can reach the host.
 
-1. Open **`https://192.168.131.12:9900`** in a browser.
-   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
-   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+1. Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+   `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
+   certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
 3. Set **Port** to **9000** — the same value as `udp_port_base` in `./config/default.conf`.
    Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
-where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
-9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
-(`exposedPorts[*].hostPortStart`) rather than assuming.
-
-### gst-launch (alternative, no Insight needed)
-
-Install host viewer tools if needed:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-```
-
-Run this on the machine at `udp_host`:
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
-> over SSH.
+where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
+read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
 <details>
 <summary><h2>TODO</h2></summary>

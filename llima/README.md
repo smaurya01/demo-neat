@@ -107,7 +107,7 @@ http://modalix:8888/tree?token=************************
 Replace the `modalix` name in above URL with devkit ip.
 
 ```bash
-http://192.168.135.203:8888/tree?token=**************
+http://<devkit-ip>:8888/tree?token=<token>
 ```
 
 From the file tree, open `llima/` and start at

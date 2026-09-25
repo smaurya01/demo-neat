@@ -43,9 +43,9 @@ so you can tell the four windows apart.
 - Output: 4x UDP/RTP H.264 streams, one port per stream
 - Runtime config: `./config/default.conf` — **shared by both implementations**
 
-Both do exactly the same thing. The C++ build is ** faster end to end**
-(**~236 fps** aggregate delivered in c++), because Python's overlay is serialised by
-the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
+Both do exactly the same thing. The C++ build is **about 3x faster end to end** on NEAT 0.4.0
+(**~236 fps** aggregate in C++ against **~79 fps** in Python), because Python's overlay is
+serialised by the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
 
 | slot | task | model | source | Neat on-device decode |
 | --- | --- | --- | --- | --- |
@@ -112,11 +112,12 @@ Edit `./config/default.conf` before running. At minimum, set:
 ```text
 rtsp_default=<rtsp-url>
 udp_host=<host-ip>
-udp_port_base=5206
-udp_port_stride=2
+udp_port_base=9000
+udp_port_stride=1
 ```
 
-With those defaults stream *i* publishes on `5206 + 2*i` → `5206`, `5208`, `5210`, `5212`.
+With those defaults stream *i* publishes on `9000 + i` → `9000`, `9001`, `9002`, `9003`, Insight
+viewer channels 0–3.
 
 For a bounded smoke test, set `frames=30`.
 
@@ -234,9 +235,9 @@ dk ./build/quad_stream_quad_model --no-overlay --duration 20
 **Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
 and it works from any device that can reach the host.
 
-1. Open **`https://192.168.131.12:9900`** in a browser.
-   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
-   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+1. Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+   `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
+   certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
 3. This app publishes **4 streams**, so open one viewer channel per stream.
    `udp_port_base` sets the first port and each later stream takes the next one:
@@ -249,32 +250,8 @@ and it works from any device that can reach the host.
    | 3 | `9003` | YOLOX |
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
-where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
-9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
-(`exposedPorts[*].hostPortStart`) rather than assuming.
-
-### gst-launch (alternative, no Insight needed)
-
-Install host viewer tools if needed:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-```
-
-Run this on the machine at `udp_host` — one receiver per stream:
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-gst-launch-1.0 -v udpsrc port=9001 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-gst-launch-1.0 -v udpsrc port=9002 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-gst-launch-1.0 -v udpsrc port=9003 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
-> over SSH.
-
-<a id="time-profile"></a>
+where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
+read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
 <details>
 <summary><h2>Time Profile</h2></summary>
@@ -437,8 +414,10 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
 
    ### Python (`./main.py`) — same models, same config, threaded per stream
 
-   Measured over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile windows, zero
-   stalls, zero errors, no degradation across the run.
+   Measured on NEAT 0.3.0 over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile
+   windows, zero stalls, zero errors, no degradation across the run. **On NEAT 0.4.0 the same build
+   measures ~79 fps aggregate**; the cause of the drop is not resolved. The per-stage breakdown
+   below is from the 0.3.0 run.
 
    | stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
    | --- | --- | --- | --- | --- | --- |

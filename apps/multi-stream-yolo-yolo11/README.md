@@ -84,15 +84,16 @@ rtsp_url_1=<rtsp-url>
 model_path=./assets/models/yolo_11n_mpk.tar.gz
 model_name=yolov8
 udp_host=<host-ip>
-udp_port_base=5206
-udp_port_stride=2
+udp_port_base=9000
+udp_port_stride=1
 ```
 
 Leave `model_name=yolov8` alone when running the zoo archive — despite the name, it is the decode
 family, and it is the right one for zoo YOLO11. See `model_name` under
 [Config Parameters](#config-parameters).
 
-With those defaults stream 0 publishes on `5206` and stream 1 on `5208`.
+With those defaults stream 0 publishes on `9000` and stream 1 on `9001`, Insight viewer channels 0
+and 1.
 
 For a bounded smoke test, set `frames=30` in `./config/default.conf`.
 
@@ -199,9 +200,9 @@ means and which ones are easy to misread.
 **Neat Insight** decodes and displays the stream in a browser — nothing to install on your machine,
 and it works from any device that can reach the host.
 
-1. Open **`https://192.168.131.12:9900`** in a browser.
-   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
-   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+1. Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+   `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
+   certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
 3. This app publishes **2 streams**, so open one viewer channel per stream.
    `udp_port_base` sets the first port and each later stream takes the next one:
@@ -212,159 +213,8 @@ and it works from any device that can reach the host.
    | 1 | `9001` | stream 1 |
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
-where the app sends the RTP stream. Insight in the SDK exposes **4 video channels (ports
-9000-9003)**; if the defaults are already taken, read the real ports from `neat --json`
-(`exposedPorts[*].hostPortStart`) rather than assuming.
-
-### gst-launch (alternative, no Insight needed)
-
-Install host viewer tools if needed:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-```
-
-Run this on the machine at `udp_host` — one receiver per stream:
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-gst-launch-1.0 -v udpsrc port=9001 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop, not
-> over SSH.
-
-   ---
-
-   # Appendix
-
-   <details>
-   <summary><h2>Appendix: Model Build</h2></summary>
-
-   <br>
-
-   You do **not** need this for `yolo11n` — the SDK 2.1.2 Modalix zoo publishes `yolo_11n` (and
-   `yolo_11s/m/l/x`), so use [Model Download Command](#model-download-command). Compile only for a
-   variant the zoo does not ship, or to change the surgery.
-
-   Compile it with the graph-surgery flow. See `../../model-compilation/README.md` for the full
-   walkthrough. The compiled archive lands at:
-
-   ```text
-   ../../model-compilation/work/yolo11n/<...>/compile_int8/.../yolo11n.compile_ready_mpk.tar.gz
-   ```
-
-   Copy or symlink it to `./assets/models/yolo_11n_mpk.tar.gz`, or point `model_path` at it directly.
-   `./assets/models/` is git-ignored.
-
-   **Then set `model_name=yolo11`.** A self-compiled archive is not interchangeable with the zoo one:
-   the surgery folds the DFL into the graph and exposes 3x 4-channel l/t/r/b distance heads
-   (`BoxDecodeType.YoloV26`), whereas the zoo archive keeps 3x 64-channel raw DFL heads
-   (`BoxDecodeType.YoloV8`, the `model_name=yolov8` default). The class heads are 80-channel in both.
-   Leaving `model_name=yolov8` on a self-compiled archive still runs, but decodes boxes from the wrong
-   channels.
-
-   </details>
-
-   <details>
-   <summary><h2>Appendix: Pipeline Shape</h2></summary>
-
-   <br>
-
-   ```text
-   RTSP stream 0 ──> source graph 0 ─┐
-                                     ├─> SHARED YOLO11 model stage ─> Neat box decode ─┬─> annotate ─> video sender 0 ─> udp:PORT
-   RTSP stream 1 ──> source graph 1 ─┘   (one compiled archive, one Run handle)        └─> annotate ─> video sender 1 ─> udp:PORT+stride
-   ```
-
-   The shared model stage needs one input geometry, so both streams must decode at the same resolution.
-   Since both default to the same source this holds. If your two cameras differ, the app raises a clear
-   error; to support mixed resolutions, build one model graph per stream instead of one shared handle —
-   the rest of the engine is unchanged.
-
-   </details>
-
-   <details>
-   <summary><h2>Appendix: Threading — how it sustains 60 fps per stream</h2></summary>
-
-   <br>
-
-   The thread topology is ported from a proven C++ 4-stream reference implementation
-   (4 streams x 60 fps). It is not a design invented here:
-
-   ```text
-   source thread per stream -> input queue [4]
-      -> ONE round-robin PUSHER thread -> shared model Run -> ONE PULLER thread
-      -> result queue [4] -> output worker per stream (box decode + overlay + UDP push)
-   ```
-
-   Two settings do all the work, and both are counter-intuitive:
-
-   **1. The shared model Run uses `RunPreset.Reliable` + `OverflowPolicy.Block` + `queue_depth=4`** —
-   NOT `Realtime` + `KeepLatest`, which looks like the obvious choice for a live camera and is wrong
-   here.
-
-   - `Block` keeps push and pull **strictly paired**, so a plain FIFO deque of `(stream, frame)` is
-     enough to route each result back to its own stream. `KeepLatest` silently drops results and
-     destroys that pairing.
-   - `Block` + `queue_depth` is also what **pipelines the MLA**: 4 frames stay in flight instead of the
-     accelerator waiting on the host every frame.
-   - Frames are dropped at the **source queue** instead (drop-oldest, since a live camera does not
-     wait). Drop at the source, never at the model.
-
-   **2. The pusher is ROUND-ROBIN over the per-stream input queues.** That is the only thing providing
-   fairness — without it, one stream can monopolise the shared model.
-
-   Measured against a 1280x720 H.264 @ 59.94 fps source:
-
-   | | fps/stream | aggregate | dropped |
-   | --- | --- | --- | --- |
-   | before (single-threaded round-robin) | 32.5 | 65 | 0 |
-   | **now** | **58.6 - 61.2** (3 runs) | **118 - 122** | **0** |
-
-   The old loop ran every stage of every stream on one thread and left the MLA idle ~60% of the time:
-   only 6.1 of 14.8 ms/frame was the model; the rest was host marshalling, overlay and encode push.
-
-   </details>
-
-   <details>
-   <summary><h2>Appendix: Reading The Time Profile</h2></summary>
-
-   <br>
-
-   The stages run on four different threads and **overlap**, so they deliberately do NOT sum to the
-   frame period. Read `delivered fps` as throughput; read the columns as cost attribution.
-
-   | column | meaning |
-   | --- | --- |
-   | `rtsp` | source thread: wait for + copy one decoded NV12 frame out of the RTSP graph |
-   | `prep` | source thread: NV12 -> `pyneat.Tensor` for the model input |
-   | `qwait` | time the frame sat in its stream's input queue waiting for the pusher |
-   | `push` | pusher thread: `model_run.push()`. **Blocking** time — see below |
-   | `infer` | push returns -> that frame's result is pulled. Model-graph **latency** — see below |
-   | `decode` | output thread: `pyneat.decode_bbox` on the BBOX tensor |
-   | `overlay` | output thread: NV12 Y/UV annotation. Usually the largest host cost |
-   | `send` | output thread: NV12 -> Tensor + push into the H.264/RTP UDP sender |
-   | `latency` | end to end: RTSP pull started -> annotated frame handed to the encoder |
-
-Two columns are easy to misread:
-
-- **`push` is the saturation tell.** Under `OverflowPolicy.Block` a push only blocks once the MLA
-  already holds `queue_depth` frames. `push ≈ 0` means the model always had room — it is **not** the
-  bottleneck, and there is headroom for more streams. If `push` grows, the model is back-pressuring
-  and **is** the bottleneck.
-- **`infer` is latency, not service time.** It includes queueing behind the other in-flight frames,
-  so `1000 / infer` is *not* the model's throughput.
-
-The app also prints the shared model stage's inter-result interval. **That is the observed output
-rate, not a capacity ceiling** — when the model is unsaturated it simply mirrors the arrival rate.
-The app says which case you are in.
-
-**`rtsp ≈ 16.4 ms` is the good sign.** That is the source thread waiting on a 59.94 fps camera
-(16.7 ms frame period): the pipeline is **source-limited, not compute-limited**. You cannot exceed
-the source rate — if you ever see a number above it, the measurement window was too short (queue
-drain at the boundary), not real throughput.
+where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
+read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
 </details>
 

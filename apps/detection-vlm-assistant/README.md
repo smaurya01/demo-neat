@@ -30,18 +30,20 @@ Selected detections are cropped and handed to a **vision-language model (VLM)**,
 returns a natural-language description of the crop. Output = detections **plus** a caption.
 
 This is **trigger-based multimodal**: the detector is cheap and runs on every frame
-(~37 fps on the sibling 2-stream YOLO11 app; ~54 fps single-stream measured here); the
+(~37 fps on the sibling 2-stream YOLO11 app; 46.4 fps single-stream here on NEAT 0.4.0); the
 VLM is expensive (seconds per call) and fires **only** on interesting, de-duplicated
 events. A bounded background worker absorbs VLM latency so the detection loop never blocks.
 
 Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape) and
-`apps/multi-stream-yolo-yolo11` (Agent A's live-validated YOLO11 detection idioms).
+`apps/multi-stream-yolo-yolo11` (its YOLO11 detection pattern).
 
 ## About Project
 
 - Application: `detection-vlm-assistant` (`main.py` + `src/vlm_commenter.py`)
-- Detector model: `yolo_11n_mpk.tar.gz` (the verified T1 compiled YOLO11n archive)
-- VLM model: `Qwen3-VL-4B-Instruct-GPTQ-a16w4` (already on the board)
+- Detector model: `yolo_11n_mpk.tar.gz`, a YOLO11n compiled with this repo's
+  [`model-compilation/`](../../model-compilation/README.md) flow (see [Model Setup](#model-setup))
+- VLM model: `Qwen3-VL-4B-Instruct-Autoround-a16w4`, deployed on the DevKit with `llima pull`
+  (see [Model Setup](#model-setup))
 - Input: one RTSP H.264 stream **or** still image(s)
 - Output: per-frame detection log + VLM caption per selected crop
 - Runtime config: `./config/default.conf`
@@ -131,12 +133,11 @@ mode is stdout-only.
 
 The two legs are validated differently on purpose:
 
-- **Detection leg — validated LIVE on the DevKit** (this app). RTSP or still image in ->
-  real detections out. See "Verified" below.
-- **VLM leg — code-complete and API-checked, but NOT executed by this app's authors.**
-  The owner runs the real VLM manually. Until then, run in **dry-run** mode: the app logs
-  the selected crop and the **exact prompt that WOULD be sent**, and never loads or calls
-  the VLM.
+- **Detection leg:** runs on its own. RTSP or still image in -> real detections out.
+- **VLM leg:** needs a deployed VLM. Without one, run in **dry-run** mode: the app logs the
+  selected crop and the **exact prompt that WOULD be sent**, and never loads or calls the VLM.
+
+Both legs were run end to end on NEAT 0.4.0 (see "Verified" below).
 
 Dry-run turns on automatically when `--no-vlm` is passed, when `vlm_enabled=false`, or when
 the configured `vlm_model_dir` is missing. This is also how you validate the detection leg
@@ -156,21 +157,33 @@ cd /path/to/demo-neat/apps/detection-vlm-assistant
 
 ## Model Setup
 
-**Detector.** The verified T1 YOLO11n archive is already copied into
-`./assets/models/yolo_11n_mpk.tar.gz` (`./assets/models/` is git-ignored). To rebuild it
-yourself, follow `../../model-compilation/README.md`; the compiled archive is:
+`./assets/models/` is git-ignored, so a fresh clone has no models. Get both before running.
 
-```text
-../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz
+**Detector.** The app needs the YOLO11n archive produced by this repo's
+[`model-compilation/`](../../model-compilation/README.md) flow. Either:
+
+- download the prebuilt archives (`Models-v1.zip`, linked from that README) and copy
+  `yolo11n/yolo11n.compile_ready_mpk.tar.gz` to `./assets/models/yolo_11n_mpk.tar.gz`, or
+- compile it yourself with that README's steps; the compiled archive lands at
+  `../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz`.
+
+That `compile_ready` YOLO11n exposes the YoloV26 grouped-tensor head, so it decodes with
+`BoxDecodeType.YoloV26` (NOT YoloV8). Keep `model_name=yolo11`. A model-zoo `yolo_11n` archive has a
+different head and is not a drop-in replacement here.
+
+**VLM (only for real captions; skip it for dry-run).** Deploy it on the DevKit with LLiMa:
+
+```bash
+df -h /media/nvme                                      # check free space first
+llima pull Qwen3-VL-4B-Instruct-Autoround-a16w4
+llima list                                             # confirm it is deployed
 ```
 
-A `compile_ready` yolo11n surgery exposes the YoloV26 grouped-tensor head, so this archive
-decodes with `BoxDecodeType.YoloV26` (NOT YoloV8). Keep `model_name=yolo11`.
-
-**VLM (for the real, owner-run path only).** `Qwen3-VL-4B-Instruct-GPTQ-a16w4` is already
-pulled on the board at `/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4`. No pull
-is needed. If you must pull a fresh one, the disk is tight (~5.9 GB free) — the smallest
-viable VLM is `LFM2.5-VL-450M-a16w4`.
+It lands in `/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4`, which is what
+`vlm_model_dir` in the config points at. Another deployed VLM works too: pull it and point
+`vlm_model_dir` at its directory. `Qwen3-VL-4B-Instruct-GPTQ-a16w4` (used for the example output
+below) and the much smaller `LFM2.5-VL-450M-Autoround-a16w4` are alternatives. See
+[`llima/`](../../llima/README.md) for LLiMa itself.
 
 ## Configure
 
@@ -229,7 +242,7 @@ Still-image dry-run over a folder:
 dk ./main.py --source image --image ../../model-compilation/assets/inference --no-vlm
 ```
 
-Full pipeline with the real VLM (owner runs this after confirming the VLM dir):
+Full pipeline with the real VLM (after deploying it; see [Model Setup](#model-setup)):
 
 ```bash
 dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir present
@@ -237,14 +250,13 @@ dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir pr
 
 ## How To Run (CI / automation fallback)
 
-`dk` needs a TTY and hangs in non-interactive/agent contexts. For CI use passwordless ssh
-(the sima-neat skill's documented fallback). `/workspace` is NFS-mounted, so run the same
-on-disk file:
+For CI or scripts, plain passwordless ssh works too. `/workspace` is NFS-mounted, so run the
+same on-disk file:
 
 ```bash
 timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
   'source $HOME/pyneat/bin/activate; \
-   cd apps/detection-vlm-assistant; \
+   cd /workspace/demo-neat/apps/detection-vlm-assistant; \
    python main.py --no-vlm --frames 40'
 ```
 
@@ -255,28 +267,17 @@ timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
 When `video_enabled=true` the app publishes an annotated H.264/RTP stream (all boxes white, the
 VLM-selected one red).
 
-1. Open **`https://192.168.131.12:9900`** in a browser.
-   *It is **HTTPS**, not HTTP. The SDK uses a local mkcert certificate, so accept the browser
-   warning the first time.* Replace the IP with your own host if Insight runs elsewhere.
+1. Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+   `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
+   certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
 3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
    Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
 
-`udp_host` must point at the machine running Insight. The SDK exposes **4 video channels
-(9000-9003)**; read the real ports from `neat --json` (`exposedPorts[*].hostPortStart`) if the
-defaults are taken.
+`udp_host` must point at the machine running Insight. The number of video channels is set by the SDK's port map; read the range from `neat --json`
+(`exposedPorts`, `videoUDP`).
 
 The VLM captions are **not** drawn on the video — they go to stdout, as shown below.
-
-### gst-launch (alternative, no Insight needed)
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
-
-> **Not on the DevKit.** There is no `avdec_h264` on the board — run this on your desktop.
-
-Set `video_enabled=false` (or pass `--no-video`) to run detection-only on stdout.
 
 ## Expected Output
 
@@ -295,7 +296,7 @@ vlm[dry-run] WOULD send crop -> VLM
 frame=30 detections=12 fps=53.65
 ```
 
-VLM (real, owner-run) — each dry-run block is replaced by a caption line:
+VLM (real, with a deployed VLM) — each dry-run block is replaced by a caption line:
 
 ```text
 vlm[PERSON score=0.81 bbox=(927, 429, 1019, 666)]: A person in a dark jacket is walking
@@ -316,20 +317,15 @@ and stream the result as H.264/RTP over UDP. Colour convention:
 - **the one box the VLM would caption this frame is drawn red** (highest-score box that
   clears the trigger gate — see "How the VLM box is chosen" below).
 
-Enable it by pointing `udp_host` at your viewer machine (video is on by default; leave
+Enable it by pointing `udp_host` at the Insight host (video is on by default; leave
 `udp_host` empty or pass `--no-video` for stdout-only detection):
 
 ```bash
-dk ./main.py --config ./config/default.conf --udp-host 192.168.1.50 --udp-port 9000 --no-vlm
+dk ./main.py --config ./config/default.conf --udp-host <sdk-host-ip> --udp-port 9000 --no-vlm
 ```
 
-The app prints a ready-to-paste `gst-launch-1.0` viewer command on startup, e.g.:
-
-```bash
-gst-launch-1.0 -v udpsrc port=9000 \
-  caps="application/x-rtp,media=video,encoding-name=H264,payload=96" \
-  ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false
-```
+Then open channel 0 (port 9000) in Insight's **Video Viewer**. The app also prints a
+`gst-launch-1.0` command at startup; Insight is the supported way to view the stream.
 
 Config keys: `video_enabled`, `udp_host`, `udp_port` (or `udp_port_base`), `bitrate_kbps`.
 Implementation mirrors `single-stream-yolo-yolo11` (`VideoSenderOptions.h264_rtp_udp_from_raw`
@@ -384,8 +380,11 @@ browser UI or a separate service that should not link the Neat runtime. The upst
     the dry-run trigger logged the PERSON crop + exact prompt.
   - RTSP mode `<rtsp-url>` (1280x720@60): `frame=1 detections=13`,
     `frame=30 detections=12 fps=53.65`; dry-run trigger fired on `PERSON:0.81`.
-- **VLM leg: code-complete, API-checked, NOT executed.** Owner runs it manually after
-  confirming the VLM directory.
+- **Full run on NEAT 0.4.0** with `Qwen3-VL-4B-Instruct-Autoround-a16w4`: detector at
+  **46.4 fps** sustained for 3 min while the VLM captioned triggered detections at
+  **~13.8 tok/s, 0.6–0.7 s TTFT**.
+- The detection-leg log lines above (`fps=53.65`) are from an earlier run on NEAT 0.3.0 with the
+  GPTQ VLM.
 
 </details>
 
@@ -394,7 +393,8 @@ browser UI or a separate service that should not link the Neat runtime. The upst
 
 <br>
 
-- The detector uses `push([tensor])` + `pull("detections", ...)` (Agent A's pattern). The
+- The detector uses `push([tensor])` + `pull("detections", ...)` (the same pattern as
+  `multi-stream-yolo-yolo11`). The
   synchronous `run([...])` helper does **not** surface this archive's model-managed
   box-decode output — push + named pull does. Verified on the DevKit.
 - `vlm_interval_seconds` is wall-clock: over a fast batch of still images only the first
