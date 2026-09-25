@@ -66,6 +66,7 @@ total well past it. Use Python to read and modify, C++ to ship.
 | --- | --- | --- |
 | **multi-stream-yolo-yolo11** | Python | Two RTSP streams through **one shared** YOLO11 model stage, each with its own annotated UDP output. Sustains **~119 fps aggregate (≈60 fps per stream)** with overlay on. |
 | **quad-stream-quad-model** | C++, Python | Four RTSP streams, four *different* models (detection, segmentation, pose, YOLOX) on one MLA. **C++ delivers ~235 fps aggregate** with overlay; **Python ~95 fps**, stable over a 3-minute run. Both are usable — pick C++ for throughput, Python to read and modify. |
+| **16stream4model** | C++ | **16 RTSP streams (720p30), four model groups**: YOLO26n, YOLO11n and YOLOv8n detection plus YOLO26n pose, four streams each. Video goes to [Insight](https://developer.sima.ai/software/tools/insight/) untouched, with detections and poses sent as metadata. Holds **480 / 480 fps** (every stream at 30 fps) over a 5-minute run. |
 | **multi-model-load-probe** | C++ | Loads four different model graphs in one process off a single RTSP source, to check they coexist on the MLA. A probe, not a product pipeline. |
 
 ### Other inputs / other tasks
