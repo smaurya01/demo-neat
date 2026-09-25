@@ -15,6 +15,7 @@ below.
 | [`apps/`](apps/README.md) | Complete, runnable applications, most of them RTSP in → inference → output to Neat Insight. |
 | [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
 | [`llima/`](llima/README.md) | LLM / VLM / ASR: the `llima` CLI, the `pyneat.genai` API, and the GenAI server. |
+| [`troubleshooting`](#6-insight-and-troubleshooting) | Neat Insight for RTSP test sources and viewing app output, DevKit recovery, a command reference, and a symptom-first troubleshooting guide. |
 
 ## Prerequisites
 
@@ -135,6 +136,13 @@ OpenAI-compatible GenAI server.
 - Serve **RTSP test sources** from **Neat Insight** when you have no camera.
 - **Watch the output** in Insight's browser Video Viewer.
 - **Un-wedge the DevKit** when the MLA or a decoder blocks.
+
+From the Quick Start Guide:
+
+- **[Troubleshooting](devkit-quick-start/chapters/troubleshooting.md)** — symptom first: find yours
+  and work down the list in order.
+- **[Miscellaneous](devkit-quick-start/chapters/miscellaneous.md)** — command reference, board
+  defaults, the PCIe card, and where to read more.
 
 ---
 
