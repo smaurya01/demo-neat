@@ -15,7 +15,8 @@ below.
 | [`apps/`](apps/README.md) | Complete, runnable applications, most of them RTSP in → inference → output to Neat Insight. |
 | [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
 | [`llima/`](llima/README.md) | LLM / VLM / ASR: the `llima` CLI, the `pyneat.genai` API, and the GenAI server. |
-| [`troubleshooting`](#6-insight-and-troubleshooting) | Neat Insight for RTSP test sources and viewing app output, DevKit recovery, a command reference, and a symptom-first troubleshooting guide. |
+| [`custom-plugin/`](custom-plugin/README.md) | Write your own GStreamer plugin, build it with the SDK, and run it inside Neat pipelines, with and without AI detection. |
+| [`troubleshooting`](#7-insight-and-troubleshooting) | Neat Insight for RTSP test sources and viewing app output, DevKit recovery, a command reference, and a symptom-first troubleshooting guide. |
 
 ## Prerequisites
 
@@ -128,7 +129,21 @@ OpenAI-compatible GenAI server.
 
 ---
 
-## 6. Insight and troubleshooting
+## 6. Custom GStreamer plugins
+
+**[`custom-plugin/README.md`](custom-plugin/README.md)** — add your own processing step to a Neat
+pipeline: write a GStreamer plugin, build it in the SDK, and run it next to SiMa's decoder, model
+and encoder. The sample plugin, `framemarker`, draws a border and a per-frame progress bar so you
+can see it working in Insight.
+
+| Topic | | | |
+| --- | --- | --- | --- |
+| **Learn** | [Overview&nbsp;and&nbsp;quick&nbsp;start](custom-plugin/README.md) | [Step-by-step&nbsp;tutorial](custom-plugin/CUSTOM_PLUGIN_TUTORIAL.md) |  |
+| **Code** | [Plugin&nbsp;source](custom-plugin/plugin/gstframemarker.c) | [Stream&nbsp;to&nbsp;Insight](custom-plugin/apps/stream_to_insight/main.cpp) | [Detection&nbsp;+&nbsp;plugin](custom-plugin/apps/detect_to_insight/main.cpp) |
+
+---
+
+## 7. Insight and troubleshooting
 
 **[`appendix.md`](appendix.md)** — the practical steps behind the apps:
 
