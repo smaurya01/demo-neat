@@ -58,3 +58,9 @@ training-slides/
 clean
 *.pptx
 *.pdf
+
+# custom-plugin: installed plugin, downloaded model, test snapshots
+# (its plugin/build/ and apps/build/ are already covered by **/build/ above)
+custom-plugin/install/
+custom-plugin/models/
+custom-plugin/out/
