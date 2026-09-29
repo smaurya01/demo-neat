@@ -27,6 +27,7 @@ and yolo26s-pose bbox/class names match yolo26n (one2one_* NMS-free head).
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 
@@ -210,6 +211,11 @@ YOLO_SPECS = {
 
 
 }
+
+# yolo26s / yolo26m: same graph layout as yolo26n (the attention blocks and one2one head node
+# names are identical across sizes; only channel widths differ), so they share its spec.
+YOLO_SPECS["yolo26s"] = copy.deepcopy(YOLO_SPECS["yolo26n"])
+YOLO_SPECS["yolo26m"] = copy.deepcopy(YOLO_SPECS["yolo26n"])
 
 
 def node_by_name(model, name):

@@ -310,4 +310,4 @@ URL in your config matches the one Insight shows.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 19 · Agentic development](19-agentic-development.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |
+| [Chapter 20 · Inside a model archive](20-model-archive.md) | [All chapters](../README.md) | [Miscellaneous](miscellaneous.md) |

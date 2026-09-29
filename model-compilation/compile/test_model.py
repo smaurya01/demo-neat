@@ -27,10 +27,13 @@ from pathlib import Path
 
 from common import ROOT, all_model_ids, archive_path, load_registry, model_cfg
 
+# int8 / bf16: which build of the model to test (None = the model's precision in models.yaml).
+PRECISION: str | None = None
+
 
 # ---------------------------------------------------------------- 1. archive contract
 def validate_archive(model_id: str) -> tuple[bool, str]:
-    arc = archive_path(model_id)
+    arc = archive_path(model_id, PRECISION)
     if arc is None:
         return False, "no _mpk.tar.gz produced"
     with tarfile.open(arc, "r:gz") as t:
@@ -39,7 +42,7 @@ def validate_archive(model_id: str) -> tuple[bool, str]:
     elf = [n for n in names if n.endswith(".elf")]
     so = [n for n in names if n.endswith(".so") or ".so." in n]
     ok = len(elf) == 1 and len(so) == 0
-    detail = f"elf={len(elf)} so={len(so)}  ({arc.name})"
+    detail = f"elf={len(elf)} so={len(so)}  ({arc.parent.parent.name}/{arc.name})"
     if so:
         detail += f"  -> HOST FALLBACK: {so[:3]}"
     return ok, detail
@@ -52,7 +55,7 @@ def run_inference(model_id: str, limit: int, topk: int, timeout_ms: int) -> int:
     import pyneat
 
     cfg, project = model_cfg(model_id)
-    arc = archive_path(model_id)
+    arc = archive_path(model_id, PRECISION)
     if arc is None:
         raise SystemExit(f"[test] {model_id}: no archive; compile first")
 
@@ -119,11 +122,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--precision", choices=["int8", "bf16"], default=None,
+                    help="test the int8 or bf16 build (default: the model's precision in models.yaml)")
     ap.add_argument("--validate-only", action="store_true", help="archive contract only; no board")
     ap.add_argument("--limit", type=int, default=3)
     ap.add_argument("--topk", type=int, default=3)
     ap.add_argument("--timeout-ms", type=int, default=20000)
     args = ap.parse_args()
+    global PRECISION
+    PRECISION = args.precision
 
     ids = all_model_ids() if args.all else [args.model_id]
     if not ids or ids == [None]:

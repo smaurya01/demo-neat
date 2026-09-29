@@ -3,21 +3,25 @@
 Take a public model → get a **single `.tar.gz` containing a single `.elf`** that runs entirely on the
 MLA → prove it works on real images.
 
-Twelve models are covered: 4 classification CNNs, 5 YOLO detectors, 1 open-vocabulary detector,
-1 segmentation, 1 pose.
+Fourteen models are covered: 4 classification CNNs, 7 YOLO detectors, 1 open-vocabulary detector,
+1 segmentation, 1 pose. Most are INT8; `yolov8s-worldv2` and `yolo26m` are **bf16**, and `yolo26s`
+is built both ways for an [accuracy comparison](ACCURACY.md) of INT8 and bf16 against FP32.
 
 **Two ways to get them:**
 
 | | | |
 | --- | --- | --- |
 | **Download** the prebuilt archives | ~5 min | [→ jump](#download-the-prebuilt-archives) |
-| **Compile** from source | ~2 h for all twelve | [→ jump](#setup) |
+| **Compile** from source | ~2 h for the eleven in `compile_all.sh` | [→ jump](#setup) |
 
 Compile from source when you want to change a model, try a different size, or understand the chain.
 Otherwise, download.
 
 **Why any of this is necessary** — graph surgery, the INT8 calibration trap, what worked and what
 didn't: **[`MODEL-COMPILATION.md`](MODEL-COMPILATION.md)**.
+
+**What compiling costs in accuracy** — FP32 vs bf16 vs INT8 on COCO:
+**[`ACCURACY.md`](ACCURACY.md)**, summarized [below](#accuracy-fp32-vs-bf16-vs-int8).
 
 ## Table of Contents
 
@@ -26,16 +30,17 @@ didn't: **[`MODEL-COMPILATION.md`](MODEL-COMPILATION.md)**.
 - [Setup](#setup)
 - [The scripts](#the-scripts)
 - [Compile](#compile)
+- [Accuracy: FP32 vs bf16 vs INT8](#accuracy-fp32-vs-bf16-vs-int8)
 - [If something goes wrong](#if-something-goes-wrong)
 
 ---
 
 ## Download the prebuilt archives
 
-Ten of the twelve models have already been compiled from their **upstream original weights** through
+Ten of the fourteen models have already been compiled from their **upstream original weights** through
 this repo's own export → surgery → INT8 → compile chain. Nothing is pulled pre-compiled from the SiMa
-model zoo. `yolov8s` and `yolov8s-worldv2` were added after that zip was built — compile them with
-the [four steps](#the-scripts).
+model zoo. `yolov8s`, `yolov8s-worldv2`, `yolo26s` and `yolo26m` were added after that zip was
+built — compile them with the [four steps](#the-scripts).
 
 > **📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**
 
@@ -72,6 +77,8 @@ Every archive is verified: **1 `.elf`, 0 `.so`, `A65: 0`** — the whole graph r
 | `yolo26s-pose` | pose | `.pt` | `yolo26s-pose.compile_ready_mpk.tar.gz` |
 | `yolox_s` | detection | *(Megvii ONNX)* | `yolox_s.compile_ready_mpk.tar.gz` |
 | `yolov8s-worldv2` | open-vocabulary detection | `.pt` | `yolov8s-worldv2.compile_ready_mpk.tar.gz` — **bf16, not in the zip**, [compile it](COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |
+| `yolo26m` | detection | `.pt` | `yolo26m.compile_ready_mpk.tar.gz` — **bf16, not in the zip**, [compile it](COMPILE-COMMANDS.md#13-yolo26m--detection-bf16) |
+| `yolo26s` | detection | `.pt` | `yolo26s.compile_ready_mpk.tar.gz` — **not in the zip** (INT8; also built in bf16 for the [accuracy comparison](ACCURACY.md)), [compile it](COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study) |
 
 
 ---
@@ -110,7 +117,7 @@ and output contract can never drift between them.
 compile/
   convert_to_onnx.py   # 1. download weights + export  -> work/<id>/onnx/<id>.onnx
   graph_surgery.py     # 2. make it MLA-ready          -> work/<id>/surgery/<id>.compile_ready.onnx
-  compiler.py          # 3. INT8 quantize + compile    -> work/<id>/compile_int8/<...>_mpk.tar.gz
+  compiler.py          # 3. INT8/bf16 + compile        -> work/<id>/compile_<precision>/<...>_mpk.tar.gz
   test_model.py        # 4. validate contract + run on REAL images
   test_box_decode.py   # 4b. can Neat decode the heads ON-DEVICE?  (detection models)
 ```
@@ -133,11 +140,20 @@ source /usr/local/bin/devkit.sh <devkit-ip> sima 22   # dk is a bash function, o
 dk compile/test_model.py --model-id <ID>
 ```
 
-`dk` needs a real terminal — in a non-TTY context (CI, an agent) it hangs; there, ssh in and call
+`dk` needs a real terminal — in a non-interactive context (CI, scripts) it hangs; there, ssh in and call
 `/home/sima/pyneat/bin/python` directly instead.
 
 Useful flags on `compiler.py`: `--num-calib-samples N`, `--calib-dir <dir>`. Anything else passes
 straight through to the compiler (e.g. `--calib_method min_max`).
+
+**Precision: INT8 or bf16.** Every model in `models.yaml` has a `precision:` line (`int8` or
+`bf16`), and `compiler.py` builds that. `--precision int8|bf16` overrides it for one build, and
+each precision gets its own output folder, `work/<id>/compile_int8/` or `work/<id>/compile_bf16/`. INT8 learns
+8-bit ranges from the calibration images; bf16 keeps 16-bit floats, does not depend on 8-bit
+ranges, and produces a bigger program. `test_model.py` and `test_box_decode.py` take the same `--precision`
+flag. How to pick the precision per model:
+[COMPILE-COMMANDS.md](COMPILE-COMMANDS.md#choosing-the-precision-int8-or-bf16). What each precision
+costs in accuracy is measured in [`ACCURACY.md`](ACCURACY.md).
 
 **Both checks matter.** `--validate-only` proves the graph is *on the MLA*; it proves nothing about
 accuracy. Only the DevKit run on real images catches a model that compiled perfectly and is
@@ -174,8 +190,39 @@ so they would pass on box heads alone while their real contract (`YoloV26Pose` +
 ## Compile
 
 **→ [`COMPILE-COMMANDS.md`](COMPILE-COMMANDS.md)** — the copy-paste commands: `compile_all.sh` for
-all eleven (~2 h, serial), or a per-model block for each of the twelve with its exact expected
-output. `yolov8s-worldv2` is excluded from `compile_all.sh` — it needs bf16 flags.
+eleven INT8 models — the ten in the zip plus `yolov8s` (~2 h, serial) — or a per-model block for
+each of the fourteen with its exact expected output.
+
+---
+
+## Accuracy: FP32 vs bf16 vs INT8
+
+The MLA does not run FP32, so every model is compiled to **bf16** (16-bit floats) or **INT8** (8-bit
+integers, calibrated on real images). What that costs was measured for Ultralytics `yolo26s` on the
+full COCO val2017 set (4,980 images — all 5,000 minus the 20 calibration images):
+
+| Precision | mAP50-95 | vs FP32 | Inference | Archive |
+| --- | --- | --- | --- | --- |
+| FP32 (reference, SDK host) | 47.71 | — | — | — |
+| **bf16** (DevKit MLA) | **47.64** | **−0.07** | 18.4 ms | 40 MB |
+| **INT8** (DevKit MLA) | **45.05** | **−2.67** | 11.1 ms | 23 MB |
+
+- **bf16 keeps FP32 accuracy.** `yolo26m` in bf16 also matched FP32 (+0.13, on 500 images).
+- **INT8 costs 2.67 mAP50-95** (about 5.6%) and runs **1.7× faster** than bf16.
+- The three rows share the same graph, images, preprocessing, decoder and COCO evaluator, so the
+  differences are the compiler alone.
+- Ultralytics publishes **47.8** for `yolo26s`. The FP32 row here is 47.71, and the original `.pt`
+  through Ultralytics' own `predict()` scores 47.41 in this setup. These gaps most likely come from
+  how the model is run (`predict()` vs `val()`, padding), the 20 missing images and a different
+  evaluator, not from the model. [`ACCURACY.md`](ACCURACY.md#why-this-differs-from-the-accuracy-ultralytics-publishes)
+  explains each one.
+
+**→ [`ACCURACY.md`](ACCURACY.md)** — the full comparison: method, results, the published-number
+gap, which precision to choose, and limits.
+
+**→ [`accuracy/README.md`](accuracy/README.md)** — how to replicate these numbers: download the model
+and COCO val2017, compile INT8 and bf16, run FP32 on the host and bf16 / INT8 on the DevKit, and
+score, step by step with expected output.
 
 ---
 
@@ -183,7 +230,7 @@ output. `yolov8s-worldv2` is excluded from `compile_all.sh` — it needs bf16 fl
 
 | Symptom | Cause |
 | --- | --- |
-| `[FAIL] ... no _mpk.tar.gz produced` | the compile failed — read `work/<id>/reports/compile.log` |
+| `[FAIL] ... no _mpk.tar.gz produced` | the compile failed — read `work/<id>/reports/compile_<precision>.log` (`compile.log` for builds made before the precision option) |
 | `so=1` or more | part of the graph fell back to the host CPU; surgery did not remove everything the MLA cannot place |
 | `A65 : <non-zero>` in the log | same thing, visible earlier |
 | `[compile] REFUSING: calibration set looks SYNTHETIC` | you pointed `--calib-dir` at generated images. Quantization needs **real** images, or the model compiles clean and is quietly wrong |

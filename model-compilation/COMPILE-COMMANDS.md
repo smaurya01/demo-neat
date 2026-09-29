@@ -22,6 +22,7 @@ path, so nothing is copied.
 
 ## Table of Contents
 
+- [Choosing the precision: INT8 or bf16](#choosing-the-precision-int8-or-bf16)
 - [Compile everything](#compile-everything)
   - [How long each model takes](#how-long-each-model-takes)
 - [Compile a single model](#compile-a-single-model)
@@ -38,6 +39,104 @@ path, so nothing is copied.
   - [11. `yolox_s` — detection, **different surgery**](#11-yolox_s--detection-different-surgery)
   - [12. `yolov8s-worldv2` — open-vocabulary, **bf16 not INT8**](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8)
     - [Change the vocabulary](#change-the-vocabulary)
+  - [13. `yolo26m` — detection, **bf16**](#13-yolo26m--detection-bf16)
+  - [14. `yolo26s` — detection, **INT8 and bf16** (accuracy study)](#14-yolo26s--detection-int8-and-bf16-accuracy-study)
+
+---
+
+## Choosing the precision: INT8 or bf16
+
+Every model can be compiled at either precision:
+
+- **INT8** — 8-bit integers. Smaller and faster, but the compiler must learn each tensor's value
+  range from the calibration images, and some accuracy is lost.
+- **bf16** — 16-bit floats. Keeps FP32 accuracy and does not depend on 8-bit ranges, but the program
+  is bigger and slower.
+
+For `yolo26s` on COCO, bf16 lost 0.07 mAP50-95 against FP32 and ran at 18.4 ms; INT8 lost 2.67 and
+ran at 11.1 ms. See [`ACCURACY.md`](ACCURACY.md) for the full comparison.
+
+### How `compiler.py` decides
+
+**One rule: every model's entry in [`models.yaml`](models.yaml) has a `precision:` line — `int8` or
+`bf16` — and that is what a plain command builds.** The test scripts check the same precision.
+
+```yaml
+  - id: yolo26s
+    ...
+    precision: int8        # python compile/compiler.py --model-id yolo26s  ->  INT8
+
+  - id: yolo26m
+    ...
+    precision: bf16        # python compile/compiler.py --model-id yolo26m  ->  bf16
+```
+
+`--precision int8|bf16` on the command line overrides it **for that one build only** — for example
+to build `yolo26s` in bf16 as well, for the accuracy study. The older flags
+`--bf16-weights --bf16-activations` mean the same as `--precision bf16`.
+
+For bf16, `compiler.py` adds `--bf16-weights --bf16-activations` to the SiMa compiler command;
+without them the compiler quantizes to INT8. A model with no `precision:` line stops with a message
+asking you to add one.
+
+### Each model's default
+
+| `precision:` in `models.yaml` | Models |
+| --- | --- |
+| **`bf16`** | `yolo26m`, `yolov8s-worldv2` |
+| **`int8`** | `resnet50`, `densenet169`, `convnext_tiny`, `efficientnet_v2_s`, `yolov8s`, `yolov8l`, `yolo11n`, `yolo11s`, `yolo26n`, `yolo26s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` |
+
+`yolov8s-worldv2` must stay bf16: it fails the compiler's check as INT8
+([section 12](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8)).
+
+### Build a model at the other precision
+
+**For one build**, add `--precision` to `compiler.py`, and the same flag to the test scripts so they
+check that build:
+
+```bash
+python compile/compiler.py        --model-id yolo26n --precision bf16
+python compile/test_model.py      --model-id yolo26n --precision bf16 --validate-only
+dk compile/test_model.py          --model-id yolo26n --precision bf16
+dk compile/test_box_decode.py     --model-id yolo26n --precision bf16
+```
+
+**To change a model's default**, edit the `precision:` line in its `models.yaml` entry. Then the
+plain commands, `--all`, and the test scripts all use it:
+
+```yaml
+  - id: yolo26n
+    ...
+    precision: bf16
+    enabled: true
+```
+
+Each precision is built into its own folder, so one model can have both builds side by side:
+
+```text
+work/<id>/compile_int8/<...>_mpk.tar.gz
+work/<id>/compile_bf16/<...>_mpk.tar.gz
+```
+
+`compile_all.sh` collects archives from `compile_int8/` only, so build bf16 models with the
+per-model commands below.
+
+### Check which precision you built
+
+- The first line `compiler.py` prints: `[compile] yolo26m: precision=bf16 ...`
+- The folder: `compile_bf16/` or `compile_int8/`, and the command it ran in
+  `work/<id>/reports/compile_<precision>.command.txt`
+- The archive itself: its first step is `cast_transform` for bf16 and `quantization_transform` for
+  INT8 (see [section 13](#13-yolo26m--detection-bf16) for the check, and the
+  [Quick Start Guide, Chapter 20](../devkit-quick-start/chapters/20-model-archive.md#how-to-tell-which-one-you-have))
+
+### Which one to pick
+
+| If | Use |
+| --- | --- |
+| Accuracy matters most, or INT8 fails the compile | **bf16** |
+| You need the speed and a smaller archive, and a small accuracy loss is acceptable | **INT8** — then measure it on real images; calibration quality decides how much is lost |
+| Not sure | Build both and compare them with [`accuracy/`](accuracy/README.md) |
 
 ---
 
@@ -50,10 +149,9 @@ path, so nothing is copied.
 Same four steps per model as below, just scripted and safe to leave running. It collects each
 model's artifacts into `assets/models/<id>/`.
 
-**`yolov8s-worldv2` is deliberately left out**, so this covers eleven of the twelve models. It needs
-`--bf16-weights --bf16-activations`, which `compile_all.sh` has no way to pass per model — compiling
-it with the default INT8 flags fails the compiler's sim check. Build it separately afterwards:
-[section 12](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8).
+`compile_all.sh` builds eleven INT8 models: the ten in the prebuilt zip plus `yolov8s`. The bf16
+models — `yolov8s-worldv2` and `yolo26m` — and `yolo26s` are built on their own afterwards:
+[sections 12–14](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8).
 
 Or step by step across all models:
 
@@ -64,11 +162,10 @@ python compile/compiler.py        --all       # serial; the long step
 python compile/test_model.py      --all --validate-only
 ```
 
-> ⚠️ **`--all` is not the same as `compile_all.sh` here.** `--all` means *every enabled model in
-> `models.yaml`*, which **includes `yolov8s-worldv2`** — so `compiler.py --all` compiles it as INT8
-> and it fails. `compile_all.sh` skips it by name and is safe. If you use the `--all` form, either
-> accept that one failure and rebuild worldv2 with the bf16 flags, or set `enabled: false` on it
-> first.
+> **`--all` is not the same as `compile_all.sh`.** `--all` means *every enabled model in
+> `models.yaml`*: the eleven above plus `yolov8l`, `yolov8s-worldv2`, `yolo26m` and `yolo26s`.
+> `compiler.py` reads each model's `precision:` from `models.yaml`, so the bf16 models are built as
+> bf16 (into `work/<id>/compile_bf16/`) and the rest as INT8 (into `work/<id>/compile_int8/`).
 
 Expected final line:
 
@@ -483,14 +580,14 @@ encoder turns the prompts into class embeddings at runtime. A SiMa archive is a 
 vocabulary is **baked at export time** (`set_classes` → COCO-80), which drops the CLIP text encoder
 and leaves an image-only graph. That is why this model has its own export and surgery steps.
 
-> ⚠️ **This model does not compile with the default INT8 flags, and it is NOT in `compile_all.sh`.**
-> `models.yaml` carries `precision: bf16`, but `compiler.py` **does not read that field** — you must
-> pass the flags yourself. `python compile/compiler.py --all` would compile it as INT8 and fail.
+> ⚠️ **This model does not compile as INT8, and it is NOT in `compile_all.sh`.** `models.yaml`
+> carries `precision: bf16`, which `compiler.py` reads, so the plain command below builds it as
+> bf16. The older form with `--bf16-weights --bf16-activations` still works and means the same.
 
 ```bash
 python compile/convert_to_onnx.py --model-id yolov8s-worldv2   # bake COCO-80 + 4D attn patch
 python compile/graph_surgery.py   --model-id yolov8s-worldv2   # fold contrastive head + DFL
-python compile/compiler.py        --model-id yolov8s-worldv2 --bf16-weights --bf16-activations
+python compile/compiler.py        --model-id yolov8s-worldv2   # precision: bf16 from models.yaml
 python compile/test_model.py      --model-id yolov8s-worldv2 --validate-only
 ```
 
@@ -531,10 +628,103 @@ No retraining. Bake a different class list and recompile — the `class_logit_*`
 ```bash
 python compile/_export_world.py  --model-id yolov8s-worldv2 --labels /path/to/my_classes.txt --force
 python compile/graph_surgery.py  --model-id yolov8s-worldv2 --force
-python compile/compiler.py       --model-id yolov8s-worldv2 --bf16-weights --bf16-activations
+python compile/compiler.py       --model-id yolov8s-worldv2
 ```
 
 One class name per line. Pass `--num-classes <N>` to `test_box_decode.py` if N is not 80, and note
 that `assets/labels/coco80.txt` will no longer match the baked vocabulary.
 
 ---
+
+### 13. `yolo26m` — detection, **bf16**
+
+The medium YOLO26, compiled in **bf16** instead of INT8. bf16 keeps weights and activations as
+16-bit floats, so there are no 8-bit quantization ranges to learn. The compiler still reads the
+calibration images (the `calib=` line below), but the archive has no INT8 quantize steps, so the
+choice of images matters far less. The cost is a larger program. `models.yaml` sets `precision: bf16` for this model,
+so the usual four commands build it:
+
+```bash
+python compile/convert_to_onnx.py --model-id yolo26m   # -> 82 MB ONNX
+python compile/graph_surgery.py   --model-id yolo26m   # same one2one heads as yolo26n
+python compile/compiler.py        --model-id yolo26m   # precision: bf16; the long step, ≈16 min
+python compile/test_model.py      --model-id yolo26m --validate-only
+```
+
+To build any other model in bf16, add `--precision bf16` to `compiler.py` (and to the test scripts):
+`python compile/compiler.py --model-id yolo26n --precision bf16`.
+
+**Host:**
+
+```text
+[surgery] yolo26m: OK  outputs=['bbox_0', 'bbox_1', 'bbox_2', 'class_logit_0', 'class_logit_1', 'class_logit_2']
+[compile] yolo26m: precision=bf16 onnx=yolo26m.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... Plugin distribution per backend:
+    ...   A65 : 0
+[compile] yolo26m (bf16): rc=0  -> .../model-compilation/work/yolo26m/compile_bf16
+[PASS] yolo26m          elf=1 so=0  (yolo26m.compile_ready_mpk.tar.gz)
+```
+
+The compile step took 16m19s and pushed the 16 GB SDK host to ≈13 GB used — compile nothing else
+alongside it. The archive is 69 MB; almost all of it is the `.elf` (137 MB uncompressed).
+
+**DevKit:**
+
+```bash
+dk compile/test_model.py      --model-id yolo26m
+dk compile/test_box_decode.py --model-id yolo26m
+```
+
+```text
+   000000000139.jpg       6 head tensor(s): (80, 80, 4) (40, 40, 4) (20, 20, 4) (80, 80, 80) (40, 40, 80) (20, 20, 80)
+yolo26m              YoloV26/Auto                 PASS
+```
+
+**How to confirm it really is bf16.** Count the kernels in the archive's contract. A bf16 build
+converts with `cast_transform` and has no `quantization_transform`:
+
+```bash
+tar xzf work/yolo26m/compile_bf16/*/yolo26m.compile_ready_mpk.tar.gz -O --wildcards '*_mpk.json' \
+  | grep -o '"kernel": "[a-z_]*"' | sort | uniq -c
+```
+
+```text
+      7 "kernel": "cast_transform"
+      6 "kernel": "detessellation_transform"
+      1 "kernel": "pass_through"
+      1 "kernel": "tessellation_transform"
+      1 "kernel": "unpack_transform"
+```
+
+This build does its tessellation on the EV74 (the `tessellation_transform` step). SiMa's Model Zoo
+archive `yolo26m-det-bf16-mla_tess-b1` does it inside the MLA instead, which is what `mla_tess` in
+its name means; both run with the same Neat app code. The
+[Quick Start Guide, Chapter 20](../devkit-quick-start/chapters/20-model-archive.md) explains every
+file in the archive.
+
+**Accuracy.** bf16 matched FP32 for `yolo26m` (+0.13 mAP50-95, on 500 COCO images). See
+[`ACCURACY.md`](ACCURACY.md).
+
+---
+
+### 14. `yolo26s` — detection, **INT8 and bf16** (accuracy study)
+
+`yolo26s` is compiled **both ways** — the same compile-ready ONNX, once per precision — to measure
+what each precision costs in accuracy against FP32 on COCO. Each build gets its own folder, so they
+do not overwrite each other:
+
+```bash
+python compile/convert_to_onnx.py --model-id yolo26s   # -> 38 MB ONNX
+python compile/graph_surgery.py   --model-id yolo26s
+python compile/compiler.py        --model-id yolo26s --precision int8   # -> work/yolo26s/compile_int8/
+python compile/compiler.py        --model-id yolo26s --precision bf16   # -> work/yolo26s/compile_bf16/
+python compile/test_model.py      --model-id yolo26s --precision int8 --validate-only
+python compile/test_model.py      --model-id yolo26s --precision bf16 --validate-only
+```
+
+On COCO val2017 (4,980 images, all but the 20 calibration images), bf16 loses 0.07 mAP50-95 and
+INT8 loses 2.67 against FP32. The
+comparison — dataset, method, results and why they differ from Ultralytics' published numbers — is
+in [`ACCURACY.md`](ACCURACY.md); the commands to rerun it are in
+[`accuracy/README.md`](accuracy/README.md).
+

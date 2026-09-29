@@ -7,6 +7,9 @@
 #   surgery      : none | yolo_ultralytics | yolox   (which rewrite graph_surgery.py applies)
 #   output_names : the EXACT tensors the compiled archive exposes (surgery models expose raw heads)
 #   decode       : how test_model.py interprets the outputs
+#   precision    : int8 | bf16   what `compiler.py --model-id <id>` builds, and what the test scripts
+#                  check. Every model states it. To build the OTHER precision once, pass
+#                  `--precision int8|bf16` on the command line; to change the default, edit this line.
 #
 # Calibration is ALWAYS real images (assets/calibration). Synthetic calibration produces a
 # valid-looking archive with meaningless activation ranges -- see README.
@@ -38,6 +41,7 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   - id: densenet169
@@ -54,6 +58,7 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   - id: convnext_tiny
@@ -70,6 +75,7 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   - id: efficientnet_v2_s
@@ -86,6 +92,7 @@ models:
     input_shape: [1, 3, 384, 384]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   # ----------------------------------------------------------------- detection (YOLO)
@@ -105,6 +112,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolov8l
@@ -120,6 +128,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo11n
@@ -135,6 +144,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo11s
@@ -150,6 +160,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo26n
@@ -165,6 +176,42 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
+    enabled: true
+
+  # yolo26s: same one2one head as yolo26n. INT8 by default; the accuracy study also builds it in bf16
+  # with `compiler.py --model-id yolo26s --precision bf16`.
+  - id: yolo26s
+    task: detection
+    family: ultralytics
+    arch: yolo26s.pt
+    source: https://docs.ultralytics.com/
+    license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    precision: int8
+    enabled: true
+
+  # yolo26m: compiled in bf16 (no 8-bit ranges to calibrate). `precision` is read by compiler.py.
+  - id: yolo26m
+    task: detection
+    family: ultralytics
+    arch: yolo26m.pt
+    source: https://docs.ultralytics.com/
+    license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    precision: bf16
     enabled: true
 
   - id: yolo11s-seg
@@ -181,6 +228,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo26s-pose
@@ -197,6 +245,7 @@ models:
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   # ----------------------------------------------------------------- open-vocabulary (YOLO-World)
@@ -263,4 +312,5 @@ models:
     # full speed and reporting healthy FPS.
     mean: [0.0, 0.0, 0.0]
     std: [0.00392156862745098, 0.00392156862745098, 0.00392156862745098]
+    precision: int8
     enabled: true

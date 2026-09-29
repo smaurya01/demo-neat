@@ -19,6 +19,7 @@
 ## Get a compiled model
 
 Models for the MLA are distributed as compiled `.tar.gz` archives.
+[Chapter 20](20-model-archive.md) shows what is inside one and how to check it.
 
 Set the Model Zoo release first — it can differ from your board software version:
 
@@ -36,7 +37,8 @@ sima@modalix:~$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODEL
 
 `yolo26m-det-bf16-mla_tess-b1` is a good default: BF16 weights with MLA tessellation, which is what
 the example applications use. The `n`, `s`, `l` and `x` sizes are published alongside it — swap the
-letter after `yolo26` to trade accuracy for speed.
+letter after `yolo26` to trade accuracy for speed. To confirm the precision and tessellation from the
+files themselves, see [Chapter 20](20-model-archive.md#int8-and-bf16).
 
 ---
 

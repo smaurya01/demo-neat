@@ -66,6 +66,7 @@ Everything above runs on the board. This part sets up the host side.
 | 17 | [Neat Insight](chapters/17-neat-insight.md) | A browser console for streams, output and runtime state |
 | 18 | [A C++ video application](chapters/18-cpp-video-app.md) | **The capstone** — RTSP in, detection on the MLA, result in Insight |
 | 19 | [Agentic development](chapters/19-agentic-development.md) | Build Neat apps by prompting Codex or Claude Code with the SiMa skills |
+| 20 | [Inside a model archive](chapters/20-model-archive.md) | What is in the `.tar.gz` you pass to `Model`, INT8 vs BF16, and how to check one before you use it |
 
 ### Reference
 

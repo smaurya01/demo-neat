@@ -10,7 +10,7 @@ below.
 
 | Where | What you get |
 | --- | --- |
-| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 19 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development. **Start here.** |
+| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 20 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development, and what is inside a model archive. **Start here.** |
 | [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, model options, RTSP, senders, GenAI in a graph. |
 | [`apps/`](apps/README.md) | Complete, runnable applications, most of them RTSP in → inference → output to Neat Insight. |
 | [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
@@ -45,7 +45,7 @@ the only thing you need open the first time.
 | [10. Install simaai-sentinel](devkit-quick-start/chapters/10-install-simaai-sentinel.md) | [11. Install pyneat](devkit-quick-start/chapters/11-install-pyneat.md) | [12. Object detection on images](devkit-quick-start/chapters/12-object-detection.md) |
 | [13. LLiMa: search, list, pull](devkit-quick-start/chapters/13-llima.md) | [14. The Neat stack](devkit-quick-start/chapters/14-neat-components.md) | [15. Install the Neat SDK](devkit-quick-start/chapters/15-install-neat-sdk.md) |
 | [16. The `dk` command](devkit-quick-start/chapters/16-devkit-tool-dk.md) | [17. Neat Insight](devkit-quick-start/chapters/17-neat-insight.md) | [18. A C++ video application, end to end](devkit-quick-start/chapters/18-cpp-video-app.md) |
-| [19. Agentic development](devkit-quick-start/chapters/19-agentic-development.md) |  |  |
+| [19. Agentic development](devkit-quick-start/chapters/19-agentic-development.md) | [20. Inside a model archive](devkit-quick-start/chapters/20-model-archive.md) |  |
 
 Work through it in order the first time; afterwards each chapter stands alone.
 
@@ -88,8 +88,8 @@ each one and how to run it.
 
 ## 4. Model compilation
 
-**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Twelve models: download
-the ten prebuilt archives, or set up to compile them yourself.
+**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Fourteen models: download
+the ten prebuilt archives, or set up to compile them yourself. Any model can be built as INT8 or bf16.
 
 Models with a compile recipe (each links to its commands):
 
@@ -97,14 +97,19 @@ Models with a compile recipe (each links to its commands):
 | --- | --- | --- | --- | --- |
 | **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
 | **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-no-dfl-rebuild) |
-|  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) |  |  |  |
+|  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) | [yolo26m&nbsp;(bf16)](model-compilation/COMPILE-COMMANDS.md#13-yolo26m--detection-bf16) | [yolo26s](model-compilation/COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study) |  |
 | **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
 | **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
 | **Open-vocab** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |  |
 
 **[`model-compilation/COMPILE-COMMANDS.md`](model-compilation/COMPILE-COMMANDS.md)** — the commands.
-`compile_all.sh` for eleven of the twelve (`yolov8s-worldv2` needs bf16 and is built separately), or
-a copy-paste block per model with its exact expected result.
+`compile_all.sh` for eleven INT8 models (the ten in the prebuilt zip plus `yolov8s`), or a
+copy-paste block per model with its exact expected result.
+
+**[`model-compilation/ACCURACY.md`](model-compilation/ACCURACY.md)** — what INT8 and
+bf16 cost against FP32 for Ultralytics `yolo26s` on COCO val2017 (4,980 images): bf16 matches FP32
+(−0.07 mAP50-95), INT8 costs 2.67 mAP50-95 and runs 1.7× faster than bf16 on the MLA. To replicate
+the numbers step by step: [`model-compilation/accuracy/README.md`](model-compilation/accuracy/README.md).
 
 **[`model-compilation/MODEL-COMPILATION.md`](model-compilation/MODEL-COMPILATION.md)** — the
 reasoning. Why graph surgery is needed, what a good archive looks like (**one `.elf`, zero `.so`**),

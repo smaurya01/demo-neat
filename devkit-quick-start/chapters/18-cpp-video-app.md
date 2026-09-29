@@ -155,7 +155,8 @@ sima-user@sdk:/workspace/rtsp-detector$ export MODELZOO_VERSION="2.1.3"
 sima-user@sdk:/workspace/rtsp-detector$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
-If the download asks you to log in, run `sima-cli login` in the SDK shell first.
+If the download asks you to log in, run `sima-cli login` in the SDK shell first. To see what is
+inside the archive, and what each file in it does, read [Chapter 20](20-model-archive.md).
 
 ### The labels
 
@@ -686,6 +687,7 @@ sima@modalix:~$ ls ~/prebuilt-apps/examples/object-detection/
 | Build apps by prompting a coding agent | [Chapter 19](19-agentic-development.md) |
 | Neat concepts as runnable notebooks | [`tutorial/`](../../tutorial/README.md) in this repository |
 | More complete applications | [`apps/`](../../apps/README.md) in this repository |
+| What is inside a model archive | [Chapter 20](20-model-archive.md) |
 | Compile your own model | [`model-compilation/`](../../model-compilation/README.md) in this repository |
 | LLMs, VLMs and speech | [`llima/`](../../llima/README.md) in this repository |
 | Multiple streams at once | `multi-stream-object-detector` in the apps bundle |
