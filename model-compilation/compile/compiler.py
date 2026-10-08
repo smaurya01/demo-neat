@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
-"""STEP 3 - quantize (INT8) + compile to a Modalix MPK archive. Calibration lives here.
+"""STEP 3 - quantize (INT8 or bf16) + compile to a Modalix MPK archive. Calibration lives here.
 
-    python compile/compiler.py --model-id yolo11n
+    python compile/compiler.py --model-id yolo11n                     # models.yaml precision: int8
+    python compile/compiler.py --model-id yolo26m                     # models.yaml precision: bf16
+    python compile/compiler.py --model-id yolo26s --precision bf16    # override the registry
     python compile/compiler.py --all
+
+PRECISION:
+  int8 (default) quantizes weights and activations to 8 bits using the calibration images below.
+  bf16 keeps weights and activations in bfloat16 (`--bf16-weights --bf16-activations`): no
+  calibration ranges to get wrong, usually closer to FP32 accuracy, but a larger and slower model.
+  The precision comes from the model's `precision:` in models.yaml (every model states it), unless
+  --precision overrides it for this one build. Each precision gets its own output dir, so one model
+  can be built both ways.
 
 CALIBRATION (the part people get wrong):
   Quantization needs REAL images from the target domain to learn activation ranges. Synthetic /
@@ -17,7 +27,8 @@ TARGET CONTRACT: exactly one `.elf` and zero `.so`.
   signal to check. Validate with test_model.py, which fails on any `.so`.
 
 Input : work/<id>/surgery/<id>.compile_ready.onnx  (or the raw ONNX when surgery: none)
-Output: work/<id>/compile_int8/<...>_mpk.tar.gz    (+ reports/compile.log, compile.command.txt)
+Output: work/<id>/compile_<precision>/<...>_mpk.tar.gz
+        (+ reports/compile_<precision>.log, compile_<precision>.command.txt)
 """
 from __future__ import annotations
 
@@ -27,12 +38,13 @@ import sys
 from pathlib import Path
 
 from common import (ROOT, all_model_ids, compile_input_onnx, ensure_dirs, load_registry,
-                    model_cfg, paths)
+                    model_cfg, model_precision, paths)
 
 # The SDK's quantize+compile driver (from the sima-model-quantize-compile skill).
 QC = Path.home() / ".codex/skills/sima-model-quantize-compile/scripts/quantize_compile.py"
 
 SYNTHETIC_MARKERS = ("synthetic", "dummy", "gradient", "random", "noise")
+BF16_FLAGS = ["--bf16-weights", "--bf16-activations"]
 
 
 def assert_real_calibration(calib_dir: Path, min_images: int = 8) -> list[Path]:
@@ -54,9 +66,18 @@ def assert_real_calibration(calib_dir: Path, min_images: int = 8) -> list[Path]:
     return imgs
 
 
-def run(model_id: str, calib_dir: Path | None, num_calib: int | None, extra: list[str]) -> int:
+def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision: str | None,
+        extra: list[str]) -> int:
     cfg, project = model_cfg(model_id)
-    p = ensure_dirs(model_id)
+    # Passing `--bf16-weights` by hand (the older way) still selects bf16 and its output dir.
+    # `--bf16-activations` alone (bf16 activations, int8 weights) is passed through untouched.
+    if "--bf16-weights" in extra:
+        if precision == "int8":
+            raise SystemExit(f"[compile] {model_id}: --precision int8 conflicts with --bf16-weights")
+        precision = "bf16"
+        extra = [f for f in extra if f not in BF16_FLAGS]
+    prec = model_precision(model_id, precision)
+    p = ensure_dirs(model_id, prec)
 
     onnx_path = compile_input_onnx(model_id)
     if not onnx_path.exists():
@@ -85,21 +106,23 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, extra: lis
     ]
     if cfg.get("output_names"):
         cmd += ["--output_names", *cfg["output_names"]]
+    if prec == "bf16":
+        cmd += BF16_FLAGS
     cmd += extra
 
-    (p["reports"] / "compile.command.txt").write_text(" ".join(cmd) + "\n", encoding="utf-8")
-    print(f"[compile] {model_id}: onnx={onnx_path.name} calib={calib.name} ({len(imgs)} real imgs, "
-          f"using {n})")
+    (p["reports"] / f"compile_{prec}.command.txt").write_text(" ".join(cmd) + "\n", encoding="utf-8")
+    print(f"[compile] {model_id}: precision={prec} onnx={onnx_path.name} calib={calib.name} "
+          f"({len(imgs)} real imgs, using {n})")
 
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    (p["reports"] / "compile.log").write_text(proc.stdout, encoding="utf-8")
+    (p["reports"] / f"compile_{prec}.log").write_text(proc.stdout, encoding="utf-8")
 
     dist = [l for l in proc.stdout.splitlines() if "A65" in l or "Plugin distribution" in l]
     for l in dist[-3:]:
         print("   ", l.strip())
-    print(f"[compile] {model_id}: rc={proc.returncode}")
+    print(f"[compile] {model_id} ({prec}): rc={proc.returncode}  -> {p['compile_dir']}")
     if proc.returncode != 0:
-        print(f"   see {p['reports'] / 'compile.log'}")
+        print(f"   see {p['reports'] / f'compile_{prec}.log'}")
     return proc.returncode
 
 
@@ -110,6 +133,8 @@ def main() -> int:
     ap.add_argument("--calib-dir", type=Path, default=None,
                     help="override the calibration image dir (must be REAL images)")
     ap.add_argument("--num-calib-samples", type=int, default=None)
+    ap.add_argument("--precision", choices=["int8", "bf16"], default=None,
+                    help="override the model's `precision` in models.yaml (default int8)")
     # unknown flags (e.g. --calib_method min_max) pass straight through to quantize_compile.py
     args, extra = ap.parse_known_args()
 
@@ -119,7 +144,7 @@ def main() -> int:
 
     rc = 0
     for mid in ids:                       # strictly serial: one compile at a time
-        rc |= run(mid, args.calib_dir, args.num_calib_samples, extra)
+        rc |= run(mid, args.calib_dir, args.num_calib_samples, args.precision, extra)
     return rc
 
 

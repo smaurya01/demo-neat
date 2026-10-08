@@ -175,11 +175,13 @@ With the 4-D rewrite the graph places as a single MLA segment in **both** INT8 a
 fails, at the compiler's sim/bit-accuracy check: the per-head decomposition exposes the wide-range
 text-similarity score maps as intermediate INT8 tensors (saturation warnings on the attn
 `proj_conv` bias), which the original fused einsum never did. bf16 has no quantization step, passes
-at `rc=0`, and is the format the official yolo26 archives ship in. So `yolov8s-worldv2` is the one
-model here compiled with `--bf16-weights --bf16-activations`.
+at `rc=0`, and is the format the official yolo26 archives ship in. So `yolov8s-worldv2` is compiled
+in bf16 (`precision: bf16` in `models.yaml`).
 
-**A trap this leaves behind:** `models.yaml` records `precision: bf16`, but `compiler.py` **does not
-read that field** — the flags must be passed by hand. `compiler.py --all` would silently try INT8.
+**A trap this used to leave behind:** `models.yaml` recorded `precision: bf16`, but `compiler.py`
+did not read that field, so `compiler.py --all` silently tried INT8. `compiler.py` now reads
+`precision:` (and takes `--precision int8|bf16`), and builds each precision into its own
+`work/<id>/compile_<precision>/` folder.
 
 ### ❌ A green compile that was numerically garbage
 

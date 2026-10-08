@@ -271,4 +271,4 @@ there repeats a mistake in every session until you remove it.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Chapter 20 · Inside a model archive](20-model-archive.md) |

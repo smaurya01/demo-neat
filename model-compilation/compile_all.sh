@@ -16,11 +16,12 @@ ROOT="$(pwd)"
 OUT="$ROOT/assets/models"
 LOG="$ROOT/compile_all.log"
 
-# NOTE: yolov8s-worldv2 is intentionally NOT in this list. It must be compiled with
-#   --bf16-weights --bf16-activations
-# (INT8 places fine but fails the compiler's sim/bit-accuracy check), and this script has no way to
-# pass per-model compiler flags. Build it on its own -- see COMPILE-COMMANDS.md section 12.
-# Do not "fix" this by adding it here.
+# NOTE: this list is eleven INT8 models: the ten in Models-v1.zip plus yolov8s. The bf16 models
+# (yolov8s-worldv2, yolo26m) and yolo26s are built on their own -- see COMPILE-COMMANDS.md
+# sections 12-14.
+# compiler.py now reads `precision:` from models.yaml, so adding a bf16 model here would compile it
+# correctly, but its archive lands in work/<id>/compile_bf16/ and the collect step below only looks
+# in compile_int8/.
 MODELS=(resnet50 densenet169 convnext_tiny efficientnet_v2_s
         yolov8s yolo11n yolo11s yolo26n yolo11s-seg yolo26s-pose yolox_s)
 

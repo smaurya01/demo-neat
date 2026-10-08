@@ -38,6 +38,9 @@ import numpy as np
 
 from common import ROOT, archive_path, load_registry, model_cfg
 
+# int8 / bf16: which build of the model to test (None = the model's precision in models.yaml).
+PRECISION: str | None = None
+
 # Candidate decode types per registry `decode:` kind. Ordered best-guess first; the script
 # tries them all anyway so a wrong guess here costs nothing but a few seconds.
 CANDIDATES = {
@@ -107,7 +110,7 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
     """
     import cv2
 
-    arc = archive_path(cfg["id"])
+    arc = archive_path(cfg["id"], PRECISION)
     _, _, mh, mw = cfg["input_shape"]
 
     opt = pyneat.ModelOptions()
@@ -175,7 +178,7 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
 
 def run_model(pyneat, model_id, project, args, labels) -> tuple[str | None, list]:
     cfg, _ = model_cfg(model_id)
-    arc = archive_path(model_id)
+    arc = archive_path(model_id, PRECISION)
     print(f"\n=== {model_id}  ({cfg['task']}, decode={cfg['decode']}) ===")
     if arc is None:
         print("    no _mpk.tar.gz -- compile it first")
@@ -217,6 +220,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--precision", choices=["int8", "bf16"], default=None,
+                    help="test the int8 or bf16 build (default: the model's precision in models.yaml)")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--iou", type=float, default=0.50)
     ap.add_argument("--top-k", type=int, default=100)
@@ -224,6 +229,8 @@ def main() -> int:
     ap.add_argument("--num-classes", type=int, default=80, help="COCO-80 for every model here")
     ap.add_argument("--timeout-ms", type=int, default=20000)
     args = ap.parse_args()
+    global PRECISION
+    PRECISION = args.precision
 
     import pyneat
 
