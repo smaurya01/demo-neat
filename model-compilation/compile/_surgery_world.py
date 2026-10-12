@@ -5,7 +5,7 @@ YOLO-World's WorldDetect head differs from a plain YOLO detect head only in how 
 CLASS logits are produced. After set_classes() bakes the vocabulary, each scale's
 head is:
 
-    bbox_i  = DFL( cv2.i.2 Conv )                          # 64ch -> 4 distance ch (16 bins)
+    bbox_i  = cv2.i.2 Conv                                 # 64ch raw DFL (4 x 16 bins)
     class_i = Einsum(cv3.i.2 embed, text_norm) * exp(s) + b # contrastive -> nc logits
 
 where `text_norm` (normalized text features, [1, nc, embed]), `exp(s)` (logit scale)
@@ -19,11 +19,13 @@ single most important move for a single-ELF result: it replaces an Einsum whose
 contraction layout (bchw,bkc->bkhw) is not a native MLA placement with a 1x1 Conv,
 which the MLA places trivially. The math is identical.
 
-bbox uses the yolov8/yolo11 16-bin DFL, rebuilt in-graph as
-Split(64->16x4)->Softmax->Conv(arange)->Concat, same as the yolo11 detection path.
+bbox is the yolov8/yolo11 16-bin DFL head, exposed RAW (64 channels), same as the yolo11
+detection path: Neat's YoloV8 decoder integrates the DFL and runs NMS. (Rebuilding it into
+4 l/t/r/b channels would force the YoloV26 decoder, which skips NMS since Neat 0.5.0.)
 
-Output: 6 raw heads  bbox_{0,1,2} (4ch) + class_logit_{0,1,2} (nc ch), decode/NMS tail
-removed -> the whole graph stays on the MLA.
+Output: 6 raw heads  bbox_{0,1,2} (64ch) + class_logit_{0,1,2} (nc ch), decode/NMS tail
+removed -> the whole graph stays on the MLA. Decode: BoxDecodeType.YoloV8 with
+BoxDecodeTypeOption.GroupedByRoleLogit (class heads are logits).
 
     python compile/_surgery_world.py --model-id yolov8s-worldv2
 """
@@ -52,26 +54,6 @@ def get_init(inits, name):
     return numpy_helper.to_array(inits[name])
 
 
-def add_dfl(nodes, inits_out, source, output, bins):
-    """YOLO 16-bin DFL: Split(64->16x4) -> Softmax -> Conv(arange) -> Concat = 4 distance ch."""
-    split_outputs = [f"{output}_split_{i}" for i in range(4)]
-    split_sizes = f"{output}_split_sizes"
-    inits_out.append(numpy_helper.from_array(
-        np.asarray([bins] * 4, dtype=np.int64), split_sizes))
-    nodes.append(helper.make_node("Split", [source, split_sizes], split_outputs,
-                                  name=f"{output}/Split", axis=1))
-    weight_name = f"{output}_dfl_weight"
-    inits_out.append(numpy_helper.from_array(
-        np.arange(bins, dtype=np.float32).reshape(1, bins, 1, 1), weight_name))
-    conv_outs = []
-    for i, so in enumerate(split_outputs):
-        sm, dist = f"{output}_softmax_{i}", f"{output}_distance_{i}"
-        nodes.append(helper.make_node("Softmax", [so], [sm], name=f"{output}/Softmax_{i}", axis=1))
-        nodes.append(helper.make_node("Conv", [sm, weight_name], [dist], name=f"{output}/DflConv_{i}"))
-        conv_outs.append(dist)
-    nodes.append(helper.make_node("Concat", conv_outs, [output], name=f"{output}/Concat", axis=1))
-
-
 def build(model_id: str, force: bool) -> dict:
     base = ROOT / "work" / model_id
     source = base / "onnx" / f"{model_id}.onnx"
@@ -87,12 +69,12 @@ def build(model_id: str, force: bool) -> dict:
 
     new_nodes, new_inits, outputs, output_names = [], [], [], []
 
-    # ---- bbox heads: DFL rebuild (64 -> 4) -------------------------------------
+    # ---- bbox heads: raw 64-channel DFL, decoded by Neat's YoloV8 ---------------
     for suffix, h, w in SCALES:
         src = f"{HEAD}/cv2.{suffix}/cv2.{suffix}.2/Conv_output_0"
         name = f"bbox_{suffix}"
-        add_dfl(new_nodes, new_inits, src, name, DFL_BINS)
-        outputs.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 4, h, w]))
+        new_nodes.append(helper.make_node("Identity", [src], [name], name=f"/sima_world_heads/{name}/Identity"))
+        outputs.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 4 * DFL_BINS, h, w]))
         output_names.append(name)
 
     # ---- class heads: fold contrastive (Einsum*scale+bias) -> Conv1x1 ---------
@@ -143,7 +125,7 @@ def build(model_id: str, force: bool) -> dict:
         "num_outputs": len(output_names),
         "num_classes": nc,
         "contrastive": "folded Einsum*scale+bias -> Conv1x1 (weight=text_norm*exp(logit_scale))",
-        "bbox": f"DFL {DFL_BINS}-bin rebuilt in-graph",
+        "bbox": f"raw DFL {DFL_BINS}-bin heads ({4 * DFL_BINS} ch)",
         "contract": "raw YOLO-World head outputs; CPU decode/NMS removed",
     }
     (report_dir / "compile_ready_surgery.json").write_text(json.dumps(report, indent=2) + "\n")

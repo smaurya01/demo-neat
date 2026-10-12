@@ -22,9 +22,9 @@
 | Component | Version |
 |---|---|
 | DevKit software | 2.1.3 |
-| Neat SDK | 2.1.3.0 |
-| Neat Library | 0.4.0 |
-| Neat Apps | 0.5.0 |
+| Neat SDK | 2.1.3.1 |
+| Neat Library | 0.5.0 |
+| Neat Apps | 0.5.1 |
 
 Confirm against the live
 [compatibility matrix](https://developer.sima.ai/software/getting-started/compatibility) — this is
@@ -56,8 +56,8 @@ the fastest-moving information in the guide.
 | `sima-cli network` | Guided network configuration |
 | `sima-cli nvme remount` | Mount an existing NVMe partition |
 | `sima-cli nvme format` | Partition and format the NVMe — **erases it** |
-| `sima-cli neat install core@v0.4.0` | Install the Neat Library |
-| `sima-cli neat install apps@v0.5.0` | Install the example applications |
+| `sima-cli neat install core@v0.5.0` | Install the Neat Library |
+| `sima-cli neat install apps@v0.5.1` | Install the example applications |
 | `sima-cli neat install sentinel` | Install the monitoring tool |
 | `sima-cli modelzoo` | Browse pre-compiled models |
 | `simaai-sentinel` | Live temperature / power / CPU / MLA view |

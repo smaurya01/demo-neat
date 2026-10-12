@@ -59,7 +59,7 @@ There is no separate setup step afterwards — it is one continuous flow that:
 5. Installs Neat Core into the container, and onto the paired DevKit.
 
 `release-2.1` tracks the latest patch in the 2.1 series. For the set this guide uses — board
-software **2.1.3** — that is SDK **2.1.3.0**; check it against the table in
+software **2.1.3** — that is SDK **2.1.3.1**; check it against the table in
 [Chapter 9](09-check-and-update-image.md#which-version-should-you-be-on). The board, the SDK and
 the Neat Library move as a set.
 

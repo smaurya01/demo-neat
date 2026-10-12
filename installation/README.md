@@ -60,8 +60,8 @@ setup command to run afterwards.
    copy files by hand.
 5. Installs Neat Core on the SDK container, and on the paired DevKit if you paired one.
 
-`release-2.1` tracks the latest patch in the 2.1 series: **SDK 2.1.2.2**, which pairs with **DevKit
-software 2.1.2**. The first install takes several minutes.
+`release-2.1` tracks the latest patch in the 2.1 series: **SDK 2.1.3.1** (Neat Library 0.5.0), which
+pairs with **DevKit software 2.1.3**. The first install takes several minutes.
 
 **Not sure which SDK your board needs?** Check what it's running with `cat /etc/buildinfo` on the
 DevKit, then look it up in the
@@ -280,8 +280,8 @@ Only needed to compile or quantize ONNX / GenAI models for Modalix. Match the ar
 (amd64/arm64) and version to your board and SDK.
 
 ```bash
-# amd64, v2.1.2
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+# amd64, v2.1.3 (matches DevKit software 2.1.3)
+sima-cli install -v 2.1.3 tools/model-compiler/amd64
 ```
 
 References:

@@ -33,7 +33,7 @@ path, so nothing is copied.
   - [5. `yolov8s` — detection, surgery (**head at `model.22`, no attention**)](#5-yolov8s--detection-surgery-head-at-model22-no-attention)
   - [6. `yolo11n` — detection, surgery](#6-yolo11n--detection-surgery)
   - [7. `yolo11s` — detection, surgery](#7-yolo11s--detection-surgery)
-  - [8. `yolo26n` — detection, surgery (**no DFL rebuild**)](#8-yolo26n--detection-surgery-no-dfl-rebuild)
+  - [8. `yolo26n` — detection, surgery (**one-to-one head, `YoloV26`**)](#8-yolo26n--detection-surgery-one-to-one-head-yolov26)
   - [9. `yolo11s-seg` — segmentation, surgery](#9-yolo11s-seg--segmentation-surgery)
   - [10. `yolo26s-pose` — pose, surgery (**carries the 209× fix**)](#10-yolo26s-pose--pose-surgery-carries-the-209-fix)
   - [11. `yolox_s` — detection, **different surgery**](#11-yolox_s--detection-different-surgery)
@@ -41,6 +41,7 @@ path, so nothing is copied.
     - [Change the vocabulary](#change-the-vocabulary)
   - [13. `yolo26m` — detection, **bf16**](#13-yolo26m--detection-bf16)
   - [14. `yolo26s` — detection, **INT8 and bf16** (accuracy study)](#14-yolo26s--detection-int8-and-bf16-accuracy-study)
+  - [15. `yolo26m` at batch 6 — multi-batch, **INT8**](#15-yolo26m-at-batch-6--multi-batch-int8)
 
 ---
 
@@ -173,8 +174,8 @@ Expected final line:
 all archives: one .elf, zero .so
 ```
 
-Then, on the DevKit, confirm Neat can decode the detection heads **on-device** (see
-[step 4b](README.md#step-4b--on-device-box-decode-detection-models)):
+Then, on the DevKit, confirm Neat decodes every detection, segmentation and pose archive **on-device**, each with its own family's decoder (see
+[step 4b](README.md#step-4b--on-device-box-decode)):
 
 ```bash
 dk compile/test_box_decode.py --all
@@ -183,15 +184,24 @@ dk compile/test_box_decode.py --all
 ```text
 model                on-device box decode         verdict
 --------------------------------------------------------------------
-yolov8s              YoloV26/Auto                 PASS
-yolo11n              YoloV26/Auto                 PASS
-yolo11s              YoloV26/Auto                 PASS
+yolov8s              YoloV8/GroupedByRoleLogit    PASS
+yolov8l              YoloV8/GroupedByRoleLogit    PASS
+yolo11n              YoloV8/GroupedByRoleLogit    PASS
+yolo11s              YoloV8/GroupedByRoleLogit    PASS
 yolo26n              YoloV26/Auto                 PASS
-yolov8s-worldv2      YoloV26/Auto                 PASS
+yolo26s              YoloV26/Auto                 PASS
+yolo26m              YoloV26/Auto                 PASS
+yolo11s-seg          YoloV8Seg/GroupedByRoleLogit PASS
+yolo26s-pose         YoloV26Pose/Auto             PASS
+yolov8s-worldv2      YoloV8/GroupedByRoleLogit    PASS
 yolox_s              YoloX/Split3Interleaved      PASS
 
-every detection archive decodes on-device
+every archive decodes on-device with its own BoxDecodeType, NMS applied
 ```
+
+(Neat 0.5.0 / SDK 2.1.3.1, all models built in their `models.yaml` precision. Each block above it
+prints per-image box counts and duplicate pairs; a `[WARN]` line for an isolated overlapping pair on a
+YOLO26 model is expected, see [step 4b](README.md#step-4b--on-device-box-decode).)
 
 ### How long each model takes
 
@@ -359,7 +369,7 @@ dk compile/test_box_decode.py --model-id yolov8s
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
+   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
                      (1,80,80,80) (1,40,40,80) (1,20,20,80)
 ```
 
@@ -376,8 +386,8 @@ Two things differ from YOLO11 and both are handled in `compile/_surgery_ultralyt
   `attention_blocks` is empty and the `MatMul → Einsum` rewrite is a no-op. That is expected, not a
   misconfiguration.
 
-The DFL rebuild is still needed: the `cv2.*` bbox heads emit 64 channels (4 × 16 bins), same as
-YOLO11.
+The `cv2.*` bbox heads emit 64 channels (4 × 16 bins), same as YOLO11. The surgery exposes them raw:
+Neat's `YoloV8` decoder integrates the DFL and runs NMS on the board.
 
 ---
 
@@ -406,7 +416,7 @@ dk compile/test_box_decode.py --model-id yolo11n
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
+   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
                      (1,80,80,80) (1,40,40,80) (1,20,20,80)
 ```
 
@@ -439,17 +449,17 @@ dk compile/test_box_decode.py --model-id yolo11s
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
+   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
                      (1,80,80,80) (1,40,40,80) (1,20,20,80)
 ```
 
 ---
 
-### 8. `yolo26n` — detection, surgery (**no DFL rebuild**)
+### 8. `yolo26n` — detection, surgery (**one-to-one head, `YoloV26`**)
 
 ```bash
 python compile/convert_to_onnx.py --model-id yolo26n   # -> 9.5 MB ONNX
-python compile/graph_surgery.py   --model-id yolo26n   # one2one_cv* heads; DFL step skipped
+python compile/graph_surgery.py   --model-id yolo26n   # exposes the one2one_cv* heads (4 ch)
 python compile/compiler.py        --model-id yolo26n   # the long step; whole block ≈ 10m05s
 python compile/test_model.py      --model-id yolo26n --validate-only
 ```
@@ -473,7 +483,9 @@ dk compile/test_box_decode.py --model-id yolo26n
                      (1,80,80,80) (1,40,40,80) (1,20,20,80)
 ```
 
-YOLO26's heads are already 4-channel, so the DFL reconstruction that YOLO11 needs is skipped.
+YOLO26's `one2one_*` heads are already 4-channel distances and one-to-one, so this archive decodes
+with `BoxDecodeType.YoloV26`, which runs no NMS (none is needed). YOLOv8/YOLO11 instead keep their
+64-channel DFL heads and decode with `YoloV8`.
 
 ---
 
@@ -500,7 +512,7 @@ dk compile/test_model.py --model-id yolo11s-seg
 ```
 
 ```text
-   10 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
+   10 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)  <- raw DFL bbox (4 x 16 bins)
                       (1,80,80,80) (1,40,40,80) (1,20,20,80)
                       (1,80,80,32) (1,40,40,32) (1,20,20,32)     <- mask coeffs (32 ch)
                       (1,160,160,32)                             <- proto
@@ -586,7 +598,7 @@ and leaves an image-only graph. That is why this model has its own export and su
 
 ```bash
 python compile/convert_to_onnx.py --model-id yolov8s-worldv2   # bake COCO-80 + 4D attn patch
-python compile/graph_surgery.py   --model-id yolov8s-worldv2   # fold contrastive head + DFL
+python compile/graph_surgery.py   --model-id yolov8s-worldv2   # fold contrastive head; raw DFL bbox
 python compile/compiler.py        --model-id yolov8s-worldv2   # precision: bf16 from models.yaml
 python compile/test_model.py      --model-id yolov8s-worldv2 --validate-only
 ```
@@ -607,12 +619,13 @@ dk compile/test_box_decode.py --model-id yolov8s-worldv2
 ```
 
 ```text
-   6 head tensor(s): (80,80,4) (40,40,4) (20,20,4)
+   6 head tensor(s): (80,80,64) (40,40,64) (20,20,64)   <- raw DFL bbox (4 x 16 bins)
                      (80,80,80) (40,40,80) (20,20,80)
 ```
 
 `class_logit_*` is 80 channels because 80 classes were baked — that width follows your vocabulary,
-not the model. On-device box decode works with `BoxDecodeType.YoloV26`, same as the other detectors.
+not the model. On-device box decode uses `BoxDecodeType.YoloV8` with `GroupedByRoleLogit`, the same as
+the other YOLOv8/YOLO11 detectors.
 
 **Why bf16 and not INT8.** With the 4-D attention rewrite the graph places as a single MLA segment in
 *both* precisions, but INT8 fails the compiler's sim/bit-accuracy check: the per-head decomposition
@@ -680,6 +693,8 @@ dk compile/test_box_decode.py --model-id yolo26m
 yolo26m              YoloV26/Auto                 PASS
 ```
 
+(Neat 0.5.0: 17 / 8 / 17 boxes on the three images, with one or two isolated `[WARN]` pairs.)
+
 **How to confirm it really is bf16.** Count the kernels in the archive's contract. A bf16 build
 converts with `cast_transform` and has no `quantization_transform`:
 
@@ -728,3 +743,78 @@ comparison — dataset, method, results and why they differ from Ultralytics' pu
 in [`ACCURACY.md`](ACCURACY.md); the commands to rerun it are in
 [`accuracy/README.md`](accuracy/README.md).
 
+---
+
+### 15. `yolo26m` at batch 6 — multi-batch, **INT8**
+
+`--batch-size N` compiles the archive for N images per MLA call. The build goes to its own folder,
+`compile_<precision>_b<N>/`. The batch-1 build of the same precision is needed to check it. Read
+[README > Multi-batch compilation](README.md#multi-batch-compilation) first: on Neat 0.5.0 a
+batched archive is slower, less accurate, and cannot be box-decoded on the device.
+
+```bash
+python compile/convert_to_onnx.py --model-id yolo26m
+python compile/graph_surgery.py   --model-id yolo26m
+python compile/compiler.py        --model-id yolo26m --precision int8 --batch-size 6   # -> compile_int8_b6/, ≈18 min
+python compile/compiler.py        --model-id yolo26m --precision int8                  # -> compile_int8/, ≈8 min
+python compile/test_model.py      --model-id yolo26m --precision int8 --batch-size 6 --validate-only
+```
+
+**Host:**
+
+```text
+[compile] yolo26m: precision=int8 batch=6 onnx=yolo26m.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... Plugin distribution per backend:
+    ...   A65 : 0
+    desired batch 6, achieved 6
+[compile] yolo26m (int8_b6): rc=0  -> .../model-compilation/work/yolo26m/compile_int8_b6
+[PASS] yolo26m          elf=1 so=0 batch=6  (compile_int8_b6/yolo26m.compile_ready_mpk.tar.gz)
+```
+
+The archive is 72 MB; the batch-1 INT8 build is 35 MB. Both times were measured on a 24-core host.
+
+**Not in bf16.** `yolo26m`'s default precision is bf16, but that fails at batch 6.
+`compiler.py --model-id yolo26m --batch-size 6` stops after calibration with:
+
+```text
+    mlc.compiler.model_graph.large_tensor_helper.CannotSplitLargeTensorError: MLA_0/conv2d_add_0: Cannot be segmented due to batch size. Please try with batch size 1 ...
+[compile] yolo26m: batch 6 is not possible for this model at bf16: layer MLA_0/conv2d_add_0 needs large-tensor splitting, which the compiler cannot combine with batching. Use batch 1, or try --precision int8 (half-size tensors) if this was bf16.
+[compile] yolo26m (bf16_b6): rc=1  -> .../model-compilation/work/yolo26m/compile_bf16_b6
+```
+
+**DevKit:** six images go in as one `[6, 640, 640, 3]` tensor, and each item is compared with the
+batch-1 build:
+
+```bash
+dk compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6
+```
+
+```text
+[PASS] yolo26m          elf=1 so=0 batch=6  (compile_int8_b6/yolo26m.compile_ready_mpk.tar.gz)
+[test] yolo26m: batch 6 archive, 6 image(s) as one [6, 640, 640, 3] tensor
+   6 output tensor(s): (6, 80, 80, 4) (6, 40, 40, 4) (6, 20, 20, 4) (6, 80, 80, 80) (6, 40, 40, 80) (6, 20, 20, 80)
+   item 0 000000000139.jpg       vs batch-1: cosine min 0.94686 over 6 heads
+   item 1 000000000885.jpg       vs batch-1: cosine min 0.91583 over 6 heads
+   ...
+   FAIL: batch items vs the batch-1 build: worst cosine 0.91583 (need >= 0.999; ...)
+```
+
+That FAIL is the real result for this build, not a test problem:
+
+- The two builds have the same quantization parameters.
+- Against the FP32 ONNX, the batch-1 build stays at a worst-head cosine of 0.97–0.99, and the
+  batch-6 build at 0.92–0.97.
+- The batch-6 build finds fewer FP32 boxes: 10/15 and 3/6 on two images, where batch 1 finds
+  14/15 and 6/6.
+
+Speed (`Model.benchmark`, 300 samples):
+
+| | throughput | latency |
+|---|---|---|
+| batch 1 | **187.9 img/s** | 9.1 ms |
+| batch 6 | 156.4 img/s | 61.3 ms per 6 images |
+
+`test_box_decode.py` skips a batched build, because Neat 0.5.0's box decode returns one result per call.
+
+Profiling on 60 real images (`compile/profile_model.py`), `model-benchmark` and the full
+analysis: [`MULTI-BATCH.md`](MULTI-BATCH.md).

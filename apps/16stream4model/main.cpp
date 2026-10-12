@@ -50,6 +50,9 @@
 #include <cmath>
 #include <csignal>
 #include <cstdint>
+#include <future>
+#include <cstdlib>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -149,6 +152,7 @@ struct Config {
   bool tcp = true;
   bool drop_on_latency = true;
   bool skip_rtsp_probe = true;
+  bool probe_source = true;  // read width/height/fps from every stream (ffprobe)
   int decoder_buffers = 8;
   int decoder_input_buffers = 2;
   std::string decoder_tuning = "throughput-low-latency";
@@ -291,6 +295,7 @@ void set_value(Config& cfg, std::map<int, StreamCfg>& streams, const std::string
   else if (key == "rtsp_transport") cfg.tcp = (value == "tcp");
   else if (key == "drop_on_latency") cfg.drop_on_latency = to_bool(value);
   else if (key == "skip_rtsp_probe") cfg.skip_rtsp_probe = to_bool(value);
+  else if (key == "probe_source") cfg.probe_source = to_bool(value);
   else if (key == "decoder_buffers") cfg.decoder_buffers = parse_int(key, value);
   else if (key == "decoder_input_buffers") cfg.decoder_input_buffers = parse_int(key, value);
   else if (key == "decoder_tuning") cfg.decoder_tuning = value;
@@ -1002,6 +1007,151 @@ void print_usage() {
 
 }  // namespace
 
+// ---- stream geometry ------------------------------------------------------------------------
+// Neat 0.5.0 sets the RTSP decoder up from width/height/fps even when the stream reports its own,
+// and a value that differs from the camera stops build() with misconfig.media_caps. So the app
+// reads them from every stream at start-up, as the reference Neat apps do, and pins those
+// (skip_rtsp_probe keeps a known integer rate for the decoder, now the real one). The config's
+// values are used only for a stream that cannot be probed (or with probe_source=false). ffprobe
+// runs as a separate process, so it cannot clash with Neat's GStreamer instance; the streams are
+// probed in parallel so 16 of them take about as long as one.
+struct StreamGeometry {
+  int width = 0;
+  int height = 0;
+  int fps = 0;
+  std::string rate;  // as ffprobe reports it, e.g. "30/1" or "30000/1001"
+};
+
+// "30/1", "60/1", "25" -> true; "30000/1001" (29.97) -> false.
+bool is_integer_rate(const std::string& rate) {
+  try {
+    const auto slash = rate.find('/');
+    const double num = std::stod(rate.substr(0, slash));
+    const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
+    return den > 0.0 && std::abs(num / den - std::round(num / den)) < 1e-6;
+  } catch (...) {
+    return false;
+  }
+}
+
+// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+int fps_from_rate(const std::string& rate) {
+  try {
+    const auto slash = rate.find('/');
+    const double num = std::stod(rate.substr(0, slash));
+    const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
+    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+StreamGeometry probe_stream(const std::string& url, bool tcp) {
+  std::string quoted = "'";
+  for (const char c : url) {
+    quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+  }
+  quoted += "'";
+  const std::string command = std::string("ffprobe -v error ") +
+                              (tcp ? "-rtsp_transport tcp " : "") +
+                              "-timeout 5000000 -select_streams v:0 "
+                              "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
+                              "-of default=nw=1 " +
+                              quoted + " 2>/dev/null";
+  StreamGeometry g;
+  int avg_fps = 0;
+  int r_fps = 0;
+  std::string avg_rate;
+  std::string r_rate;
+  if (FILE* pipe = popen(command.c_str(), "r")) {
+    char buffer[256];
+    while (std::fgets(buffer, sizeof(buffer), pipe)) {
+      std::string line(buffer);
+      while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+      }
+      const auto eq = line.find('=');
+      if (eq == std::string::npos) {
+        continue;
+      }
+      const std::string key = line.substr(0, eq);
+      const std::string value = line.substr(eq + 1);
+      if (key == "width") {
+        g.width = std::atoi(value.c_str());
+      } else if (key == "height") {
+        g.height = std::atoi(value.c_str());
+      } else if (key == "avg_frame_rate") {
+        avg_fps = fps_from_rate(value);
+        if (avg_fps > 0) avg_rate = value;
+      } else if (key == "r_frame_rate") {
+        r_fps = fps_from_rate(value);
+        if (r_fps > 0) r_rate = value;
+      }
+    }
+    pclose(pipe);
+  }
+  g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  g.rate = avg_fps > 0 ? avg_rate : r_rate;
+  return g;
+}
+
+// Per-stream fps from each stream; one shared width/height (every decoder is built for it), so the
+// streams must agree on it.
+void apply_stream_geometry(Config& cfg) {
+  if (!cfg.probe_source) {
+    return;
+  }
+  std::vector<std::future<StreamGeometry>> probes;
+  for (const auto& sc : cfg.streams) {
+    probes.push_back(std::async(std::launch::async, probe_stream, sc.url, cfg.tcp));
+  }
+  std::optional<StreamGeometry> size;
+  int probed = 0;
+  for (std::size_t i = 0; i < cfg.streams.size(); ++i) {
+    auto& sc = cfg.streams[i];
+    const StreamGeometry g = probes[i].get();
+    if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+      std::cerr << "[warn] could not probe stream" << sc.slot << " (" << sc.url
+                << ") with ffprobe; using the config's " << cfg.width << "x" << cfg.height
+                << "@" << sc.fps << "\n";
+      continue;
+    }
+    if (!is_integer_rate(g.rate)) {
+      // Neat 0.5.0 runs neither source path at a fractional rate here: the pinned caps
+      // (skip_rtsp_probe=true) take an integer rate, and 30/1 against 30000/1001 is rejected with
+      // misconfig.media_caps; without pinning, the encoded push stage rejects the stream's caps
+      // ("encoded caps change not supported"). Say so now rather than stall for 10 s.
+      throw std::runtime_error("stream" + std::to_string(sc.slot) + " (" + sc.url + ") runs at " +
+                               g.rate + " fps; this app needs a whole-number frame rate. Set the "
+                               "camera to an integer rate (e.g. 30 instead of 29.97) or re-encode "
+                               "the source");
+    }
+    if (size && (g.width != size->width || g.height != size->height)) {
+      throw std::runtime_error("all streams must share one resolution: stream" +
+                               std::to_string(sc.slot) + " is " + std::to_string(g.width) + "x" +
+                               std::to_string(g.height) + ", an earlier stream is " +
+                               std::to_string(size->width) + "x" + std::to_string(size->height));
+    }
+    size = g;
+    if (g.fps != sc.fps) {
+      std::cout << "[source] stream" << sc.slot << " is " << g.fps << " fps (config says " << sc.fps
+                << "); using the stream's rate\n";
+    }
+    sc.fps = g.fps;
+    ++probed;
+  }
+  if (!size) {
+    return;
+  }
+  if (size->width != cfg.width || size->height != cfg.height) {
+    std::cout << "[source] streams are " << size->width << "x" << size->height << " (config says "
+              << cfg.width << "x" << cfg.height << "); using the streams' size\n";
+  }
+  cfg.width = size->width;
+  cfg.height = size->height;
+  std::cout << "[source] probed " << probed << "/" << cfg.streams.size() << " streams\n";
+}
+
 int main(int argc, char** argv) {
   std::signal(SIGINT, handle_signal);
   std::signal(SIGTERM, handle_signal);
@@ -1081,6 +1231,7 @@ int main(int argc, char** argv) {
       if (kept.empty()) throw std::runtime_error("--only-model matches no configured stream");
       cfg.streams = std::move(kept);
     }
+    apply_stream_geometry(cfg);
     const int stream_count = static_cast<int>(cfg.streams.size());
 
     std::array<ModelRuntime, kNumModels> models;

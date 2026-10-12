@@ -131,7 +131,7 @@ negotiation you would otherwise get wrong.
 | API | Use | Important parameters |
 | --- | --- | --- |
 | `groups::RtspDecodedInput(opts)` <br> `pyneat.groups.rtsp_decoded_input(...)` | RTSP H.264 in → hardware-decoded **NV12** out. The input side of almost every app here. | `url`, `tcp` (true = reliable), `latency_ms` (jitter buffer, 200 typical), `out_format` (`NV12`), `auto_caps_from_stream`, `fallback_h264_width/height/fps` (used when the stream's caps are incomplete) |
-| `groups::VideoSender(opts)` <br> `pyneat.groups.video_sender(...)` | Raw NV12 → **H.264 encode → RTP → UDP**. The output side of almost every app here. | Build with `VideoSenderOptions::H264RtpUdpFromRaw(w, h, fps)`, then set `host`, `video_port_base`, `channel` (the actual port is `video_port_base + channel`), `encoder.bitrate_kbps` |
+| `groups::VideoSender(opts)` <br> `pyneat.groups.video_sender(...)` | Raw NV12 → **H.264 encode → RTP → UDP**. The output side of almost every app here. | Build with `VideoSenderOptions::H264RtpUdpFromRaw(w, h, fps)`, then set `host`, `video_port_base`, `channel` (the actual port is `video_port_base + channel`), `encoder.bitrate_kbps`. To forward already-encoded H.264/H.265 without re-encoding use `VideoSenderOptions::Passthrough(RtspCodec::H264)` (Neat 0.5.0; replaces the deprecated `H264RtpUdpFromEncoded()`). |
 
 ---
 
@@ -166,9 +166,10 @@ your intent. You describe *what* you want; the planner picks the stages.
 
 | Field | Typical value | Notes |
 | --- | --- | --- |
-| `decode_type` | `BoxDecodeType::YoloV8` / `YoloV26` | **Must match the model's head layout, not its name.** See [Gotchas](#gotchas). |
+| `decode_type` | `BoxDecodeType::YoloV8` / `YoloV26` | **Must match the model family.** See [Gotchas](#gotchas). |
+| `decode_type_option` | `Auto` | `GroupedByRoleLogit` for a YOLOv8/YOLO11 archive from `model-compilation/` (class logits). |
 | `score_threshold` | `0.30` | |
-| `nms_iou_threshold` | `0.50` | |
+| `nms_iou_threshold` | `0.50` | Applied by `YoloV8*`/`YoloX`. Ignored by `YoloV26*` (NMS-free one-to-one heads, Neat 0.5.0+). |
 | `top_k` | `100` | Max detections/frame. |
 | `num_classes` | `80` | COCO. |
 
@@ -228,10 +229,16 @@ on the **EV74**, so this is cheap.
 
 | API | Use | Important parameters |
 | --- | --- | --- |
-| `MetadataSender(opts)` | Ship detections as **JSON over UDP** to Neat Insight, alongside the video. Not a graph node — you call it from your loop. | `host`, `metadata_port_base`, `channel`; then `send_metadata(type, json, ts_ms, frame_id)` |
+| `MetadataSender(opts)` | Ship detections as **JSON over UDP** to Neat Insight, alongside the video. Not a graph node — you call it from your loop. | `host`, `metadata_port_base`, `channel`; then `send_metadata(type, json, ts_ms, frame_id)`. Since Neat 0.5.0, messages over 1200 bytes are split into chunks that Insight reassembles; a receiver of your own must reassemble them too. |
 
 Sending metadata instead of burning boxes into the frame **frees the CPU overlay cost entirely** —
 Insight renders them.
+
+**`ts_ms` decides how the viewer pairs boxes with frames.** Insight draws a message on the frame whose
+RTP timestamp matches `ts_ms` within 1 ms. Send the source frame's timestamp (`pts_ns / 1e6`) when the
+video and the detections leave one graph (source → branch → encoder and model). Send `-1` when the
+app pushes frames into a separate video-sender graph: that graph re-stamps frames on push, so nothing
+could match, and `-1` pairs each message with the newest frame. Wall-clock time never matches.
 
 ---
 
@@ -275,11 +282,9 @@ Read the app in the rightmost column that matches what you are building.
 | [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) · [`-yolov8m`](single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](single-stream-yolo26n/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-yolov8n-seg`](single-stream-yolov8n-seg/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
-| [`single-stream-open-pose`](single-stream-open-pose/README.md) | ✅ | | ✅ | | | | | | |
 | [`multi-stream-yolo-yolo11`](multi-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | | | ✅ | | |
 | [`high-density-multi-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/high-density-multi-stream-object-detector) (official Apps example) | ✅ | | ✅ | ✅ | | | ✅ | | *16/24/48 streams, one shared model, encoded video passthrough* |
 | [`quad-stream-quad-model`](quad-stream-quad-model/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | ✅ |
-| [`multi-model-load-probe`](multi-model-load-probe/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | |
 | [`usb-camera-yolo26m`](usb-camera-yolo26m/README.md) | | ✅ | ✅ | ✅ | ✅ | | ✅ | | |
 | [`detection-vlm-assistant`](detection-vlm-assistant/README.md) | ✅ | | | | | | ✅ | | + GenAI |
 | [`pcb-defect-detection-yolo26n`](pcb-defect-detection-yolo26n/README.md) | | | | | | | ✅ | | *`Model::Runner`, no Graph* |
@@ -301,6 +306,7 @@ Same objects, different conventions. The Python side is **not** a literal transl
 | `neat::Model::Options` | `pyneat.ModelOptions` |
 | `OutputOptions::EveryFrame(4)` | `pyneat.OutputOptions.every_frame(4)` |
 | `VideoSenderOptions::H264RtpUdpFromRaw(w,h,fps)` | `pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(w,h,fps)` |
+| `VideoSenderOptions::Passthrough(RtspCodec::H264)` | `pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H264)` |
 | `decode_bbox_tensor(t, w, h, k, …)` | `pyneat.decode_bbox(tensors, clamp_to=(w,h), top_k=k)` |
 | `run.pull(name, ms, sample, &err)` → `PullStatus` | `run.pull(name, ms)` → `Optional[Sample]` |
 
@@ -313,10 +319,18 @@ you get `None` on timeout *or* close, with no way to tell them apart from the re
 
 Each of these cost real debugging time. They are load-bearing.
 
-**`BoxDecodeType` must match the model's *head layout*, not its name.** A model-zoo **YOLO11**
-archive decodes with **`YoloV8`** (raw 64-channel DFL bbox heads). A YOLO11 you compile yourself with
-the graph-surgery flow in [`../model-compilation/`](../model-compilation/README.md) produces
-4-channel l/t/r/b heads and needs **`YoloV26`**. Same model name, different decoder.
+**`BoxDecodeType` must match the model *family*.** YOLOv8 and YOLO11 decode with **`YoloV8`**
+(`YoloV8Seg` for segmentation): their heads are one-to-many and need the NMS that decoder runs. YOLO26
+decodes with **`YoloV26`** (`YoloV26Pose`): its one-to-one heads are NMS-free, and since Neat 0.5.0
+that decoder skips NMS entirely. A YOLO11 pushed through `YoloV26` therefore returns a stack of
+duplicate boxes per object. A zoo YOLO11 archive emits class probabilities (`Auto`); one compiled with
+[`../model-compilation/`](../model-compilation/README.md) keeps the same heads but emits logits, so set
+`decode_type_option = GroupedByRoleLogit`.
+
+**Decoded NV12 can be padded.** A decoded 1280×720 frame may come back with 768 Y rows, so the UV plane
+does not start at `width * height`. Read Y and UV at `tensor.planes[i].byte_offset` with their own
+row stride; slicing the first `w * h * 3 / 2` bytes turns the padding into a green band and shifts
+every colour.
 
 **An enum value does not imply an implemented decoder.** `BoxDecodeType` defines families
 (`Detr = 13`, `Centernet = 16`, …) that the runtime does **not** raw-decode. Check before assuming.

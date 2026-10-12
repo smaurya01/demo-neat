@@ -70,9 +70,9 @@ packages once from the SDK shell:
 cd /path/to/demo-neat/apps/benchmark
 mkdir -p ./assets
 cd ./assets
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8n
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8m
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8n_seg
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8m
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n_seg
 cd ..
 ```
 

@@ -3,7 +3,12 @@
 
 Copied and generalized from 09_yolo_compile_ready_surgery.py (frozen 01-12).
 Handles three head families, all reduced to a stable set of raw-head ONNX
-outputs so the MLA compiler never sees the CPU-side decode/NMS/TopK tail:
+outputs so the MLA compiler never sees the CPU-side decode/NMS/TopK tail. Each
+family keeps its OWN head layout, so the archive decodes with its own Neat
+BoxDecodeType (NMS included):
+
+  * YOLOv8 / YOLO11: raw 64-channel DFL bbox heads (4 x 16 bins) -> YoloV8 / YoloV8Seg
+  * YOLO26: one2one heads, already 4 distance channels             -> YoloV26 / YoloV26Pose
 
   * detection  (yolo11s)      -> 6 outputs:  bbox_{0,1,2}, class_logit_{0,1,2}
   * segmentation (yolo11s-seg) -> 10 outputs: the 6 detection tensors
@@ -14,8 +19,8 @@ outputs so the MLA compiler never sees the CPU-side decode/NMS/TopK tail:
 
 Shared surgery, identical to the proven yolo11n/yolo26n flow:
   1. attention MatMul -> Einsum rewrite (MLA-friendly batched attention),
-  2. YOLO11 DFL bbox heads (16 bins) -> Split/Softmax/1x1-Conv/Concat = 4
-     distance channels; YOLO26 heads already emit 4 distance channels,
+  2. expose the bbox heads as-is: 64 DFL channels for YOLOv8/YOLO11 (Neat's
+     YoloV8 decoder integrates the DFL), 4 distance channels for YOLO26,
   3. expose the raw head Conv outputs and DELETE the decode/postprocess tail
      (Concat/Reshape/Transpose/TopK/NMS) by replacing graph.output.
 
@@ -42,13 +47,16 @@ INPUT_NAME = "images"
 INPUT_SHAPE = [1, 3, 640, 640]
 SCALES = [("0", 80, 80), ("1", 40, 40), ("2", 20, 20)]
 
-# dfl_bins=16 -> YOLO11 DFL bbox heads (cv2.*.2 emit 64 = 4*16 channels).
+# dfl_bins=16 -> YOLOv8/YOLO11 DFL bbox heads (cv2.*.2 emit 64 = 4*16 channels), exposed raw.
+#                Do NOT rebuild them into 4 l/t/r/b channels: that layout only decodes as YoloV26,
+#                and since Neat 0.5.0 the YoloV26 decoder skips NMS (YOLO26 heads are one-to-one),
+#                so these one-to-many heads would return a stack of duplicates per object.
 # dfl_bins=0  -> YOLO26 one2one heads already emit 4 distance channels.
 YOLO_SPECS = {
     # YOLOv8: Detect sits at model.22 (YOLO11 moved it to model.23) and the backbone has NO
     # attention block at all -- 0 MatMul nodes in the export -- so attention_blocks is empty and
     # the Einsum rewrite is a no-op. The cv2.*/cv3.* head layout and the 64-channel (4 x 16 bins)
-    # DFL bbox heads are identical to YOLO11, so the same DFL reconstruction applies.
+    # DFL bbox heads are identical to YOLO11.
     "yolov8s": {
         "attention_blocks": [],
         "bbox_sources": [
@@ -279,25 +287,6 @@ def add_identity(nodes, source, output):
     nodes.append(helper.make_node("Identity", [source], [output], name=f"/sima_t5_heads/{output}/Identity"))
 
 
-def add_yolo11_dfl(nodes, initializers, source, output, bins):
-    split_outputs = [f"{output}_split_{idx}" for idx in range(4)]
-    split_sizes = f"{output}_split_sizes"
-    initializers.append(numpy_helper.from_array(np.asarray([bins, bins, bins, bins], dtype=np.int64), split_sizes))
-    nodes.append(helper.make_node("Split", [source, split_sizes], split_outputs, name=f"{output}/Split", axis=1))
-
-    conv_outputs = []
-    weight_name = f"{output}_dfl_weight"
-    weights = np.arange(bins, dtype=np.float32).reshape(1, bins, 1, 1)
-    initializers.append(numpy_helper.from_array(weights, weight_name))
-    for idx, split_output in enumerate(split_outputs):
-        softmax = f"{output}_softmax_{idx}"
-        distance = f"{output}_distance_{idx}"
-        nodes.append(helper.make_node("Softmax", [split_output], [softmax], name=f"{output}/Softmax_{idx}", axis=1))
-        nodes.append(helper.make_node("Conv", [softmax, weight_name], [distance], name=f"{output}/DflConv_{idx}"))
-        conv_outputs.append(distance)
-    nodes.append(helper.make_node("Concat", conv_outputs, [output], name=f"{output}/Concat", axis=1))
-
-
 def expose_compile_ready_outputs(model, spec):
     emit_class = spec.get("emit_class", True)
     available = all_node_outputs(model)
@@ -317,15 +306,12 @@ def expose_compile_ready_outputs(model, spec):
     outputs = []
     output_names = []
 
-    # bbox heads
+    # bbox heads: 4 * dfl_bins raw DFL channels (YOLOv8/YOLO11) or 4 distances (YOLO26)
+    bbox_channels = 4 * spec["dfl_bins"] if spec["dfl_bins"] else 4
     for index, (suffix, height, width) in enumerate(SCALES):
         bbox_name = f"bbox_{suffix}"
-        bbox_source = spec["bbox_sources"][index]
-        if spec["dfl_bins"]:
-            add_yolo11_dfl(new_nodes, new_initializers, bbox_source, bbox_name, spec["dfl_bins"])
-        else:
-            add_identity(new_nodes, bbox_source, bbox_name)
-        outputs.append(make_value_info(bbox_name, 4, height, width))
+        add_identity(new_nodes, spec["bbox_sources"][index], bbox_name)
+        outputs.append(make_value_info(bbox_name, bbox_channels, height, width))
         output_names.append(bbox_name)
 
     # class heads (channels inferred from graph shapes)

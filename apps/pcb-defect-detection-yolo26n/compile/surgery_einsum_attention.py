@@ -23,11 +23,6 @@ from onnxsim import simplify
 
 HEAD = "/model.23"
 ATTN_BLOCKS = ["/model.10/m/m.0/attn", "/model.22/m.0/m.0.1/attn"]
-HEAD_DECODE_NODES = [
-    "Concat", "Reshape", "Concat_1", "Reshape_1", "Concat_2", "Reshape_2",
-    "Concat_3", "Split", "Sigmoid", "Slice", "Slice_1", "Sub", "Add_1",
-    "Add_2", "Sub_1", "Div_1", "Concat_4", "Mul_2", "Concat_5",
-]
 
 
 def load_model(path: str | Path) -> onnx.ModelProto:
@@ -100,13 +95,6 @@ def append_identity_output(
     model.graph.output.append(make_value_info(output_name, shape))
 
 
-def remove_node_if_present(model: onnx.ModelProto, name: str) -> None:
-    for node in list(model.graph.node):
-        if node.name == name:
-            model.graph.node.remove(node)
-            return
-
-
 def remove_inferred_value_info(model: onnx.ModelProto) -> None:
     del model.graph.value_info[:]
 
@@ -140,8 +128,26 @@ def replace_attention_matmuls(model: onnx.ModelProto) -> None:
         )
 
 
+def head_prefix(model: onnx.ModelProto) -> str:
+    """Pick the YOLO26 head branch to expose.
+
+    `one2one_*` is the end-to-end, NMS-free head: Neat's YoloV26 decoder is built for it and
+    (since Neat 0.5.0) runs no NMS. An ONNX exported with end2end=False contains only the
+    one-to-many `cv2/cv3` head; that still decodes as YoloV26 but returns several overlapping
+    boxes per object, and the app runs no NMS. Re-export the .pt with the end-to-end head.
+    """
+    names = {node.name for node in model.graph.node}
+    if f"{HEAD}/one2one_cv2.0/one2one_cv2.0.2/Conv" in names:
+        return "one2one_"
+    print("[surgery] WARNING: no one2one head in this ONNX (exported with end2end=False); "
+          "exposing the one-to-many head. The app runs no NMS, so each defect will show several "
+          "overlapping boxes. Re-export the .pt with the end-to-end head (see README).")
+    return ""
+
+
 def expose_raw_heads(model: onnx.ModelProto, image_h: int, image_w: int) -> int:
-    class_weight = initializer_array(model, f"model.23.cv3.0.2.weight")
+    prefix = head_prefix(model)
+    class_weight = initializer_array(model, f"model.23.{prefix}cv3.0.2.weight")
     num_classes = int(class_weight.shape[0])
 
     remove_graph_outputs(model)
@@ -153,8 +159,8 @@ def expose_raw_heads(model: onnx.ModelProto, image_h: int, image_w: int) -> int:
         grid_h = image_h // stride
         grid_w = image_w // stride
 
-        box = node_by_name(model, f"{HEAD}/cv2.{index}/cv2.{index}.2/Conv")
-        cls = node_by_name(model, f"{HEAD}/cv3.{index}/cv3.{index}.2/Conv")
+        box = node_by_name(model, f"{HEAD}/{prefix}cv2.{index}/{prefix}cv2.{index}.2/Conv")
+        cls = node_by_name(model, f"{HEAD}/{prefix}cv3.{index}/{prefix}cv3.{index}.2/Conv")
 
         box_name = f"bbox_{index}"
         cls_name = f"class_logit_{index}"
@@ -168,10 +174,25 @@ def expose_raw_heads(model: onnx.ModelProto, image_h: int, image_w: int) -> int:
     for name in [*box_outputs, *class_outputs]:
         model.graph.output.append(outputs_by_name[name])
 
-    for suffix in HEAD_DECODE_NODES:
-        remove_node_if_present(model, f"{HEAD}/{suffix}")
-
+    prune_unused_nodes(model)
     return num_classes
+
+
+def prune_unused_nodes(model: onnx.ModelProto) -> None:
+    """Drop every node the exposed raw heads do not depend on (the CPU decode/NMS tail).
+
+    Works for both export variants: the end-to-end export and the end2end=False export have
+    different decode tails, so a fixed node list would leave dangling nodes in one of them.
+    """
+    needed = {output.name for output in model.graph.output}
+    keep = []
+    for node in reversed(list(model.graph.node)):
+        if any(out in needed for out in node.output):
+            keep.append(node)
+            needed.update(name for name in node.input if name)
+    keep.reverse()
+    del model.graph.node[:]
+    model.graph.node.extend(keep)
 
 
 def simplify_and_infer(model: onnx.ModelProto) -> onnx.ModelProto:

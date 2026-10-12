@@ -663,6 +663,7 @@ with `sima-cli`:
 ```bash
 cd /path/to/demo-neat/custom-plugin
 export MODELZOO_VERSION="2.1.3"
+export SIMA_CLI_CHECK_FOR_UPDATE=0   # otherwise a pending sima-cli update prompt can abort the download
 mkdir -p models && cd models
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 cd ..

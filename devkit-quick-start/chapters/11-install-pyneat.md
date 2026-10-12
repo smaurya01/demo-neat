@@ -27,7 +27,7 @@ Then install the library, pinned to the version that matches board software 2.1.
 
 ```bash
 sima@modalix:~$ cd /media/nvme && mkdir -p neat && cd neat
-sima@modalix:/media/nvme/neat$ sima-cli neat install core@v0.4.0
+sima@modalix:/media/nvme/neat$ sima-cli neat install core@v0.5.0
 ```
 
 Run it from `/media/nvme/neat`: the installer downloads its packages into the current directory,
@@ -42,11 +42,11 @@ If a selection screen appears, the useful extras are:
 While you are here, install the example applications too:
 
 ```bash
-sima@modalix:~$ sima-cli neat install apps@v0.5.0
+sima@modalix:~$ sima-cli neat install apps@v0.5.1
 ```
 
-> **Versions are a matched set.** Neat Apps 0.5.0 goes with Neat Library 0.4.0, which goes with
-> board software 2.1.3. Mixing them is the usual cause of "it built but it won't run" — see the
+> **Versions are a matched set.** Neat Apps 0.5.1 goes with Neat Library 0.5.0, which goes with
+> board software 2.1.3 and Neat SDK 2.1.3.1. Mixing them is the usual cause of "it built but it won't run" — see the
 > [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on).
 
 ---
@@ -59,7 +59,7 @@ Check the installed packages:
 sima@modalix:~$ dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
 ```
 
-Expect `0.4.0` against `neat-runtime`, `neat-appcomplex`, `neat-common`, `sima-neat` and the rest.
+Expect `0.5.0` against `neat-runtime`, `neat-appcomplex`, `neat-common`, `sima-neat` and the rest.
 
 Then check the Python side:
 

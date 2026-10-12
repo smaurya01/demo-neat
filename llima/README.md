@@ -75,8 +75,13 @@ and `llima pull <model-id>` for any you need.
 | Role | Example model ID |
 | --- | --- |
 | LLM (text) | `Qwen3-4B-Instruct-2507-GPTQ-a16w4` |
-| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
+| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` (`02_run_vlm` uses `gemma-4-E2B-it-GPTQ-a16w4`) |
 | ASR (audio) | `whisper-small-a16w8` |
+
+> **Upgrading from Neat 0.4.0?** Pull Whisper again: `llima pull whisper-small-a16w8`. LLiMa 0.5.0
+> needs the layered encoder (one ELF per encoder layer) and rejects the older download with
+> `Unsupported legacy Whisper model … requires 12 layered encoder ELF files`. The LLM and VLM
+> models above load unchanged.
 
 ## How to run these notebooks
 
@@ -92,7 +97,7 @@ ssh sima@<devkit-ip>
 
 source $HOME/pyneat/bin/activate
 
-python -m pip install notebook (only once)
+python -m pip install notebook   # only once
 
 cd /workspace/demo-neat
 jupyter notebook --no-browser --ip=0.0.0.0 --port=8888

@@ -216,7 +216,7 @@ io:
 
 decode:
   score_threshold: 0.40   # minimum confidence to keep a box
-  nms_iou: 0.60           # overlap above which duplicate boxes are merged
+  nms_iou: 0.60           # NMS overlap; ignored by YOLO26 (one box per object, no NMS needed)
   max_detections: 50      # cap per image
 
 runtime:
@@ -328,7 +328,7 @@ def main():
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
     opt.decode_type = pyneat.BoxDecodeType.YoloV26
     opt.score_threshold = float(decode.get("score_threshold", 0.40))
-    opt.nms_iou_threshold = float(decode.get("nms_iou", 0.60))
+    opt.nms_iou_threshold = float(decode.get("nms_iou", 0.60))  # unused by YoloV26 (NMS-free)
     opt.top_k = max_detections
 
     model = pyneat.Model(model_path, opt)
@@ -450,7 +450,7 @@ That is normal and not a problem to fix.
 | Next step | Where |
 |---|---|
 | The same detector as a packaged app, with C++ source and profiling | `~/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
-| Other ready-to-run examples | `sima-cli neat install apps@v0.5.0`, then browse `prebuilt-apps/examples/` |
+| Other ready-to-run examples | `sima-cli neat install apps@v0.5.1`, then browse `prebuilt-apps/examples/` |
 | Run a language model on the board | [Chapter 13](13-llima.md) |
 | The full tutorial series | [Tutorials](https://developer.sima.ai/software/tutorials) |
 | Compile your own ONNX model | [Model Compiler](https://developer.sima.ai/software/getting-started/) |

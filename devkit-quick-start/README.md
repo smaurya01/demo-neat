@@ -10,8 +10,8 @@ object detection and a local LLM.
 Work through it in order the first time. After that, each chapter stands on its own — jump
 straight to the one you need.
 
-> **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.0** ·
-> Neat Library **0.4.0** · Neat Apps **0.5.0**
+> **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.1** ·
+> Neat Library **0.5.0** · Neat Apps **0.5.1**
 >
 > **Default login:** Username: `sima` / Password: `edgeai`
 

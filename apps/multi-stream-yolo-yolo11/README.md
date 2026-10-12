@@ -10,11 +10,6 @@
 - [Config Parameters](#config-parameters)
 - [How To Run](#how-to-run)
 - [How To See The Output](#how-to-see-the-output)
-- [Appendix](#appendix)
-- [Appendix: Model Build](#appendix-model-build)
-- [Appendix: Pipeline Shape](#appendix-pipeline-shape)
-- [Appendix: Threading — how it sustains 60 fps per stream](#appendix-threading--how-it-sustains-60-fps-per-stream)
-- [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile)
 - [Appendix: Learnings](#appendix-learnings)
 
 ---
@@ -27,6 +22,10 @@ decoded detections on NV12 frames, and publishes one annotated H.264/RTP UDP str
 Both streams sustain the full 60 fps source rate with zero dropped frames. Stream identity is
 preserved end to end: each stream owns its RTSP source, its UDP port, and an on-frame `STREAM <id>`
 banner.
+
+![multi-stream-yolo-yolo11 in Neat Insight](docs/insight.jpg)
+
+*Two RTSP streams through one shared YOLO11n model, viewed in Neat Insight.*
 
 ## About Project
 
@@ -54,7 +53,7 @@ YOLO11 is published in the SiMa model zoo, so just download it:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
 cd ../..
 ```
 
@@ -72,7 +71,7 @@ The zoo publishes the whole detection family (`yolo_11n`, `yolo_11s`, `yolo_11m`
 share this one archive.
 
 Only compile YOLO11 yourself for a variant the zoo does not publish — and note that a self-compiled
-archive needs a different `model_name`. See [Appendix: Model Build](#appendix-model-build).
+archive needs `model_name=yolo11`.
 
 ## Configure
 
@@ -87,6 +86,12 @@ udp_host=<host-ip>
 udp_port_base=9000
 udp_port_stride=1
 ```
+
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+>
+> Both cameras must have the same resolution.
 
 Leave `model_name=yolov8` alone when running the zoo archive — despite the name, it is the decode
 family, and it is the right one for zoo YOLO11. See `model_name` under
@@ -115,21 +120,22 @@ them to distinct cameras when you have them.
 
 `model_path`: Shared model archive loaded by the Neat model stage.
 
-`model_name`: Decode family, chosen by the shape of the archive's detection head — **not** by the
-model's version number. `yolov8` selects `BoxDecodeType.YoloV8` (raw 64-channel DFL bbox heads),
-which is what the zoo `yolo_11n` archive ships, so it is the default. `yolo11` / `yolo26n` select
-`BoxDecodeType.YoloV26` (4-channel l/t/r/b distance heads), which is only correct for a
-self-compiled archive. Setting this wrong still runs, but decodes boxes from the wrong channels.
+`model_name`: Decode family. `yolov8` (default) is for the zoo `yolo_11n`: `BoxDecodeType.YoloV8`.
+`yolo11` is for an archive built with `model-compilation/`, which keeps the same 64-channel DFL
+heads but outputs class logits: `YoloV8` with `GroupedByRoleLogit`. `yolo26n` selects
+`BoxDecodeType.YoloV26`, for YOLO26 models only.
 
 `model_width`: Model input width used by Neat preprocessing.
 
 `model_height`: Model input height used by Neat preprocessing.
 
-`width`: Fallback decoded frame width used when RTSP caps are incomplete.
+`width`: Width of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`height`: Fallback decoded frame height used when RTSP caps are incomplete.
+`height`: Height of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
+`fps`: Frame rate of the RTSP stream (whole number). Fallback, used only if the camera cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the camera at start; `false` uses the values above.
 
 `latency_ms`: RTSP receiver latency buffer in milliseconds.
 
@@ -189,9 +195,6 @@ stream frames           rtsp           prep          qwait           push       
   stream 1: delivered  59.63 fps  (507 frames, 0 dropped)
   aggregate:          118.44 fps across 2 streams in 8.5s
 ```
-
-See [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile) for what each column
-means and which ones are easy to misread.
 
 ## How To See The Output
 

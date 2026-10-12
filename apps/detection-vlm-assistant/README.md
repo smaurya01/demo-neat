@@ -8,7 +8,7 @@
 - [Full Architecture](#full-architecture)
 - [Split Validation — read this](#split-validation--read-this)
 - [Requirements](#requirements)
-- [Model Setup](#model-setup)
+- [Model Download](#model-download)
 - [Configure](#configure)
   - [Config parameters](#config-parameters)
 - [How To Run (human UX)](#how-to-run-human-ux)
@@ -30,20 +30,24 @@ Selected detections are cropped and handed to a **vision-language model (VLM)**,
 returns a natural-language description of the crop. Output = detections **plus** a caption.
 
 This is **trigger-based multimodal**: the detector is cheap and runs on every frame
-(~37 fps on the sibling 2-stream YOLO11 app; 46.4 fps single-stream here on NEAT 0.4.0); the
+(~37 fps on the sibling 2-stream YOLO11 app; 56.5 fps single-stream here on Neat 0.5.0); the
 VLM is expensive (seconds per call) and fires **only** on interesting, de-duplicated
 events. A bounded background worker absorbs VLM latency so the detection loop never blocks.
 
 Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape) and
 `apps/multi-stream-yolo-yolo11` (its YOLO11 detection pattern).
 
+![detection-vlm-assistant in Neat Insight](docs/insight.jpg)
+
+*Detections with the box the VLM is captioning in red, viewed in Neat Insight.*
+
 ## About Project
 
 - Application: `detection-vlm-assistant` (`main.py` + `src/vlm_commenter.py`)
-- Detector model: `yolo_11n_mpk.tar.gz`, a YOLO11n compiled with this repo's
-  [`model-compilation/`](../../model-compilation/README.md) flow (see [Model Setup](#model-setup))
+- Detector model: `yolo_11n_mpk.tar.gz`, YOLO11n from the SiMa Model Zoo (see
+  [Model Download](#model-download))
 - VLM model: `Qwen3-VL-4B-Instruct-Autoround-a16w4`, deployed on the DevKit with `llima pull`
-  (see [Model Setup](#model-setup))
+  (see [Model Download](#model-download))
 - Input: one RTSP H.264 stream **or** still image(s)
 - Output: per-frame detection log + VLM caption per selected crop
 - Runtime config: `./config/default.conf`
@@ -57,7 +61,7 @@ Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape
 frame (RTSP NV12 -> BGR, or still image BGR)
         |
         v
-  YOLO11 detector (Neat model-managed box decode, BoxDecodeType.YoloV26)   <- cheap, every frame
+  YOLO11 detector (Neat model-managed box decode, BoxDecodeType.YoloV8)    <- cheap, every frame
         |
         v
   trigger gate (class allow-list + min score + min area) + dedup (IoU/cooldown) + rate limit
@@ -98,7 +102,7 @@ the real send, `gate_candidate` uses it (non-mutating) for the red highlight.
                                         v                                           |
      +-------------------------------------------------------+                      |
      |  detect(): push([BGR]) -> pull("detections")          |  YOLO11n             |
-     |  -> pyneat.decode_bbox() -> boxes[x1,y1,x2,y2,score,c] |  (YoloV26 head)      |
+     |  -> pyneat.decode_bbox() -> boxes[x1,y1,x2,y2,score,c] |  (YoloV8 head + NMS) |
      +-------------------------------------------------------+                      |
                                         |                                           |
                  +----------------------+-----------------------+                   |
@@ -137,7 +141,7 @@ The two legs are validated differently on purpose:
 - **VLM leg:** needs a deployed VLM. Without one, run in **dry-run** mode: the app logs the
   selected crop and the **exact prompt that WOULD be sent**, and never loads or calls the VLM.
 
-Both legs were run end to end on NEAT 0.4.0 (see "Verified" below).
+Both legs were run end to end on Neat 0.5.0 (see "Verified" below).
 
 Dry-run turns on automatically when `--no-vlm` is passed, when `vlm_enabled=false`, or when
 the configured `vlm_model_dir` is missing. This is also how you validate the detection leg
@@ -155,21 +159,19 @@ board-side — no copying.
 cd /path/to/demo-neat/apps/detection-vlm-assistant
 ```
 
-## Model Setup
+## Model Download
 
 `./assets/models/` is git-ignored, so a fresh clone has no models. Get both before running.
 
-**Detector.** The app needs the YOLO11n archive produced by this repo's
-[`model-compilation/`](../../model-compilation/README.md) flow. Either:
+**Detector.** Download YOLO11n from the SiMa Model Zoo, from the app directory:
 
-- download the prebuilt archives (`Models-v1.zip`, linked from that README) and copy
-  `yolo11n/yolo11n.compile_ready_mpk.tar.gz` to `./assets/models/yolo_11n_mpk.tar.gz`, or
-- compile it yourself with that README's steps; the compiled archive lands at
-  `../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz`.
+```bash
+cd assets/models
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n   # -> yolo_11n_mpk.tar.gz
+cd ../..
+```
 
-That `compile_ready` YOLO11n exposes the YoloV26 grouped-tensor head, so it decodes with
-`BoxDecodeType.YoloV26` (NOT YoloV8). Keep `model_name=yolo11`. A model-zoo `yolo_11n` archive has a
-different head and is not a drop-in replacement here.
+`model_name=yolo11` decodes it with `BoxDecodeType.YoloV8`, which runs NMS on the board.
 
 **VLM (only for real captions; skip it for dry-run).** Deploy it on the DevKit with LLiMa:
 
@@ -196,6 +198,10 @@ model_path=./assets/models/yolo_11n_mpk.tar.gz
 vlm_trigger_classes=person
 ```
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+
 <details>
 <summary><h3>Config parameters</h3></summary>
 
@@ -205,7 +211,9 @@ vlm_trigger_classes=person
 - `rtsp_url`, `rtsp_transport`, `latency_ms`, `fallback_*`: RTSP input.
 - `image_path`: file, directory, or glob for `source=image`.
 - `model_path` / `models_dir` / `model_name`: detector archive and decode family
-  (`yolo11`/`yolo26n` => `BoxDecodeType.YoloV26`).
+  (`yolov8`/`yolo11` => `BoxDecodeType.YoloV8`, `yolo26` => `BoxDecodeType.YoloV26`).
+- `width`, `height`, `fps`: fallback, used only if the camera cannot be read.
+  `probe_source`: `true` reads them from the camera at start; `false` uses the values in the config.
 - `model_width`, `model_height`: compiled model input size (Neat letterbox-resizes to it).
 - `score_threshold`, `nms_iou`, `top_k`: box-decode controls.
 - `frames`: frames to process; `0` runs until interrupted (rtsp) / processes all images.
@@ -239,10 +247,10 @@ dk ./main.py --config ./config/default.conf --no-vlm --frames 40
 Still-image dry-run over a folder:
 
 ```bash
-dk ./main.py --source image --image ../../model-compilation/assets/inference --no-vlm
+dk ./main.py --source image --image <folder-of-images> --no-vlm
 ```
 
-Full pipeline with the real VLM (after deploying it; see [Model Setup](#model-setup)):
+Full pipeline with the real VLM (after deploying it; see [Model Download](#model-download)):
 
 ```bash
 dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir present
@@ -375,14 +383,19 @@ browser UI or a separate service that should not link the Neat runtime. The upst
 <br>
 
 - **Detection leg, live on the DevKit (<devkit-ip>)** via ssh, `--no-vlm`:
-  - Still-image mode over `model-compilation/assets/yolo_calibration`: real detections,
+  - Still-image mode over COCO images: real detections,
     e.g. `000000000885.jpg detections=4 [PERSON:0.92, PERSON:0.85, PERSON:0.66, TENNIS RACKET:0.81]`;
     the dry-run trigger logged the PERSON crop + exact prompt.
   - RTSP mode `<rtsp-url>` (1280x720@60): `frame=1 detections=13`,
     `frame=30 detections=12 fps=53.65`; dry-run trigger fired on `PERSON:0.81`.
-- **Full run on NEAT 0.4.0** with `Qwen3-VL-4B-Instruct-Autoround-a16w4`: detector at
-  **46.4 fps** sustained for 3 min while the VLM captioned triggered detections at
-  **~13.8 tok/s, 0.6–0.7 s TTFT**.
+- **Full run on Neat 0.5.0 / SDK 2.1.3.1** with `Qwen3-VL-4B-Instruct-Autoround-a16w4`, shipped
+  config, 720p60 source, `YoloV8` decode: `done: frames=3600 elapsed=114.8s avg_fps=31.35 vlm_captions=23`, about 10.7
+  detections per frame, VLM at **13.5–13.9 tok/s, 0.64–0.77 s TTFT**. With `--no-vlm` the detector holds
+  **56.5 fps**. The difference is the VLM sharing the MLA: every caption pauses detection, so the
+  average falls with caption rate (this config allows one every 5 s). The 0.4.0 run's 46.4 fps had 5
+  captions in 3 minutes.
+  These numbers were measured with an in-house YOLO11n build, before the switch to the Model Zoo
+  `yolo_11n`; re-check them with the Zoo package.
 - The detection-leg log lines above (`fps=53.65`) are from an earlier run on NEAT 0.3.0 with the
   GPTQ VLM.
 
