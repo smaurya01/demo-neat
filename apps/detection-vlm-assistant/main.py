@@ -25,10 +25,9 @@ Split validation (see README):
 
 APIs traceable to https://github.com/sima-neat/core and the sibling apps:
   * Detector: adapted from apps/examples/genai/detection-to-vlm-assistant/src/python/main.py
-    and apps/multi-stream-yolo-yolo11/main.py (Agent A, live-validated on this exact
-    compiled yolo11n archive).
-  * Box decode: ``pyneat.decode_bbox`` (core/python/src/module.cpp), the same call Agent A
-    validated on this archive; a compile_ready yolo11n decodes with BoxDecodeType.YoloV26.
+    and apps/multi-stream-yolo-yolo11/main.py.
+  * Box decode: ``pyneat.decode_bbox`` (core/python/src/module.cpp). The Model Zoo yolo_11n
+    decodes with BoxDecodeType.YoloV8 (NMS on the board).
   * VLM: pyneat.genai.VisionLanguageModel (src/vlm_commenter.py).
 """
 
@@ -39,6 +38,7 @@ from dataclasses import dataclass, field
 import glob
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -75,12 +75,13 @@ class Config:
     width: int = 1280
     height: int = 720
     fps: int = 30
+    probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     latency_ms: int = 200
 
     # --- detector ---
     model_path: str = ""
     models_dir: str = ""
-    model_name: str = "yolo11"         # yolo11 | yolo26n => BoxDecodeType.YoloV26
+    model_name: str = "yolo11"         # yolov8 | yolo11 => YoloV8 ; yolo26 | yolo26n => YoloV26
     model_width: int = 640             # compiled model input size (Neat resizes to this)
     model_height: int = 640
     score_threshold: float = 0.25
@@ -186,6 +187,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.height = int(value)
     elif key == "fps":
         cfg.fps = int(value)
+    elif key == "probe_source":
+        cfg.probe_source = _parse_bool(value)
     elif key == "latency_ms":
         cfg.latency_ms = int(value)
     elif key == "model_path":
@@ -352,9 +355,9 @@ def build_model(cfg: Config):
     opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
     opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
-    # A compile_ready yolo11n surgery exposes the YoloV26 grouped-tensor head, so this
-    # archive decodes with YoloV26 (NOT YoloV8). Verified by Agent A on this exact file.
-    if cfg.model_name in {"yolo11", "yolo26n"}:
+    # Each family decodes with its own BoxDecodeType. YOLOv8 / YOLO11 heads are one-to-many and
+    # need the NMS that YoloV8 runs; YOLO26 heads are one-to-one and YoloV26 skips NMS by design.
+    if cfg.model_name.startswith("yolo26"):
         opt.decode_type = pyneat.BoxDecodeType.YoloV26
     else:
         opt.decode_type = pyneat.BoxDecodeType.YoloV8
@@ -460,6 +463,7 @@ def label_for(class_id: int) -> str:
 # Input sources
 # --------------------------------------------------------------------------- #
 def make_rtsp_source(cfg: Config, width: int, height: int, fps: int):
+    """RTSP -> H.264 decode -> NV12 at width x height. fps is the stream's probed rate, or -1 if unknown."""
     opt = pyneat.RtspDecodedInputOptions()
     opt.url = cfg.rtsp_url
     opt.latency_ms = cfg.latency_ms
@@ -471,6 +475,9 @@ def make_rtsp_source(cfg: Config, width: int, height: int, fps: int):
     opt.auto_caps_from_stream = True
     opt.fallback_h264_width = width
     opt.fallback_h264_height = height
+    # Neat 0.5.0 applies fallback_h264_fps to the stream caps even when the stream reports its own
+    # rate, so a value that differs from the camera fails build() with misconfig.media_caps. fps is
+    # the rate probe_rtsp() read from the stream; when it could not probe, -1 lets the stream decide.
     opt.fallback_h264_fps = fps
     opt.output_caps.enable = True
     opt.output_caps.format = pyneat.Format.NV12
@@ -534,10 +541,58 @@ def decoded_tensor_to_bgr(tensor):
     return np.ascontiguousarray(frame)
 
 
-def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
-    # Neat 0.4.0 enforces a single global GStreamer init, and OpenCV's VideoCapture() creates its
-    # own instance, tripping the guard. Use the configured fallback dimensions instead.
-    return cfg.width, cfg.height, cfg.fps
+def probe_stream(url: str, tcp: bool = True):
+    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+
+    Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
+    a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
+    them from the stream at start-up, as the reference Neat apps do. ffprobe runs as a separate
+    process, so it cannot clash with Neat's GStreamer instance the way cv2.VideoCapture did.
+    """
+    cmd = ["ffprobe", "-v", "error"] + (["-rtsp_transport", "tcp"] if tcp else []) + [
+        "-timeout", "5000000", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
+        "-of", "default=nw=1", url]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+    def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
+        num, _, den = (text or "0").partition("/")
+        try:
+            value = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0
+        return int(round(value)) if value > 0 else 0
+
+    try:
+        width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
+    except ValueError:
+        return None
+    fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
+    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+
+
+def probe_rtsp(cfg: Config) -> tuple[int, int, int, bool]:
+    """Width, height and fps from the stream itself; the config's values only if probing fails.
+
+    The last value says whether they came from the stream, so the source pins its frame rate only
+    when it is known to match.
+    """
+    probed = probe_stream(cfg.rtsp_url, cfg.rtsp_transport_tcp) if cfg.probe_source else None
+    if probed is None:
+        if cfg.probe_source:
+            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe; using the config's "
+                  f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+        return cfg.width, cfg.height, cfg.fps, False
+    if probed != (cfg.width, cfg.height, cfg.fps):
+        print(f"[source] stream is {probed[0]}x{probed[1]}@{probed[2]} (config says "
+              f"{cfg.width}x{cfg.height}@{cfg.fps}); using the stream's values", flush=True)
+    cfg.width, cfg.height, cfg.fps = probed
+    return (*probed, True)
+
 
 
 def list_images(cfg: Config) -> list[str]:
@@ -728,9 +783,10 @@ def run_image_mode(cfg: Config, commenter) -> int:
 
 
 def run_rtsp_mode(cfg: Config, commenter) -> int:
-    width, height, fps = probe_rtsp(cfg)
+    width, height, fps, probed = probe_rtsp(cfg)
+    source_fps = fps if probed else -1
     print(f"rtsp={cfg.rtsp_url} stream={width}x{height}@{fps}", flush=True)
-    src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
+    src_graph, source_run = make_rtsp_source(cfg, width, height, source_fps)
     _model, _graph, detector_run = build_detector_run(cfg, width, height)
 
     video_run = None
@@ -789,7 +845,7 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                       f"reconnect {reconnects}/{cfg.rtsp_reconnect_attempts}",
                       file=sys.stderr, flush=True)
                 source_run.close()
-                src_graph, source_run = make_rtsp_source(cfg, width, height, fps)
+                src_graph, source_run = make_rtsp_source(cfg, width, height, source_fps)
                 last_frame_at = time.perf_counter()
                 stall_logged = False
                 continue

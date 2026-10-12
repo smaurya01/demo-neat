@@ -36,6 +36,10 @@ frame pushed into stream *i*'s model, decoded for stream *i*'s task, annotated i
 published on stream *i*'s own UDP port. Each frame carries a burned-in `S<i> <TASK> :<port>` banner
 so you can tell the four windows apart.
 
+![quad-stream-quad-model in Neat Insight](docs/insight.jpg)
+
+*Four streams, four models (C++ app): detection, segmentation, pose and YOLOX, viewed in Neat Insight.*
+
 ## About Project
 
 - Application: `quad_stream_quad_model` — **C++ (`main.cpp`) and Python (`main.py`)**
@@ -80,8 +84,8 @@ Two of the four are published in the SiMa model zoo. Download them:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11s
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11s_seg
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s_seg
 cd ../..
 ```
 
@@ -116,6 +120,12 @@ udp_port_base=9000
 udp_port_stride=1
 ```
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+>
+> All 4 cameras must have the same resolution and frame rate.
+
 With those defaults stream *i* publishes on `9000 + i` → `9000`, `9001`, `9002`, `9003`, Insight
 viewer channels 0–3.
 
@@ -140,7 +150,9 @@ source; point them at four different cameras and stream identity still holds.
 
 `latency_ms`: RTSP receiver jitter buffer, in milliseconds.
 
-`width`, `height`, `fps`: Used when RTSP caps are incomplete.
+`width`, `height`, `fps`: Resolution and frame rate (whole number) of the RTSP streams. Fallback, used only if the cameras cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the cameras at start; `false` uses the values above.
 
 **Streams & models**
 

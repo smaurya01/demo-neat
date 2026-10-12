@@ -8,7 +8,7 @@ called **`framemarker`**, load it on a Modalix DevKit, put it inside a real Neat
 If you have never written a GStreamer plugin before, start here. Every step is explained, and
 every command is one you can copy.
 
-> Tested on: Modalix DevKit, eLxr 2.1.3, Neat runtime 0.4.0, GStreamer 1.22, Neat SDK v2.1.3.
+> Tested on: Modalix DevKit, eLxr 2.1.3, Neat runtime 0.5.0, GStreamer 1.22, Neat SDK v2.1.3.1.
 
 ---
 
@@ -358,6 +358,7 @@ Download the model once:
 
 ```bash
 export MODELZOO_VERSION="2.1.3"
+export SIMA_CLI_CHECK_FOR_UPDATE=0   # otherwise a pending sima-cli update prompt can abort the download
 mkdir -p models && (cd models && sima-cli download \
   "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz")
 ```
@@ -383,6 +384,13 @@ frames=231 fps=30.07 avg_boxes=10.4
 The viewer shows colour video with a **red border and bar** (the plugin) and **labelled boxes**
 (YOLO26). Try `--mode grayscale`: the picture turns gray but the boxes don't change, because the
 model receives the clean frames on its own branch.
+
+> **60 fps sources.** The app stamps each metadata message with its frame's timestamp, so the boxes
+> stay locked to the frame they belong to. That works on a 30 fps stream. With Insight 0.0.8, on a
+> **60 fps** stream the viewer matches none of them and draws no boxes, although Insight's own
+> ingest stats show every message matched (`/api/ingest/stats`, channel `metadata`). Use a 30 fps
+> source, or add **`--no-frame-timestamps`**: the viewer then pairs each message with the newest
+> frame, and boxes trail fast-moving objects slightly.
 
 ### I. Watch it in Insight (any browser)
 

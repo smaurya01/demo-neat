@@ -12,7 +12,7 @@ application layer — above the compiled model, below your product — and cover
 pipeline composition and execution on DevKits and SiMa.ai SoCs.
 
 <p align="center">
-  <img src="../images/neat-ga.jpg" alt="Palette Neat 0.4.0 release overview" width="760">
+  <img src="../images/neat-ga.jpg" alt="Palette Neat 0.5.0 release overview" width="760">
 </p>
 
 Everything in Chapters 1–13 used Neat from the board's side: `pyneat` to run a model, `sima-cli` to

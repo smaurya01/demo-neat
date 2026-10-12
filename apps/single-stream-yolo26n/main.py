@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import glob
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -45,6 +46,7 @@ class Config:
     width: int = 1280
     height: int = 720
     fps: int = 25
+    probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
@@ -156,6 +158,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.height = int(value)
     elif key == "fps":
         cfg.fps = int(value)
+    elif key == "probe_source":
+        cfg.probe_source = parse_bool(value)
     elif key == "model_width":
         cfg.model_width = int(value)
     elif key == "model_height":
@@ -300,14 +304,54 @@ def validate_config(cfg: Config) -> None:
         raise FileNotFoundError(f"model file not found: {model_path}")
 
 
+def probe_stream(url: str, tcp: bool = True):
+    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+
+    Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
+    a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
+    them from the stream at start-up, as the reference Neat apps do. ffprobe runs as a separate
+    process, so it cannot clash with Neat's GStreamer instance the way cv2.VideoCapture did.
+    """
+    cmd = ["ffprobe", "-v", "error"] + (["-rtsp_transport", "tcp"] if tcp else []) + [
+        "-timeout", "5000000", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
+        "-of", "default=nw=1", url]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+    def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
+        num, _, den = (text or "0").partition("/")
+        try:
+            value = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0
+        return int(round(value)) if value > 0 else 0
+
+    try:
+        width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
+    except ValueError:
+        return None
+    fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
+    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+
+
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
-    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init, and OpenCV's
-    # capture backend calls gst_init() itself -- so probing tripped the guard and the app died with
-    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
-    # probe FAILED to open the URL (the case the probe exists for), which is why a working URL
-    # hid it entirely. Same fix as detection-vlm-assistant.
-    # It also leaked the capture on that path and opened a second RTSP session to the same URL.
-    return cfg.width, cfg.height, cfg.fps
+    """Width, height and fps from the stream itself; the config's values only if probing fails."""
+    probed = probe_stream(cfg.rtsp_url, cfg.tcp) if cfg.probe_source else None
+    if probed is None:
+        if cfg.probe_source:
+            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe; using the config's "
+                  f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+        return cfg.width, cfg.height, cfg.fps
+    if probed != (cfg.width, cfg.height, cfg.fps):
+        print(f"[source] stream is {probed[0]}x{probed[1]}@{probed[2]} (config says "
+              f"{cfg.width}x{cfg.height}@{cfg.fps}); using the stream's values", flush=True)
+    cfg.width, cfg.height, cfg.fps = probed
+    return probed
+
 
 
 def make_source_options(cfg: Config, width: int, height: int, fps: int):

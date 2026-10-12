@@ -4,6 +4,8 @@
 #include <neat.h>
 
 #include <array>
+#include <cstdio>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -53,6 +55,7 @@ struct Config {
   int width = 1280;
   int height = 720;
   int fps = 60;
+  bool probe_source = true;  // read width/height/fps from the stream
   int model_width = 640;
   int model_height = 640;
   int latency_ms = 200;
@@ -118,6 +121,8 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
     cfg.height = to_int(value);
   } else if (key == "fps") {
     cfg.fps = to_int(value);
+  } else if (key == "probe_source") {
+    cfg.probe_source = value == "true" || value == "1" || value == "yes";
   } else if (key == "model_width") {
     cfg.model_width = to_int(value);
   } else if (key == "model_height") {
@@ -201,7 +206,8 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   opt.preprocess.color_convert.output_format = neat::PreprocessColorFormat::RGB;
   opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
   // Zoo yolo_11n exposes raw 64-channel DFL heads -> YoloV8 decode family.
-  // A self-compiled YOLO11 archive needs BoxDecodeType::YoloV26 instead.
+  // A YOLO11 compiled with model-compilation/ keeps the same heads but emits class logits:
+  // keep YoloV8 and set decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit.
   opt.decode_type = neat::BoxDecodeType::YoloV8;
   opt.score_threshold = cfg.score_threshold;
   opt.nms_iou_threshold = cfg.nms_iou;
@@ -296,6 +302,96 @@ std::string json_escape(const std::string& value) {
   return out;
 }
 
+// ---- stream geometry ------------------------------------------------------------------------
+// Neat 0.5.0 sets the RTSP decoder up from width/height/fps even when the stream reports its own,
+// and a value that differs from the camera stops build() with misconfig.media_caps. So the app
+// reads them from the stream at start-up, as the reference Neat apps do, and uses the config
+// values only when the probe fails (or probe_source=false). ffprobe runs as a separate process,
+// so it cannot clash with Neat's GStreamer instance.
+struct StreamGeometry {
+  int width = 0;
+  int height = 0;
+  int fps = 0;
+};
+
+// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+int fps_from_rate(const std::string& rate) {
+  try {
+    const auto slash = rate.find('/');
+    const double num = std::stod(rate.substr(0, slash));
+    const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
+    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+StreamGeometry probe_stream(const std::string& url, bool tcp) {
+  std::string quoted = "'";
+  for (const char c : url) {
+    quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+  }
+  quoted += "'";
+  const std::string command = std::string("ffprobe -v error ") +
+                              (tcp ? "-rtsp_transport tcp " : "") +
+                              "-timeout 5000000 -select_streams v:0 "
+                              "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
+                              "-of default=nw=1 " +
+                              quoted + " 2>/dev/null";
+  StreamGeometry g;
+  int avg_fps = 0;
+  int r_fps = 0;
+  if (FILE* pipe = popen(command.c_str(), "r")) {
+    char buffer[256];
+    while (std::fgets(buffer, sizeof(buffer), pipe)) {
+      std::string line(buffer);
+      while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+      }
+      const auto eq = line.find('=');
+      if (eq == std::string::npos) {
+        continue;
+      }
+      const std::string key = line.substr(0, eq);
+      const std::string value = line.substr(eq + 1);
+      if (key == "width") {
+        g.width = std::atoi(value.c_str());
+      } else if (key == "height") {
+        g.height = std::atoi(value.c_str());
+      } else if (key == "avg_frame_rate") {
+        avg_fps = fps_from_rate(value);
+      } else if (key == "r_frame_rate") {
+        r_fps = fps_from_rate(value);
+      }
+    }
+    pclose(pipe);
+  }
+  g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  return g;
+}
+
+// Replace cfg.width/height/fps with what the stream reports; keep the config values (and say so)
+// when the probe fails.
+void apply_stream_geometry(Config& cfg) {
+  if (!cfg.probe_source) {
+    return;
+  }
+  const StreamGeometry g = probe_stream(cfg.rtsp_url, cfg.tcp);
+  if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " with ffprobe; using the config's "
+              << cfg.width << "x" << cfg.height << "@" << cfg.fps << "\n";
+    return;
+  }
+  if (g.width != cfg.width || g.height != cfg.height || g.fps != cfg.fps) {
+    std::cout << "[source] stream is " << g.width << "x" << g.height << "@" << g.fps
+              << " (config says " << cfg.width << "x" << cfg.height << "@" << cfg.fps
+              << "); using the stream's values\n";
+  }
+  cfg.width = g.width;
+  cfg.height = g.height;
+  cfg.fps = g.fps;
+}
+
 // Insight expects object-detection bbox as [x, y, w, h] top-left in
 // encoded-frame pixels; decode_bbox_tensor returns corners, so convert here.
 std::string build_objects_json(const std::vector<neat::Box>& boxes, const Config& cfg,
@@ -329,8 +425,9 @@ std::string build_objects_json(const std::vector<neat::Box>& boxes, const Config
 }
 
 int run_app() {
-  const Config cfg = read_config();
+  Config cfg = read_config();
   validate_config(cfg);
+  apply_stream_geometry(cfg);
 
   const auto model = make_model(cfg);
   int video_port = 0;

@@ -312,7 +312,7 @@ Install the current NEAT SDK 2.1 release channel. From the **Ubuntu terminal**, 
 sima-cli neat install sdk@release-2.1
 ```
 
-`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **NEAT SDK 2.1.2.2**, which is compatible with **DevKit software 2.1.2**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
+`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **Neat SDK 2.1.3.1** (Neat Library 0.5.0), which is compatible with **DevKit software 2.1.3**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
 
 > **If this fails with a Docker permission error** — `Docker daemon is running, but this user lacks permission to access it` (cannot access `/var/run/docker.sock`) — your shell has not picked up `docker` group membership yet. `sima-cli` prints the exact fix: run `newgrp docker` (or log out and back in), then re-run the install:
 >
@@ -476,14 +476,14 @@ echo %PROCESSOR_ARCHITECTURE%
 
 ### 10.2 Install for your architecture
 
-From the Ubuntu terminal, run the build that matches your architecture (version `2.1.2` shown — match it to your board/SDK):
+From the Ubuntu terminal, run the build that matches your architecture (version `2.1.3` shown — match it to your board/SDK):
 
 ```bash
 # amd64
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli install -v 2.1.3 tools/model-compiler/amd64
 
 # or arm64
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli install -v 2.1.3 tools/model-compiler/arm64
 ```
 
 ### 10.3 Authorize the device login
@@ -502,7 +502,7 @@ If the installer stops with `Missing required system packages` and `Installation
 
 ```bash
 sudo apt-get update && sudo apt-get install -y cmake libbz2-dev libffi-dev libllvm18 liblzma-dev libopenblas0-pthread libreadline-dev libsqlite3-dev libssl-dev tk-dev
-sima-cli install -v 2.1.2 tools/model-compiler/amd64   # rerun for your architecture
+sima-cli install -v 2.1.3 tools/model-compiler/amd64   # rerun for your architecture
 ```
 
 ![Model Compiler install — missing packages and the recommended apt command](images/windows/model-compiler-missing-packages.png)

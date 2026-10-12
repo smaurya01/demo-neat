@@ -14,8 +14,9 @@ For the commands, see **[`README.md`](README.md)**.
 - [What worked, what didn't](#what-worked-what-didnt)
   - [✅ The 209× pose fix: padding 51 → 64 channels](#-the-209-pose-fix-padding-51--64-channels)
   - [✅ Ultralytics head names are scale-invariant](#-ultralytics-head-names-are-scale-invariant)
-  - [✅ YOLO26 needs no DFL rebuild](#-yolo26-needs-no-dfl-rebuild)
+  - [✅ Each family keeps its own head, and its own decoder](#-each-family-keeps-its-own-head-and-its-own-decoder)
   - [✅ YOLO-World: bake the vocabulary, then flatten the 5-D attention](#-yolo-world-bake-the-vocabulary-then-flatten-the-5-d-attention)
+  - [❌ Folding the DFL into 4 channels (decode as `YoloV26`)](#-folding-the-dfl-into-4-channels-decode-as-yolov26)
   - [❌ INT8 for YOLO-World — passes placement, fails the sim check](#-int8-for-yolo-world--passes-placement-fails-the-sim-check)
   - [❌ A green compile that was numerically garbage](#-a-green-compile-that-was-numerically-garbage)
   - [❌ Synthetic calibration images](#-synthetic-calibration-images)
@@ -70,9 +71,9 @@ Neat then box-decodes itself (`BoxDecodeType`), or the app decodes the raw heads
 | `surgery:` | what `graph_surgery.py` does |
 | --- | --- |
 | `none` | CNNs — nothing to do; they already compile to a single ELF. |
-| `yolo_ultralytics` | attention `MatMul`→`Einsum`; expose `cv2.*`=bbox / `cv3.*`=class (YOLO26 uses `one2one_cv*`); **YOLO11 only**: rebuild DFL as `Split(64→16×4)→Softmax→Conv(arange)→Concat` (YOLO26 heads are already 4-ch, so DFL is skipped). Seg adds mask-coeff + proto; pose adds 51-ch keypoint heads. |
+| `yolo_ultralytics` | attention `MatMul`→`Einsum`; expose `cv2.*`=bbox / `cv3.*`=class (YOLO26 uses `one2one_cv*`) **in each family's own layout**: YOLOv8/YOLO11 keep their raw 64-channel DFL bbox heads and class logits (decoded on the board by `YoloV8`, option `GroupedByRoleLogit`); YOLO26 heads are already 4-channel and one-to-one (`YoloV26`). Seg adds mask-coeff + proto; pose adds 51-ch keypoint heads. |
 | `yolox` | decoupled anchor-free head, numeric node names, no DFL/attention. Trace back from the output to the three `[1,85,H,W]` heads and cut the flatten/transpose tail. |
-| `world` | YOLO-World. Vocabulary is baked at **export** time (`compile/_export_world.py`), then surgery folds the now-constant contrastive head into a 1×1 Conv, rebuilds DFL and exposes the same 6 raw heads (`compile/_surgery_world.py`). |
+| `world` | YOLO-World. Vocabulary is baked at **export** time (`compile/_export_world.py`), then surgery folds the now-constant contrastive head into a 1×1 Conv and exposes the same 6 raw heads as YOLOv8, DFL kept raw (`compile/_surgery_world.py`). |
 
 ---
 
@@ -143,11 +144,27 @@ The shipped archive is the padded build (verified: C=64). If you recompile, keep
 `yolo11n` and `yolo11s` use byte-for-byte the same head node names. Scaling n→s→m is a **free
 compile** — the same surgery spec works untouched. This is why adding a model size costs nothing.
 
-### ✅ YOLO26 needs no DFL rebuild
+### ✅ Each family keeps its own head, and its own decoder
 
-YOLO11 heads are 64-channel and need DFL reconstructed as
-`Split(64→16×4)→Softmax→Conv(arange)→Concat`. YOLO26's heads are **already 4-channel**, so the whole
-DFL step is skipped. Same surgery kind, different path through it.
+YOLOv8 and YOLO11 bbox heads are 64-channel DFL heads (4 × 16 bins); YOLO26's `one2one_*` heads are
+already 4-channel distances. The surgery exposes both **as they are**, so each archive decodes with its
+family's own Neat decoder: `YoloV8` / `YoloV8Seg` (with `GroupedByRoleLogit`, because the class heads are
+cut before Ultralytics' sigmoid) or `YoloV26` / `YoloV26Pose`. Same surgery kind, no head rebuilt.
+
+### ❌ Folding the DFL into 4 channels (decode as `YoloV26`)
+
+An earlier surgery rebuilt the YOLOv8/YOLO11 DFL in-graph as `Split(64→16×4)→Softmax→Conv(arange)→Concat`,
+so every detector exposed 4-channel l/t/r/b heads and decoded as `YoloV26`. It compiled cleanly and
+decoded correctly on Neat 0.4.0. On **Neat 0.5.0** the `YoloV26` decoder skips NMS (YOLO26 heads are
+one-to-one by design), and a YOLO11 head is one-to-many: `yolo11n` returned 67 / 38 / 100 boxes on three
+COCO images where 9 / 5 / 16 are correct, mostly stacks of near-identical copies. The old
+`test_box_decode.py` still printed PASS, because it only counted boxes. The fix is to keep the
+family's own head: raw DFL + `YoloV8`, which runs NMS on the board (now 10 / 5 / 15, against 13 / 4 / 16
+for FP32 Ultralytics). The checker now fails on duplicate boxes.
+
+Putting the class sigmoid into the graph instead (so `YoloV8` could read probabilities with `Auto`)
+also decoded, but INT8 calibration clipped the probabilities near 0.86 and recall dropped (9 / 5 / 13);
+keeping logits and letting the decoder apply the sigmoid avoids that.
 
 ### ✅ YOLO-World: bake the vocabulary, then flatten the 5-D attention
 

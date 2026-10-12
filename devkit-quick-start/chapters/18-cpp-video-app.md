@@ -310,7 +310,7 @@ metadata_port: 9100
 
 # Detection
 min_score: 0.30
-nms_iou: 0.60
+nms_iou: 0.60      # unused by YOLO26: its decoder returns one box per object, no NMS
 max_detections: 50
 ```
 
@@ -322,6 +322,11 @@ Fill in the two placeholders:
 | `<host-ip>` | The machine running Insight — the IP from the **Insight Web UI** row of `neat` |
 
 Both must be reachable **from the board**, which is where the application runs.
+
+> **Set `stream_width`, `stream_height` and `stream_fps` to your stream's values.** A frame rate that
+> differs stops the app at start. Check with
+> `ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0 <rtsp-url>`
+> (a `30000/1001` camera is `30`).
 
 The `stream_*` values are already correct for the `720p30` variant from Step 3.
 
@@ -509,6 +514,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
     model_opt.decode_type = neat::BoxDecodeType::YoloV26;
     model_opt.score_threshold = static_cast<float>(as_double(cfg, "min_score", 0.30));
+    // YoloV26 runs no NMS (one-to-one head); this matters only if you switch to a YoloV8 model.
     model_opt.nms_iou_threshold = static_cast<float>(as_double(cfg, "nms_iou", 0.60));
     model_opt.top_k = max_detections;
     neat::Model model(model_path, model_opt);

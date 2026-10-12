@@ -61,8 +61,31 @@ pyneat = None
 ov = None
 
 
+
+def nv12_packed(tensor, width: int, height: int):
+    """Contiguous (height * 3 / 2, width) NV12 from a decoded tensor, honouring its plane layout.
+
+    The decoder may pad the Y plane (1280x720 comes back with 768 Y rows on Neat 0.5.0), so the
+    UV plane does not necessarily start at width * height. Read each plane at its own byte
+    offset and row stride; slicing the first width * height * 3 / 2 bytes would read the
+    padding as chroma (a green band, and every colour shifted).
+    """
+    payload = np.frombuffer(tensor.copy_payload_bytes(), dtype=np.uint8)
+    y_off, y_stride, uv_off, uv_stride = 0, width, width * height, width
+    for plane in tensor.planes:
+        if plane.role == pyneat.PlaneRole.Y:
+            y_off, y_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
+        elif plane.role == pyneat.PlaneRole.UV:
+            uv_off, uv_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
+    if payload.size < uv_off + (height // 2) * uv_stride or payload.size < y_off + height * y_stride:
+        raise RuntimeError(f"NV12 payload too small: {payload.size} bytes for {width}x{height}")
+    out = np.empty((height * 3 // 2, width), dtype=np.uint8)
+    out[:height] = payload[y_off:y_off + height * y_stride].reshape(height, y_stride)[:, :width]
+    out[height:] = payload[uv_off:uv_off + (height // 2) * uv_stride].reshape(height // 2, uv_stride)[:, :width]
+    return out
+
 def load_deps() -> None:
-    global cv2, np, pyneat, dec
+    global cv2, np, pyneat, dec, ov
     for path in glob.glob("/usr/lib/python3*/dist-packages"):
         if path not in sys.path:
             sys.path.insert(0, path)
@@ -166,9 +189,7 @@ def bgr_to_nv12(bgr):
 def tensor_nv12_from_decoded(t):
     w = int(t.width() if callable(t.width) else t.width)
     h = int(t.height() if callable(t.height) else t.height)
-    payload = np.frombuffer(t.copy_payload_bytes(), dtype=np.uint8)
-    need = w * h * 3 // 2
-    return np.ascontiguousarray(payload[:need].reshape((h * 3 // 2, w))).copy(), w, h
+    return nv12_packed(t, w, h), w, h
 
 
 def extract_tensors(sample) -> list:
@@ -372,7 +393,7 @@ def probe(args, task: str, quiet: bool = False):
         nv12, w, h = synthetic_nv12(1280, 720)
         frames = [(nv12, w, h)]
     else:
-        w, h, fps = 1280, 720, 60
+        w, h, fps = 1280, 720, -1   # -1: the decoder keeps the camera's own frame rate
         src_run = build_rtsp_run(args.rtsp, w, h, fps)
         frames = []
 

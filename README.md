@@ -80,8 +80,8 @@ each one and how to run it.
 | Type | | | | |
 | --- | --- | --- | --- | --- |
 | **Single&nbsp;stream** | [YOLO11](apps/single-stream-yolo-yolo11/README.md) | [YOLOv8m](apps/single-stream-yolo-yolov8m/README.md) | [YOLO26n](apps/single-stream-yolo26n/README.md) | [YOLOv8n&nbsp;seg](apps/single-stream-yolov8n-seg/README.md) |
-|  | [YOLO&nbsp;+&nbsp;Insight](apps/single-stream-yolo-insight/README.md) | [OpenPose](apps/single-stream-open-pose/README.md) |  |  |
-| **Multi-stream** | [2&nbsp;streams,&nbsp;YOLO11](apps/multi-stream-yolo-yolo11/README.md) | [4&nbsp;streams,&nbsp;4&nbsp;models](apps/quad-stream-quad-model/README.md) | [16&nbsp;streams,&nbsp;4&nbsp;models](apps/16stream4model/README.md) | [Multi-model&nbsp;probe](apps/multi-model-load-probe/README.md) |
+|  | [YOLO&nbsp;+&nbsp;Insight](apps/single-stream-yolo-insight/README.md) |  |  |  |
+| **Multi-stream** | [2&nbsp;streams,&nbsp;YOLO11](apps/multi-stream-yolo-yolo11/README.md) | [4&nbsp;streams,&nbsp;4&nbsp;models](apps/quad-stream-quad-model/README.md) | [16&nbsp;streams,&nbsp;4&nbsp;models](apps/16stream4model/README.md) |  |
 | **Other** | [USB&nbsp;camera](apps/usb-camera-yolo26m/README.md) | [PCB&nbsp;defects](apps/pcb-defect-detection-yolo26n/README.md) | [Detection&nbsp;+&nbsp;VLM](apps/detection-vlm-assistant/README.md) | [Benchmark](apps/benchmark/README.md) |
 
 ---
@@ -96,7 +96,7 @@ Models with a compile recipe (each links to its commands):
 | Task | | | | |
 | --- | --- | --- | --- | --- |
 | **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
-| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-no-dfl-rebuild) |
+| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-one-to-one-head-yolov26) |
 |  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) | [yolo26m&nbsp;(bf16)](model-compilation/COMPILE-COMMANDS.md#13-yolo26m--detection-bf16) | [yolo26s](model-compilation/COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study) |  |
 | **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
 | **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
@@ -165,18 +165,19 @@ From the Quick Start Guide:
 
 ---
 
-## Tested on NEAT 0.4.0
+## Tested on Neat 0.5.0
 
-Everything here was migrated to and re-verified against **NEAT Library 0.4.0 / SDK 2.1.3**, on a
-Modalix DevKit. The 10 C++ apps build with zero warnings, and all 14 apps were run on real
+Everything here was re-verified against **Neat Library 0.5.0 / SDK 2.1.3.1** (DevKit software
+2.1.3), on a Modalix DevKit. The C++ apps build with zero warnings, and the apps were run on real
 hardware, most against a 1280x720 H.264 60 fps RTSP source. The exceptions are listed in
-[`apps/README.md`](apps/README.md#test-source). All 14 tutorial notebooks run on NEAT 0.4.0.
+[`apps/README.md`](apps/README.md#test-source). All 14 tutorial notebooks and the LLiMa notebooks run
+on Neat 0.5.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating-to-neat-050).
 
 | | Version |
 | --- | --- |
-| NEAT Library | **0.4.0** (`libsima_neat.so.4`, ABI 4) |
-| pyneat | **0.4.0** |
-| SDK container | **2.1.3** |
+| Neat Library | **0.5.0** (`libsima_neat.so.5`, ABI 5) |
+| pyneat | **0.5.0** |
+| SDK container | **2.1.3.1** |
 | Board interpreter | `/home/sima/pyneat/bin/python` |
 
 ---
