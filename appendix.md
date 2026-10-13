@@ -65,7 +65,7 @@ neat --json
 ### 1.2 Serve a video as an RTSP source
 
 Insight's media sources are numbered slots, `src1`, `src2` and so on, each looping one video
-file. In the UI, open **Media Sources**, assign a video to a slot, and start it. Use a catalog
+file. In the UI, import a video in **Media Sources**, then in **Streaming** assign it to a slot and start it. Use a catalog
 video, or upload your own.
 
 The same from the SDK shell:
@@ -95,7 +95,7 @@ in that form. H.265 and MJPEG uploads are served as they are.
 on any fps an app can claim, and a source that is not playing looks identical to a broken
 pipeline.
 
-- In **Media Sources**, the slot must show the right file and state **playing**.
+- In **Streaming**, the slot must show the right file and state **playing**.
 - Check the clip's resolution and frame rate:
 
   ```bash
@@ -244,7 +244,7 @@ For LLiMa models that stop loading, restarting `simaai-appcomplex` (§2.3) is th
 | --- | --- |
 | Find the Insight UI and port map | `neat --json` (`insight.webUiUrl`, `exposedPorts`) |
 | Find the address the DevKit should use | `curl -sk https://127.0.0.1:9900/api/server-ip` |
-| Serve a video as RTSP | Insight **Media Sources**: assign a clip to `srcN` and start it → `rtsp://<sdk-host-ip>:8554/srcN` (or the mapped `rtsp.tcp` port) |
+| Serve a video as RTSP | Insight **Streaming**: assign a clip to `srcN` and start it → `rtsp://<sdk-host-ip>:8554/srcN` (or the mapped `rtsp.tcp` port) |
 | Check a source's fps and resolution | `/api/media-info` (§1.3) |
 | See an app's output | set `udp_host` / `insight_host` to the Insight host; open **Video Viewer** channel `N` (port `9000 + N`) |
 | Get a viewer link | `curl -sk "https://127.0.0.1:9900/api/viewer-url?src=0,1,2,3"` |

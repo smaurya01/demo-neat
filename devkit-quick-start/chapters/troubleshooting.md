@@ -284,7 +284,7 @@ The SDK is not paired with a board. Run `sima-cli sdk setup --devkit <devkit-ip>
 
 ### The application times out waiting for frames
 
-The RTSP source is not running. In Insight's **RTSP Source** tab, start `src1` again, and check the
+The RTSP source is not running. In Insight's **Streaming** tab, start `src1` again, and check the
 URL in your config matches the one Insight shows.
 
 ### No video in the Video Viewer
