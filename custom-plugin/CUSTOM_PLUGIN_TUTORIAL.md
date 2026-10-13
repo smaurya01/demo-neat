@@ -562,10 +562,10 @@ Insight can play a video file as an RTSP "camera" for the DevKit to read.
 
 1. Open Insight at **`https://<sdk-host-ip>:9900/`**. It's HTTPS, so accept the certificate
    warning.
-2. Go to **Media Library** → **Import Media** → **Catalog** and import a 720p30 H.264 variant.
-3. Go to **RTSP Source**, assign the video to `src1` and start it. This creates the RTSP stream.
+2. Go to **Media Sources** → **Import Media** → **Catalog** and import a 720p30 H.264 variant.
+3. Go to **Streaming**, assign the video to `src1` and start it. This creates the RTSP stream.
 
-The RTSP Source tab shows the stream's source number. From the DevKit, the stream is
+The Streaming tab shows the stream's source number. From the DevKit, the stream is
 **`rtsp://<sdk-host-ip>:8554/srcN`**, where N is that number. This tutorial uses **`src1`**;
 replace it with yours.
 

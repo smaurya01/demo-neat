@@ -120,8 +120,8 @@ Reference: https://developer.sima.ai/software/tools/insight/install-upgrade
 The Insight interface is organized into five tabs:
 
 - **Workspace:** Browse project files, search sources, inspect artifacts, and preview text/code/images, MLA stats, and pipeline sequences.
-- **Media Library:** Upload, preview, inspect, and delete test media. Supports `mp4`, `mov`, `avi`, `mkv`, and `webm`.
-- **RTSP Source:** Convert uploaded media into live streams mapped to numbered RTSP paths (`src1`, `src2`, and so on, on port `8554`).
+- **Media Sources:** Upload, preview, inspect, and delete test media. Supports `mp4`, `mov`, `avi`, `mkv`, and `webm`.
+- **Streaming:** Convert uploaded media into live streams mapped to numbered RTSP paths (`src1`, `src2`, and so on, on port `8554`).
 - **Video Viewer:** Display WebRTC output (one channel per `videoUDP` port that `neat` reports) with metadata overlays for detection, classification, pose estimation, segmentation, and tracking.
 - **Stats:** System and application metrics.
 
@@ -133,13 +133,13 @@ The Insight interface is organized into five tabs:
 
 1. Open **https://localhost:9900** (or **https://\<host-ip>\:9900**) in the host machine browser.
 
-2. Navigate to **Media Library** and upload the media video. The view provides file selection, preview, metadata inspection, upload, and delete actions in one place.
+2. Navigate to **Media Sources** and upload the media video. The view provides file selection, preview, metadata inspection, upload, and delete actions in one place.
 
-    ![NEAT Insight — Media Library](images/insight/insight-media-library.png)
+    ![NEAT Insight — Media Sources](images/insight/insight-media-library.png)
 
-3. Navigate to **RTSP Source**. Assign media files to source slots (`src1`, `src2`, …) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
+3. Navigate to **Streaming**. Assign media files to source slots (`src1`, `src2`, …) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
 
-    ![NEAT Insight — RTSP Source](images/insight/insight-rtsp-source.png)
+    ![NEAT Insight — Streaming](images/insight/insight-rtsp-source.png)
 
 4. Run your NEAT application / pipeline against the RTSP source(s).
 

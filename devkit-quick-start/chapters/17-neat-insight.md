@@ -96,8 +96,8 @@ sima-user@sdk:/workspace$ insight-admin status
 | Tab | What it does |
 |---|---|
 | **Workspace** | Browse project files and inspect generated model, package and profiling artifacts |
-| **Media Library** | Get test media in three ways — local upload, the built-in catalog, or a YouTube URL — then preview, inspect and delete it |
-| **RTSP Source** | Turn uploaded media into live streams on numbered paths — `src1`, `src2`, and so on — port `8554` |
+| **Media Sources** | Get test media in three ways — local upload, the built-in catalog, or a YouTube URL — then preview, inspect and delete it |
+| **Streaming** | Turn uploaded media into live streams on numbered paths — `src1`, `src2`, and so on — port `8554` |
 | **Video Viewer** | WebRTC output with metadata overlays — detection, classification, pose, segmentation, tracking |
 | **Stats** | System and application metrics |
 
@@ -108,7 +108,7 @@ paired **devkit-ip** shows in the top-right corner of the UI.
 
 ## Getting test media in
 
-**Media Library → Import Media** offers three routes, as tabs across the top of the dialog:
+**Media Sources → Import Media** offers three routes, as tabs across the top of the dialog:
 
 <p align="center">
   <img src="../images/insight-import-catalog.jpg" alt="Insight Import Media dialog on the Catalog tab, showing assets, variants and the codec filter" width="760">
@@ -154,14 +154,14 @@ deployment when you have neither your own footage nor a catalog asset that fits.
 
 ## Turning a video file into an RTSP source
 
-1. Open Insight in a browser and go to **Media Library**. Import your video by any of the three
+1. Open Insight in a browser and go to **Media Sources**. Import your video by any of the three
    routes above.
 
-2. Go to **RTSP Source**. Assign files to `src1`, `src2`, … by hand, or use **auto-assign**
+2. Go to **Streaming**. Assign files to `src1`, `src2`, … by hand, or use **auto-assign**
    to spread unique files across the slots. Start one source, or bulk-start all of them.
 
    <p align="center">
-     <img src="../images/insight-rtsp.jpg" alt="Insight RTSP Source tab with media assigned to source slots" width="720">
+     <img src="../images/insight-rtsp.jpg" alt="Insight Streaming tab with media assigned to source slots" width="720">
    </p>
 
 3. Point your application at the source — `rtsp://<host-ip>:8554/src1`, where `<host-ip>` is the

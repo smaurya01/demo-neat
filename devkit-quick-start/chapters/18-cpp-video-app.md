@@ -90,7 +90,7 @@ of the UI — if it does not, the SDK is not paired and the video will have nowh
 
 Insight turns a video file into a live RTSP source, so you do not need a camera on your desk.
 
-**3a. Get the video in.** Go to **Media Library** → **Import Media**. The **Catalog** tab is the
+**3a. Get the video in.** Go to **Media Sources** → **Import Media**. The **Catalog** tab is the
 path of least resistance here, because it lets you *choose* the encoding rather than discover it
 afterwards ([Chapter 17](17-neat-insight.md#getting-test-media-in)):
 
@@ -111,7 +111,7 @@ Uploading your own clip through **Local files** works equally well — as long a
   <img src="../images/insight-import-catalog.jpg" alt="Insight Import Media dialog on the Catalog tab" width="720">
 </p>
 
-**3b. Assign it to a source slot.** Go to the **RTSP Source** tab. Insight has numbered slots —
+**3b. Assign it to a source slot.** Go to the **Streaming** tab. Insight has numbered slots —
 `src1`, `src2`, and so on — all served on port `8554`. Assign your file to **`src1`**, either by
 picking it in the slot's dropdown or with **auto-assign**.
 
@@ -125,7 +125,7 @@ rtsp://<host-ip>:8554/src1
 Copy that URL exactly — it goes straight into the config. Leave the stream running.
 
 <p align="center">
-  <img src="../images/insight-rtsp.jpg" alt="Insight RTSP Source tab with media assigned to source slots" width="720">
+  <img src="../images/insight-rtsp.jpg" alt="Insight Streaming tab with media assigned to source slots" width="720">
 </p>
 
 > **Copy that URL.** It is `<rtsp-url>` in the config in Step 4.
