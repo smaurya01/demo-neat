@@ -124,7 +124,7 @@ Metadata sent to Insight:
 ## Build (SDK host)
 
 ```bash
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr \
       -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-gnu-g++-12
@@ -165,15 +165,15 @@ Before the first run, fill in the placeholders in `config/default.conf`:
 > (30, not 29.97); the rates can differ between cameras.
 
 The app refuses to start, and names the key, while any `<...>` placeholder is left. To keep a
-filled-in copy out of git, save it outside the repo, or under `logs/`, and pass it with
-`--config <path>`.
+filled-in copy out of git, save it outside the repo, or under `logs/` (create it with
+`mkdir -p logs`; it is git-ignored), and pass it with `--config <path>`.
 
 ### 2. Run the app on the DevKit
 
 **From the SDK host with `dk`.** This is the usual way. Run it from the app directory:
 
 ```bash
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 dk ./build/16stream4model --duration 60 --report-interval 10
 ```
 
@@ -202,13 +202,14 @@ dk ./build/16stream4model --config ./config/default.conf --duration 300 --report
 
 ```bash
 ssh sima@<devkit-ip>
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 ./build/16stream4model --duration 60 --report-interval 10
 ```
 
 For a long detached soak, run this on the board:
 
 ```bash
+mkdir -p logs
 nohup ./build/16stream4model --duration 1800 --report-interval 60 > logs/soak.log 2>&1 &
 ```
 
@@ -352,5 +353,5 @@ config/default.conf         16 streams, 4 models (the configuration above)
 scripts/start_sources.sh    assign, start, and verify the 16 Insight sources (the mapping above)
 assets/models/              model archives (gitignored; see Models for download commands)
 assets/labels/              coco_label.txt (80 classes), person.txt (pose)
-logs/                       run logs (gitignored)
+logs/                       run logs (gitignored; create with mkdir -p logs)
 ```

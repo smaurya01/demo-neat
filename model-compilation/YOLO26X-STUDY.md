@@ -7,8 +7,8 @@ on a DevKit with Neat 0.5.0. Two kinds of runtime numbers, side by side:
 2. **`model-benchmark`**, the Neat Apps benchmark (`pyneat.Model.benchmark()`, synthetic input),
    run unmodified from `apps/examples/benchmarking/model-benchmark`.
 
-Dates: 2026-10-08/09. Board: DevKit (Modalix), Neat 0.5.0, SDK 2.1.3. Compile host: lab-pc7
-(24 cores, 78 GB), Model Compiler 2.1.3.
+Board: DevKit (Modalix), Neat 0.5.0, SDK 2.1.3.1 (DevKit software 2.1.3). Compiler: Model Compiler
+2.1.3, on a 24-core x86 host with 78 GB of RAM.
 
 ## Summary
 
@@ -19,7 +19,7 @@ Dates: 2026-10-08/09. Board: DevKit (Modalix), Neat 0.5.0, SDK 2.1.3. Compile ho
 | `model-benchmark` latency / throughput | **19.17 ms / 73.2 fps** (default route), **19.03 ms / 73.5 fps** (`yolo26-det` box-decode route) |
 | Neat `run()` per frame, image route | **18.34 ms**: preprocess 2.30, MLA 14.12, box decode 0.87 |
 | Image in → image out, one frame at a time | **65.6 ms (15.3 frames/s)**, of which JPEG decode + encode take 43.8 ms |
-| Pipelined (4 frames in flight) | **73.4 frames/s**, MLA-bound |
+| Pipelined (4 frames in flight) | **73.4 frames/s** (13.6 ms per frame), limited by the MLA |
 
 The two methods agree:
 - Throughput: 73.2–73.5 fps from `model-benchmark` against 73.4 frames/s pipelined.
@@ -48,8 +48,7 @@ The two methods agree:
 **Compile:**
 - Command: `quantize_compile.py`, INT8, `mse` calibration, `sima` requant, 20 real COCO images,
   input `1,3,640,640`, Modalix.
-- Where: lab-pc7, in the `sima-model-compiler:2.1.3` container (the host is Ubuntu 22.04, which has
-  no `libllvm18`).
+- Where: an x86 host, in a Docker container with Model Compiler 2.1.3.
 
 | phase | time |
 |---|---|
@@ -57,29 +56,30 @@ The two methods agree:
 | calibration, 20 images (≈ 6 s each) | ≈ 2 min 0 s |
 | quantize finish | ≈ 16 s |
 | MLA compile (layouts, large-tensor tiling, code generation) | ≈ 11 min 22 s |
-| **total** | **16 min 36 s** |
+| **total** (phases rounded) | **16 min 36 s** |
 
 - **Resources:** peak RSS 8.1 GB. Average CPU 212 %, because the compile is mostly single-threaded;
-  more cores barely help, more RAM lets several compiles run side by side.
+  more cores barely help.
 - **Saturation warning:** one INT8 warning on the layer-10 attention `qkv` conv (`/model.10/m/m.0/attn/qkv/conv/Conv`).
   The compiler zeroed weights to avoid saturation there.
 - **Large-tensor note:** `Trigger large tensor support due to: MLA_0/conv2d_add_0`. The first conv
   does not fit MLA memory and is tiled spatially.
 
 **Batch 6:**
-- Same flags plus `--batch_size 6`. It fails after 5 min 47 s:
+- Same `quantize_compile.py` flags plus `--batch_size 6` (with `compiler.py` it would be
+  `--batch-size 6`). It fails after 5 min 47 s:
   `CannotSplitLargeTensorError: MLA_0/conv2d_add_0: Cannot be segmented due to batch size`.
 - The large-tensor tiling above cannot be combined with batching.
 - See [`model-compilation/MULTI-BATCH.md`](MULTI-BATCH.md#1-can-this-model-be-batched).
 
 ## 2. Runtime with `model-benchmark` (synthetic input)
 
-**Tool:** `apps/examples/benchmarking/model-benchmark/src/python/main.py`. It is the same at
-`/workspace/apps` HEAD and in the SDK's `/neat-resources/apps-src`, and was last changed upstream
-on 2026-09-30.
+**Tool:** `examples/benchmarking/model-benchmark/src/python/main.py` from the
+[Neat Apps](https://github.com/sima-neat/apps) repository, run on the DevKit as published, with the
+apps repo cloned into the workspace (`git clone https://github.com/sima-neat/apps /workspace/apps`):
 
 ```bash
-python3 /workspace/apps/examples/benchmarking/model-benchmark/src/python/main.py \
+dk /workspace/apps/examples/benchmarking/model-benchmark/src/python/main.py \
   --model <yolo26x.compile_ready_mpk.tar.gz> --frames 1000 [--decode-type yolo26-det] \
   --output-json model_benchmark_<route>.json
 ```
@@ -89,7 +89,7 @@ python3 /workspace/apps/examples/benchmarking/model-benchmark/src/python/main.py
 | package default | `detessdequant` (raw heads, dequantized on the EV74) | **19.17 ms** | **73.2 fps** |
 | `--decode-type yolo26-det` | `boxdecode` (YoloV26, top-k 100, on the A65) | **19.03 ms** | **73.5 fps** |
 
-Power reads 0 W: board power telemetry is not available on this DevKit.
+Power reads 0 W: model-benchmark reports 0 W when board power telemetry is unavailable.
 
 **What it measures:**
 - It does: the model package on synthetic input. Latency is one frame through the graph;
@@ -104,12 +104,17 @@ Power reads 0 W: board power telemetry is not available on this DevKit.
 parking garage, gym.
 
 **Path:** Neat's image route, BGR frame → EV74 preprocess (resize, letterbox, quantize) → MLA →
-YoloV26 box decode. Each call is one frame; 120 calls, 10 of them warm-up.
+YoloV26 box decode. Each call is one frame; 120 calls, 10 of them warm-up. `frames/` holds the 60
+frames; see [MULTI-BATCH.md](MULTI-BATCH.md#5-profile-on-50-images) for how to cut them from your
+own clips.
 
 ```bash
-dk compile/profile_model.py --model-id yolo26x --precision int8 --images profile_inputs60 \
+dk compile/profile_model.py --model-id yolo26x --precision int8 --images frames \
    --out profile_out --json profile_b1.json
 ```
+
+`yolo26x` is not in this repo's `models.yaml`, so this ran in the study setup (section 7): the
+repo's `profile_model.py` and `common.py` with a one-model `models.yaml` holding a `yolo26x` entry.
 
 | step (per frame) | where | mean ms | p50 ms | p95 ms |
 |---|---|---|---|---|
@@ -134,18 +139,6 @@ One frame at a time that is 15.3 frames/s; the frames had 1–17 boxes each.
 
 **Pipelined:** 4 frames in flight, inputs prepared in advance: **73.4 frames/s**.
 
-**Earlier run, for consistency:** 5 street frames, 200 frames, `tools/profile_e2e.py`.
-
-| measure | result |
-|---|---|
-| Neat `run()` p50 | 18.45 ms |
-| preprocess | 3.14 ms |
-| MLA | 14.10 ms |
-| box decode | 0.88 ms |
-| JPEG decode / encode | 21.3 / 25.2 ms |
-| total | 68.5 ms |
-| pipelined | 73.3 frames/s |
-
 ## 4. The two methods side by side
 
 | | `model-benchmark` | `profile_model.py` |
@@ -159,7 +152,9 @@ One frame at a time that is 15.3 frames/s; the frames had 1–17 boxes each.
 
 **Why the latency differs by ~0.8 ms:** `Model.benchmark()` measures from graph entry to the public
 pull, including the queue. `profile_model.py` times the Python `run()` call on an already-built
-runner. Throughput matches because both are bound by the MLA's 14 ms.
+runner. Throughput matches because both are limited by the MLA: 73.4 frames/s is 13.6 ms per
+frame, a little under the 14.12 ms the `MLA_0` counter reports when calls run one at a time (the
+counter includes per-call overhead that overlaps when calls are pipelined).
 
 ## 5. For context
 
@@ -167,13 +162,13 @@ runner. Throughput matches because both are bound by the MLA's 14 ms.
   MLA. yolo26x costs about 2.5× the MLA time of yolo26m.
 - **SiMa Model Zoo `yolo26x-det-bf16-mla_tess-b1`:** 39.77 ms / 27.98 fps in the Apps'
   [`BENCHMARK_RESULTS.md`](https://github.com/sima-neat/apps/blob/main/examples/benchmarking/model-benchmark/BENCHMARK_RESULTS.md).
-  That is bf16, on Neat 0.4.0 (2026-07-31), so it is not a like-for-like comparison. INT8 here is
+  That is bf16, on Neat 0.4.0, so it is not a like-for-like comparison. INT8 here is
   about 2.6× the throughput; the accuracy trade-off is not measured.
 
 ## 6. Detections and accuracy
 
 **Checked:**
-- Annotated frames in `yolo26x_study/profile_out/` show correctly placed boxes on the 1280×720
+- The annotated frames from `profile_model.py --out` show correctly placed boxes on the 1280×720
   frames: cars, people, the cyclist, traffic lights.
 - On the five COCO test images, scores range from 0.24 to 0.97.
 
@@ -184,18 +179,16 @@ runner. Throughput matches because both are bound by the MLA's 14 ms.
 - A light class-aware NMS after decode removes them if an app needs that.
 
 **Not measured:** COCO mAP of this INT8 build.
-`model-compilation/accuracy/` runs that study for any archive, if accuracy is needed.
+`model-compilation/accuracy/` can run that study once `yolo26x` is in `models.yaml` with the
+three-attention-block surgery spec from section 1.
 
-## 7. Files
+## 7. Study setup
 
-All paths are under `/workspace/demo-neat-validation-0.5.0/` unless noted.
+The study ran outside this repo's normal flow, because `yolo26x` is not in `models.yaml`:
 
-| what | where |
-|---|---|
-| archive (INT8, batch 1) | `work/model-compilation/work/yolo26x/compile_int8_labpc7/yolo26x.compile_ready_mpk.tar.gz` (lab-pc7: `~/yolo26x_compile/build_int8_b1/`) |
-| compile logs | lab-pc7 `~/yolo26x_compile/logs/b1.{log,time}`, `b6.{log,time}` |
-| `model-benchmark` reports | `yolo26x_study/model_benchmark_{default,yolo26-det}.{json,log}` |
-| profile, 60 images | `yolo26x_study/profile_b1.{json,log}`, annotated frames `yolo26x_study/profile_out/` |
-| profile, 5 images | `logs/fix/yolo26x_profile.log` |
-| test images | `profile_inputs60/` (60 frames), `profile_inputs/` (5 frames) |
-| study setup | `yolo26x_study/`: the repo's `profile_model.py` and `common.py`, a one-model `models.yaml` |
+- **Compile:** Model Compiler 2.1.3 in Docker, with `quantize_compile.py`
+  called directly on `yolo26x.compile_ready.onnx` (the surgery spec in section 1) and the 20
+  images in `assets/calibration/`.
+- **Profile:** the repo's `profile_model.py` and `common.py`, with a one-model `models.yaml` holding
+  a `yolo26x` entry and the archive under `work/yolo26x/compile_int8/`.
+- **Inputs:** the 60 frames described in section 3, and the five images in `assets/inference/`.

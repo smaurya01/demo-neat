@@ -65,7 +65,7 @@ Address works, name fails → **DNS**. Both fail → **routing**.
 
 Most common causes, in order:
 
-1. No DNS server configured — set `ipv4.dns`
+1. No DNS server configured — `sudo nmcli connection modify end0-dhcp ipv4.dns 8.8.8.8 && sudo nmcli connection up end0-dhcp`
 2. IP forwarding or NAT not enabled on the sharing host ([Chapter 5](05-internet-sharing.md))
 
 ### Internet sharing gives the board no address
@@ -90,10 +90,10 @@ sima@modalix:~$ source ~/.bashrc
 sima@modalix:~$ which sima-cli
 ```
 
-If `which` still finds nothing, call it by absolute path:
+If `which` still finds nothing, call it by its absolute path on the board:
 
 ```bash
-sima@modalix:~$ /data/.sima-cli/.venv/bin/sima-cli --version
+sima@modalix:~$ /data/sima-cli/.venv/bin/sima-cli --version
 ```
 
 ### `sima-cli update` or an install fails to download
@@ -275,7 +275,7 @@ It was built against an older Neat Library. Delete `build/` and build it again.
 ### The page will not load
 
 Run `neat` in the SDK and check the `neat-insight` line says `status=Running`. Open the exact
-address on the **Insight Web UI** row — it is `https://`, not `http://`, and the port is not
+address on the **Insight (local)** or **Insight (remote)** line — it is `https://`, not `http://`, and the port is not
 always 9900. Accept the certificate warning.
 
 ### No `devkit-ip` in the top-right corner
@@ -289,8 +289,8 @@ URL in your config matches the one Insight shows.
 
 ### No video in the Video Viewer
 
-- `insight_host` in your config must be the Insight host's IP — the address on the Insight Web UI
-  row of `neat` — and the board must be able to reach it.
+- `insight_host` in your config must be the Insight host's IP — the IP on the **Insight (remote)**
+  line of `neat` — and the board must be able to reach it.
 - `video_port` must match the `videoUDP` row of `neat`.
 
 ### Video, but no boxes

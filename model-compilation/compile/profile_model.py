@@ -14,6 +14,7 @@ What is timed, per frame (ms; for a batch, the batch-level steps are also shown 
   Neat run()              push -> the archive's stages -> pull, one call at a time
      per stage            Neat's own counters (SIMA_RUNTIME_PROFILE): preprocess / quantize on the
                           EV74, the MLA, dequantize / box decode
+  outputs to numpy        tensor route only: copy the raw heads out of Neat's tensors
   boxes                   image route: decode_bbox() of Neat's result; tensor route: decode the raw
                           heads on the host (YOLO26: direct box distances, no NMS; YOLOv8/11: DFL + NMS)
   draw                    boxes and labels on the frame
@@ -24,10 +25,11 @@ same route reaches when the host keeps the device busy.
 
 Why two routes: on Neat 0.5.0 a batched archive cannot use the image route (its preprocess times
 out) and its on-device box decode returns one result per call, so a batch-N archive runs on the
-tensor route with host preprocess and host decode (README > Multi-batch compilation).
+tensor route with host preprocess and host decode (MULTI-BATCH.md).
 
 Why 120 calls: Neat prints its per-stage counters every 120 calls of an element, so each route
-runs exactly --calls calls (a multiple of 120); the first --warmup calls are not host-timed.
+runs exactly --calls calls (a multiple of 120); the first --warmup calls are not host-timed
+(Neat's own counters do include them).
 """
 from __future__ import annotations
 
@@ -43,8 +45,8 @@ from pathlib import Path
 
 from common import ROOT, archive_path, model_batch_size, model_cfg, model_precision
 
-STEP_ORDER = ["read + JPEG decode", "host preprocess", "to Neat tensor", "Neat run()", "boxes",
-              "draw", "JPEG encode"]
+STEP_ORDER = ["read + JPEG decode", "host preprocess", "to Neat tensor", "Neat run()",
+              "outputs to numpy", "boxes", "draw", "JPEG encode"]
 
 
 # ----------------------------------------------------------------------------- Neat stage counters
@@ -242,7 +244,7 @@ def profile_route(route, arc, batch, cfg, frames, names, args, out_dir):
         return np.stack([x] * batch) if batch > 1 else x
 
     steps = {k: [] for k in STEP_ORDER}
-    per_call = {"to Neat tensor": [], "Neat run()": []}
+    per_call = {"to Neat tensor": [], "Neat run()": [], "outputs to numpy": []}
     totals, nboxes, saved = [], [], 0
     model = pyneat.Model(str(arc), opt)
     with StageCapture() as cap:
@@ -282,9 +284,13 @@ def profile_route(route, arc, batch, cfg, frames, names, args, out_dir):
             if timed:
                 per_call["to Neat tensor"].append((t1 - t0) * 1e3)
                 per_call["Neat run()"].append((t2 - t1) * 1e3)
-            shared = (t2 - t0) * 1e3 / batch
             if route == "tensor":
                 heads = [np.asarray(t.to_numpy(copy=True)) for t in out]
+                t3 = time.perf_counter()
+                if timed:
+                    per_call["outputs to numpy"].append((t3 - t2) * 1e3)
+                t2 = t3
+            shared = (t2 - t0) * 1e3 / batch
             for b, (path, bgr) in enumerate(bgrs):     # host, per frame
                 t0 = time.perf_counter()
                 if route == "image":
@@ -333,9 +339,11 @@ def profile_route(route, arc, batch, cfg, frames, names, args, out_dir):
         t0 = time.perf_counter()
         while pulled < n:
             while pushed < n and pushed - pulled < args.depth:
-                r2.push([prepared[pushed % len(prepared)]])
+                if not r2.push([prepared[pushed % len(prepared)]]):
+                    raise SystemExit(f"pipelined push rejected after {pushed}/{n} calls")
                 pushed += 1
-            r2.pull(30000)
+            if not r2.pull(30000):             # None (or an empty sample) is a timeout
+                raise SystemExit(f"pipelined pull timed out after {pulled}/{n} calls")
             pulled += 1
         dt = time.perf_counter() - t0
         r2.close()
@@ -344,7 +352,7 @@ def profile_route(route, arc, batch, cfg, frames, names, args, out_dir):
         "route": route, "batch": batch, "archive": str(arc), "calls": args.calls,
         "timed_frames": len(totals), "frame_size": [fw, fh],
         "steps_per_frame_ms": {k: summary(v) for k, v in steps.items() if v},
-        "per_call_ms": {k: summary(v) for k, v in per_call.items()},
+        "per_call_ms": {k: summary(v) for k, v in per_call.items() if v},
         "total_per_frame_ms": summary(totals),
         "stages_per_call_ms": cap.stages(),
         "boxes_per_frame": [min(nboxes), max(nboxes)],

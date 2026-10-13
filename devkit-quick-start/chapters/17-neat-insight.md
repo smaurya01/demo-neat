@@ -42,25 +42,36 @@ sima-user@sdk:/workspace$ neat
 
 ```text
 Components
-  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
+  ...
+  neat-insight           0.0.8              channel=main (assumed) latest=bedca8f560ca status=Running venv=/opt/neat-insight/venv
+  ...
+
+Web Access
+  Local access uses a browser on this SDK host; remote access uses another machine.
+  Prefer the local URL on this host; it remains valid even if the host network IP changes.
+  Insight (local)    https://127.0.0.1:9900
+  Insight (remote)   https://<host-ip>:9900
+  ...
 
 Exposed Ports
-  Insight Web UI     https://10.0.0.22:9900
-
   Name               Protocol Host Port (Start) Host Port (End)
   ------------------ -------- ----------------- ---------------
+  ...
   mainUI             tcp      9900              -
-  metadataUDP        udp      9100              9179
+  metadataUDP        udp      9100              9123
   rtsp.tcp           tcp      8554              -
-  videoUDP           udp      9000              9079
-  webRTC             udp      40000             40199
+  videoUDP           udp      9000              9023
+  ...
+  webRTC             udp      40000             40047
+  ...
 ```
 
-**Insight Web UI** is the address to open in your browser. `status=Running` confirms the service is
-up. Do not assume 9900 — the SDK picks another host port if 9900 is already taken, and the table is
-the only place that tells you which one it used.
+**Insight (local)** is the address to open in a browser on the SDK host; use **Insight (remote)**
+from another machine. `status=Running` confirms the service is up. Do not assume 9900 — the SDK
+picks another host port if 9900 is already taken, and this output is the only place that tells you
+which one it used.
 
-The same table gives you the ports your application will send to: `videoUDP` from 9000 and
+The `Exposed Ports` table gives you the ports your application will send to: `videoUDP` from 9000 and
 `metadataUDP` from 9100, one port per channel. [Chapter 18](18-cpp-video-app.md) uses both.
 
 For scripting, `neat --json` gives the same information — read `insight.webUiUrl` and the
@@ -68,8 +79,8 @@ For scripting, `neat --json` gives the same information — read `insight.webUiU
 
 | Browsing from | URL |
 |---|---|
-| The machine running the SDK | <https://localhost:9900> |
-| Another machine on the network | `https://<host-ip>:9900` |
+| The machine running the SDK | the **Insight (local)** URL from `neat`, usually <https://127.0.0.1:9900> |
+| Another machine on the network | the **Insight (remote)** URL from `neat`, e.g. `https://<host-ip>:9900` |
 
 It is **HTTPS with a self-signed certificate**, so accept the browser warning. If the page does not
 load at all:
@@ -86,7 +97,7 @@ sima-user@sdk:/workspace$ insight-admin status
 |---|---|
 | **Workspace** | Browse project files and inspect generated model, package and profiling artifacts |
 | **Media Library** | Get test media in three ways — local upload, the built-in catalog, or a YouTube URL — then preview, inspect and delete it |
-| **RTSP Source** | Turn uploaded media into live streams on three paths: `src1`, `src2`, `src3`, port `8554` |
+| **RTSP Source** | Turn uploaded media into live streams on numbered paths — `src1`, `src2`, and so on — port `8554` |
 | **Video Viewer** | WebRTC output with metadata overlays — detection, classification, pose, segmentation, tracking |
 | **Stats** | System and application metrics |
 
@@ -146,7 +157,7 @@ deployment when you have neither your own footage nor a catalog asset that fits.
 1. Open Insight in a browser and go to **Media Library**. Import your video by any of the three
    routes above.
 
-2. Go to **RTSP Source**. Assign files to `src1`, `src2` or `src3` by hand, or use **auto-assign**
+2. Go to **RTSP Source**. Assign files to `src1`, `src2`, … by hand, or use **auto-assign**
    to spread unique files across the slots. Start one source, or bulk-start all of them.
 
    <p align="center">
@@ -154,7 +165,7 @@ deployment when you have neither your own footage nor a catalog asset that fits.
    </p>
 
 3. Point your application at the source — `rtsp://<host-ip>:8554/src1`, where `<host-ip>` is the
-   Insight host from the **Insight Web UI** row of `neat` — and run it.
+   IP on the **Insight (remote)** line of `neat` — and run it.
 
 4. Watch the result in **Video Viewer**, where you can confirm that frames are arriving on the
    channel you expect and that the overlays line up with them.

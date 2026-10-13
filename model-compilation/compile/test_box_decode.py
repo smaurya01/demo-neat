@@ -2,8 +2,8 @@
 """STEP 4b - can Neat's ON-DEVICE box decoder consume this archive?
 
     # DevKit only (needs pyneat + the MLA)
-    python compile/test_box_decode.py --model-id yolov8s
-    python compile/test_box_decode.py --all
+    dk compile/test_box_decode.py --model-id yolov8s
+    dk compile/test_box_decode.py --all
 
 WHY this exists, separately from test_model.py:
 
@@ -93,9 +93,9 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
 
     Uses the IMAGE route (raw BGR in, Neat preprocesses), not the tensor route: the tensor
     route mis-negotiates caps against a box-decode stage and fails with
-    `misconfig.caps ... InputStream::pull_and_discard`. On the image route Neat also inverts
-    the box coordinates from its own preprocess metadata, so detections come back in ORIGINAL
-    image space with no manual rescaling.
+    `misconfig.caps ... InputStream::pull_and_discard`. Detections come back in the space of the
+    pushed frame; this script pushes a host-letterboxed canvas (see below), so it inverts that
+    letterbox itself.
     """
     import cv2
 
@@ -127,6 +127,7 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
     # pipeline until the pull times out. The sample images are 640x426/427/480 and 427x640, so we
     # letterbox each onto one 640x640 canvas and push that, then invert the letterbox ourselves.
     seed = np.zeros((mh, mw, 3), np.uint8)
+    runner = None
     try:
         model = pyneat.Model(str(arc), opt)
         runner = model.build([tens(seed)])
@@ -134,6 +135,11 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
                                                           # a bad route as a timeout
     except Exception as e:                       # build-time rejection is the expected failure
         first = str(e).strip().splitlines()[0] if str(e).strip() else e.__class__.__name__
+        if runner is not None:
+            try:
+                runner.close()
+            except Exception:
+                pass
         return "BUILD-REJECTED", first[:96], []
 
     per_image = []
@@ -144,7 +150,13 @@ def try_decode(pyneat, cfg, dtype: str, dopt: str, imgs, conf, iou, top_k, num_c
                 continue
             canvas, scale, dx, dy = letterbox(bgr, mw, mh)
             out = runner.run([tens(canvas)], timeout_ms=timeout_ms)
-            boxes = pyneat.decode_bbox(out, clamp_to=(mw, mh), top_k=top_k)
+            # each decode type has its own payload reader; seg and pose results carry .boxes
+            if dtype == "YoloV8Seg":
+                boxes = [r.boxes for r in pyneat.decode_segmentation(out, clamp_to=(mw, mh), top_k=top_k)]
+            elif dtype == "YoloV26Pose":
+                boxes = [r.boxes for r in pyneat.decode_pose(out, clamp_to=(mw, mh), top_k=top_k)]
+            else:
+                boxes = pyneat.decode_bbox(out, clamp_to=(mw, mh), top_k=top_k)
             b = (np.asarray(boxes[0].to_numpy(copy=True)).reshape(-1, 6).copy()
                  if boxes else np.zeros((0, 6), np.float32))
             if b.size:                                  # canvas space -> original pixels
@@ -254,8 +266,8 @@ def main() -> int:
 
     project, models = load_registry()
     if args.all:
-        # Every archive with an on-device box decoder: detection, segmentation and pose. The
-        # boxes lead every decode payload, so the duplicate / score checks apply to all three.
+        # Every archive with an on-device box decoder: detection, segmentation and pose. Seg and
+        # pose results carry boxes too, so the duplicate / score checks apply to all three.
         ids = [m["id"] for m in models
                if m.get("enabled", True) and m["decode"] in BOX_DECODE_KINDS]
     elif args.model_id:

@@ -88,8 +88,9 @@ pull from.
 
 > **Live streaming preset used by nearly every app here:**
 > `preset=Realtime`, `overflow_policy=KeepLatest`, `queue_depth=3`, `output_memory=ZeroCopy`.
-> The multi-stream apps deliberately use `Reliable` + `Block` instead — see
-> [`multi-stream-yolo-yolo11`](multi-stream-yolo-yolo11/README.md) for why that is what gets 60 fps.
+> The multi-stream apps deliberately use `Reliable` + `Block` for the shared model instead — the
+> comments in [`multi-stream-yolo-yolo11/main.py`](multi-stream-yolo-yolo11/main.py) (the engine
+> and `model_queue_depth`) explain why.
 
 ---
 
@@ -275,16 +276,17 @@ Used by [`detection-vlm-assistant`](detection-vlm-assistant/README.md). Full tre
 
 ## Which app uses what
 
-Read the app in the rightmost column that matches what you are building.
+Find the row whose ticks match what you are building and read that app.
 
 | App | RTSP in | Custom src | VideoSender | Metadata | Branch | Combine | bbox | seg | pose |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-yolo-yolo11`](single-stream-yolo-yolo11/README.md) · [`-yolov8m`](single-stream-yolo-yolov8m/README.md) · [`-yolo26n`](single-stream-yolo26n/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
 | [`single-stream-yolov8n-seg`](single-stream-yolov8n-seg/README.md) | ✅ | | ✅ | | ✅ | ✅ | ✅ | ✅ | |
+| [`single-stream-yolo-insight`](single-stream-yolo-insight/README.md) | ✅ | | ✅ | ✅ | ✅ | | ✅ | | |
 | [`multi-stream-yolo-yolo11`](multi-stream-yolo-yolo11/README.md) | ✅ | | ✅ | | | | ✅ | | |
 | [`high-density-multi-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/high-density-multi-stream-object-detector) (official Apps example) | ✅ | | ✅ | ✅ | | | ✅ | | *16/24/48 streams, one shared model, encoded video passthrough* |
 | [`quad-stream-quad-model`](quad-stream-quad-model/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | ✅ |
+| [`16stream4model`](16stream4model/README.md) | ✅ | | ✅ | ✅ | | | ✅ | | ✅ |
 | [`usb-camera-yolo26m`](usb-camera-yolo26m/README.md) | | ✅ | ✅ | ✅ | ✅ | | ✅ | | |
 | [`detection-vlm-assistant`](detection-vlm-assistant/README.md) | ✅ | | | | | | ✅ | | + GenAI |
 | [`pcb-defect-detection-yolo26n`](pcb-defect-detection-yolo26n/README.md) | | | | | | | ✅ | | *`Model::Runner`, no Graph* |

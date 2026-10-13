@@ -12,8 +12,8 @@ BATCH SIZE:
   images per MLA call. Quantization still sees one image at a time (the ONNX input stays
   [1,3,H,W]); the compiler builds the batch-N program and the archive's input becomes [N,H,W,3].
   A batch-N build goes to its own dir, compile_<precision>_b<N>/, next to the batch-1 one. The
-  script fails unless the compiler reports "Achieved batch size: N". See README > Multi-batch
-  compilation for what Neat 0.5.0 can and cannot do with a batched archive at runtime.
+  script fails unless the compiler reports "Achieved batch size: N". See MULTI-BATCH.md
+  for what Neat 0.5.0 can and cannot do with a batched archive at runtime.
 
 PRECISION:
   int8 (default) quantizes weights and activations to 8 bits using the calibration images below.
@@ -51,10 +51,13 @@ from pathlib import Path
 from common import (ROOT, all_model_ids, compile_dir_name, compile_input_onnx, ensure_dirs,
                     load_registry, model_batch_size, model_cfg, model_precision, paths)
 
-# The SDK's quantize+compile driver (from the sima-model-quantize-compile skill).
-# SIMA_QUANTIZE_COMPILE overrides it, e.g. inside a container that has no ~/.codex/skills.
+# The SDK's quantize+compile driver, from the sima-model-quantize-compile skill that the Neat SDK
+# installs for its coding agents (~/.codex/skills and ~/.claude/skills). SIMA_QUANTIZE_COMPILE
+# overrides it, e.g. inside a container that has neither.
+_SKILL = "skills/sima-model-quantize-compile/scripts/quantize_compile.py"
 QC = Path(os.environ.get("SIMA_QUANTIZE_COMPILE") or
-          Path.home() / ".codex/skills/sima-model-quantize-compile/scripts/quantize_compile.py")
+          next((p for p in (Path.home() / f".{a}" / _SKILL for a in ("codex", "claude")) if p.exists()),
+               Path.home() / ".codex" / _SKILL))
 
 SYNTHETIC_MARKERS = ("synthetic", "dummy", "gradient", "random", "noise")
 BF16_FLAGS = ["--bf16-weights", "--bf16-activations"]
@@ -90,6 +93,9 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
         precision = "bf16"
         extra = [f for f in extra if f not in BF16_FLAGS]
     prec = model_precision(model_id, precision)
+    if prec == "int8" and "--bf16-activations" in extra:
+        raise SystemExit(f"[compile] {model_id}: --bf16-activations with int8 weights is neither int8 "
+                         f"nor bf16 and would land in compile_int8/; use --precision bf16")
     batch = model_batch_size(model_id, batch_size)
     p = ensure_dirs(model_id, prec, batch)
     tag = compile_dir_name(prec, batch).removeprefix("compile_")   # int8, bf16, int8_b6, ...
@@ -131,6 +137,9 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
     print(f"[compile] {model_id}: precision={prec} batch={batch} onnx={onnx_path.name} "
           f"calib={calib.name} ({len(imgs)} real imgs, using {n})")
 
+    # Clear the previous archive first, so a failed build cannot leave an old one looking current.
+    for old in p["compile_dir"].rglob("*_mpk.tar.gz"):
+        old.unlink()
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     log = p["reports"] / f"compile_{tag}.log"
     log.write_text(proc.stdout, encoding="utf-8")
@@ -146,6 +155,8 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
         print(f"    desired batch {batch}, achieved {achieved[-1] if achieved else '?'}")
         if not achieved or int(achieved[-1]) != batch:
             print(f"[compile] {model_id}: the compiler did not build batch {batch}; see {log}")
+            for a in p["compile_dir"].rglob("*_mpk.tar.gz"):   # keep it, but not as a batch-N archive
+                a.rename(a.with_name(a.name + ".wrong_batch"))
             rc = 1
     if rc != 0 and batch > 1 and "Cannot be segmented due to batch size" in proc.stdout:
         # A layer too big for MLA memory is split spatially ("large tensor support"); the compiler
@@ -169,7 +180,7 @@ def main() -> int:
                     help="override the calibration image dir (must be REAL images)")
     ap.add_argument("--num-calib-samples", type=int, default=None)
     ap.add_argument("--precision", choices=["int8", "bf16"], default=None,
-                    help="override the model's `precision` in models.yaml (default int8)")
+                    help="override the model's `precision` in models.yaml for this build")
     ap.add_argument("--batch-size", type=int, default=None,
                     help="images per MLA call (default: `batch_size` in models.yaml, else 1); "
                          "batch N > 1 builds into compile_<precision>_b<N>/")
@@ -184,8 +195,13 @@ def main() -> int:
 
     rc = 0
     for mid in ids:                       # strictly serial: one compile at a time
-        rc |= run(mid, args.calib_dir, args.num_calib_samples, args.precision, args.batch_size,
-                  extra)
+        try:
+            rc |= run(mid, args.calib_dir, args.num_calib_samples, args.precision, args.batch_size,
+                      extra)
+        except SystemExit as e:           # with --all, report and go on to the next model
+            if len(ids) == 1:
+                raise
+            print(e); rc |= 1
     return rc
 
 

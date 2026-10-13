@@ -44,8 +44,7 @@ camera is.
 - Input: USB/UVC camera, MJPEG 1920x1080@30 (`/dev/video96` in the shipped config; the node number varies)
 - Output: one UDP/RTP H.264 stream with labeled boxes; optional detection JSON to Neat Insight
 - Runtime config: `./config/default.conf`
-- Validated on: Modalix DevKit, Logitech Brio 100 (`046d:094c`); first on Neat runtime `0.2.2`,
-  re-verified on NEAT 0.4.0 (30.0 fps C++, 28.4 fps Python)
+- Validated on: Modalix DevKit, Logitech Brio 100 (`046d:094c`): 30.0 fps C++, 28.4 fps Python.
 
 Pipeline:
 
@@ -81,8 +80,7 @@ v4l2-ctl -d /dev/videoN --list-formats-ext    # confirm MJPEG 1920x1080 @ 30 on 
 
 A UVC camera registers **two** nodes: a *Video Capture* node (use this one) and a *Metadata Capture*
 node. The numbers depend on how the camera enumerates: the Brio 100 has shown up as
-`/dev/video16`/`/dev/video17` and, on the NEAT 0.4.0 re-test, as `/dev/video96`, which is what the
-shipped config uses. Opening the metadata node as a camera yields nothing. See [Appendix: Camera Setup](#appendix-camera-setup).
+`/dev/video16`/`/dev/video17` or `/dev/video96`, which is what the shipped config uses. Opening the metadata node as a camera yields nothing. See [Appendix: Camera Setup](#appendix-camera-setup).
 
 ## Model Download Command
 
@@ -93,6 +91,7 @@ Run this in the SDK shell:
 mkdir -p ./assets/models
 cd ./assets/models
 sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+cd ../..
 ```
 
 Expected model path:
@@ -105,7 +104,9 @@ Optionally also fetch the INT8 build — faster on the MLA, but its confidence s
 0.50. Read [Appendix: bf16 vs INT8](#appendix-bf16-vs-int8--which-model) before using it.
 
 ```bash
+cd ./assets/models
 sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz
+cd ../..
 ```
 
 ## Configure
@@ -119,15 +120,18 @@ udp_host=<host-ip>
 udp_port=9000
 ```
 
-`udp_host` is the only value you **must** change — it is the machine you want to watch the stream on.
+You **must** change `udp_host`, the machine you want to watch the stream on, and `camera_device`
+unless your camera's capture node is also `/dev/video96` (see [Requirements](#requirements)).
 
 If your camera is mounted upside-down, set `flip=rotate-180`. COCO models lose real confidence on
 inverted scenes.
 
 For a bounded smoke test, set `frames=200` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -161,7 +165,7 @@ model. **Halve it (~0.15) for the INT8 model**, whose scores are capped at 0.50.
 
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
-`overlay`: Draw detection boxes onto the streamed video. Costs ~4 ms/frame on the CPU. Set `false`
+`overlay`: Draw detection boxes onto the streamed video. Costs ~1.5–4 ms/frame on the CPU. Set `false`
 if you render overlays downstream instead.
 
 `metadata_host`: Optional host running Neat Insight, to receive detection JSON so Insight can render
@@ -170,10 +174,10 @@ overlays itself. Leave empty to disable.
 `metadata_port`: UDP port for detection metadata.
 
 `pipeline_mode`: `push` (default) or `graph`. **Keep `push`** — `graph` returns zero detections on
-runtime 0.2.2. See [Appendix: Known Limitations](#appendix-known-limitations).
+runtimes without `neatcamerabridge`. See [Appendix: Known Limitations](#appendix-known-limitations).
 
-`camera_bridge`: Append the `neatcamerabridge` element. Requires a runtime that ships it; runtime
-0.2.2 does not.
+`camera_bridge`: Append the `neatcamerabridge` element. Requires a runtime that ships it (check with
+`strings /usr/lib/libsima_neat.so.5 | grep -c neatcamerabridge` on the DevKit; `0` means it does not).
 
 `frames`: Number of frames to process. Use `0` to run until interrupted.
 
@@ -276,8 +280,10 @@ Make sure `udp_host` in `./config/default.conf` points at the machine running In
 where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
 read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
+## Appendix: Camera Setup
+
 <details>
-<summary><h2>Appendix: Camera Setup</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -309,8 +315,10 @@ YUYV mode and the pipeline looks mysteriously broken. This app pins `image/jpeg`
 
 </details>
 
+## Appendix: bf16 vs INT8 — which model
+
 <details>
-<summary><h2>Appendix: bf16 vs INT8 — which model</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -353,12 +361,14 @@ from a class head that cannot express a positive logit.
 **If you switch to INT8, roughly halve `score_threshold`** (0.30 -> 0.15). Its scores are compressed
 into 0.0–0.50 and are *not* comparable with bf16's.
 
-There is **no** tessellated INT8 build — `yolo26m-det-int8-mla_tess-b1` returns HTTP 403.
+There is no tessellated INT8 build.
 
 </details>
 
+## Appendix: Reading The Time Profile
+
 <details>
-<summary><h2>Appendix: Reading The Time Profile</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -416,29 +426,28 @@ compares that against what you are actually delivering and tells you which one i
 
 ### Tuning
 
-- `overlay=false` frees ~1.5 ms/frame of CPU. Point `metadata_host` at Neat Insight and let it render
+- `overlay=false` frees ~1.5–4 ms/frame of CPU. Point `metadata_host` at Neat Insight and let it render
   the boxes instead.
 - `profile_interval=0` silences the live lines for a clean run; the exit summary still prints.
 - Python measures within ~1 fps of C++ and returns identical boxes — the language choice is free.
 
 </details>
 
+## Appendix: Verifying It Works
+
 <details>
-<summary><h2>Appendix: Verifying It Works</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
 `source_override` replaces the camera with a still image of known content, through the exact same
 graph. This separates *"is the model right"* from *"is the camera path right"* in one run.
 
-```bash
-cp /workspace/calibration_images/000000000139.jpg /tmp/coco139.jpg
-```
-
-Then in `./config/default.conf`:
+The repo ships one: COCO image `000000000139.jpg` in `model-compilation/assets/calibration/`. In
+`./config/default.conf` (the path is relative to this app folder, where you run the app from):
 
 ```text
-source_override=multifilesrc location=/tmp/coco139.jpg loop=true caps=image/jpeg,framerate=30/1 ! jpegparse ! jpegdec ! videoscale ! videoconvert ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! queue
+source_override=multifilesrc location=../../model-compilation/assets/calibration/000000000139.jpg loop=true caps=image/jpeg,framerate=30/1 ! jpegparse ! jpegdec ! videoscale ! videoconvert ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! queue
 ```
 
 COCO image `000000000139` is a living room. Both C++ and Python return the same 15 boxes:
@@ -452,15 +461,17 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
 
 </details>
 
+## Appendix: Known Limitations
+
 <details>
-<summary><h2>Appendix: Known Limitations</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
-- **`pipeline_mode=graph` returns zero detections** on runtime 0.2.2. The zero-copy branch topology
-  builds and runs at full speed, but the CVU reads system-memory buffers as black frames. The fix
-  (`neatcamerabridge`) exists in the `core` source tree but is **not** in the shipped library
-  (`strings /usr/lib/libsima_neat.so.2.1.2 | grep -c neatcamerabridge` -> `0`). Keep
+- **`pipeline_mode=graph` returns zero detections** on runtimes without `neatcamerabridge`. The
+  zero-copy branch topology builds and runs at full speed, but the CVU reads system-memory buffers
+  as black frames. Check your runtime with
+  `strings /usr/lib/libsima_neat.so.5 | grep -c neatcamerabridge` (`0` means it is missing). Keep
   `pipeline_mode=push`.
 - **The stream cannot be viewed on the DevKit itself.** No `avdec_h264`; `openh264dec` fails on
   RTP-depayed H.264 (including a synthetic control). View it in Insight from a desktop browser.
@@ -471,8 +482,10 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
 
 </details>
 
+## Appendix: Learnings
+
 <details>
-<summary><h2>Appendix: Learnings</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

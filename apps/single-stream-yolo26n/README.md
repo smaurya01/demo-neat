@@ -52,6 +52,7 @@ Run this in the SDK shell:
 mkdir -p ./assets/models
 cd ./assets/models
 sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz
+cd ../..
 ```
 
 Expected model path:
@@ -77,8 +78,10 @@ udp_port=9000
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

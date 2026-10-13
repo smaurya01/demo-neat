@@ -1,4 +1,6 @@
-# Setup
+# Compile commands
+
+## Setup
 
 Everything below runs in the model-compiler environment:
 
@@ -14,20 +16,22 @@ will fail at export:
 pip install ultralytics
 ```
 
-Steps 1–3 and `test_model.py --validate-only` use `python` here in the SDK container. Step 4's real
-inference and step 4b run on the DevKit with `dk` — `/workspace` is NFS-mounted there at the same
-path, so nothing is copied.
+`convert_to_onnx.py`, `graph_surgery.py`, `compiler.py` and `test_model.py --validate-only` run with
+`python` here in the SDK container. `test_model.py` without `--validate-only`, `test_box_decode.py`
+and `profile_model.py` run on the DevKit with `dk` — `/workspace` is NFS-mounted there at the same
+path, so nothing is copied. `compiler.py` needs the SDK's `quantize_compile.py` driver; see
+[README > Setup](README.md#setup).
 
 > ⚠️ **Compile strictly ONE model at a time.** The compiler is memory-hungry; concurrent compiles OOM.
 
 ## Table of Contents
 
+- [Setup](#setup)
 - [Choosing the precision: INT8 or bf16](#choosing-the-precision-int8-or-bf16)
 - [Compile everything](#compile-everything)
-  - [How long each model takes](#how-long-each-model-takes)
 - [Compile a single model](#compile-a-single-model)
   - [1. `resnet50` — classification, no surgery](#1-resnet50--classification-no-surgery)
-  - [2. `convnext_tiny` — classification, no surgery](#2-convnext_tiny--classification-no-surgery)
+  - [2. `convnext_tiny` — classification, no surgery, **bf16**](#2-convnext_tiny--classification-no-surgery-bf16)
   - [3. `densenet169` — classification, no surgery](#3-densenet169--classification-no-surgery)
   - [4. `efficientnet_v2_s` — classification, no surgery, 384×384 input](#4-efficientnet_v2_s--classification-no-surgery-384384-input)
   - [5. `yolov8s` — detection, surgery (**head at `model.22`, no attention**)](#5-yolov8s--detection-surgery-head-at-model22-no-attention)
@@ -54,7 +58,7 @@ Every model can be compiled at either precision:
 - **bf16** — 16-bit floats. Keeps FP32 accuracy and does not depend on 8-bit ranges, but the program
   is bigger and slower.
 
-For `yolo26s` on COCO, bf16 lost 0.07 mAP50-95 against FP32 and ran at 18.4 ms; INT8 lost 2.67 and
+For `yolo26s` on COCO (Neat 0.4.0), bf16 lost 0.07 mAP50-95 against FP32 and ran at 18.4 ms; INT8 lost 2.67 and
 ran at 11.1 ms. See [`ACCURACY.md`](ACCURACY.md) for the full comparison.
 
 ### How `compiler.py` decides
@@ -84,8 +88,8 @@ asking you to add one.
 
 | `precision:` in `models.yaml` | Models |
 | --- | --- |
-| **`bf16`** | `yolo26m`, `yolov8s-worldv2` |
-| **`int8`** | `resnet50`, `densenet169`, `convnext_tiny`, `efficientnet_v2_s`, `yolov8s`, `yolov8l`, `yolo11n`, `yolo11s`, `yolo26n`, `yolo26s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` |
+| **`bf16`** | `convnext_tiny`, `yolo26m`, `yolov8s-worldv2` |
+| **`int8`** | `resnet50`, `densenet169`, `efficientnet_v2_s`, `yolov8s`, `yolov8l`, `yolo11n`, `yolo11s`, `yolo26n`, `yolo26s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` |
 
 `yolov8s-worldv2` must stay bf16: it fails the compiler's check as INT8
 ([section 12](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8)).
@@ -144,13 +148,14 @@ per-model commands below.
 ## Compile everything
 
 ```bash
-./compile_all.sh                 # eleven models, serial, ~2 h; progress in compile_all.log
+./compile_all.sh                 # eleven models, serial, ~1.5–2 h; progress in compile_all.log
 ```
 
 Same four steps per model as below, just scripted and safe to leave running. It collects each
 model's artifacts into `assets/models/<id>/`.
 
-`compile_all.sh` builds eleven INT8 models: the ten in the prebuilt zip plus `yolov8s`. The bf16
+`compile_all.sh` builds eleven models: the ten in the prebuilt zip plus `yolov8s`, each in its
+`models.yaml` precision (`convnext_tiny` is bf16, the rest INT8). The other bf16
 models — `yolov8s-worldv2` and `yolo26m` — and `yolo26s` are built on their own afterwards:
 [sections 12–14](#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8).
 
@@ -175,7 +180,7 @@ all archives: one .elf, zero .so
 ```
 
 Then, on the DevKit, confirm Neat decodes every detection, segmentation and pose archive **on-device**, each with its own family's decoder (see
-[step 4b](README.md#step-4b--on-device-box-decode)):
+[`BOX-DECODE.md`](BOX-DECODE.md)):
 
 ```bash
 dk compile/test_box_decode.py --all
@@ -201,28 +206,7 @@ every archive decodes on-device with its own BoxDecodeType, NMS applied
 
 (Neat 0.5.0 / SDK 2.1.3.1, all models built in their `models.yaml` precision. Each block above it
 prints per-image box counts and duplicate pairs; a `[WARN]` line for an isolated overlapping pair on a
-YOLO26 model is expected, see [step 4b](README.md#step-4b--on-device-box-decode).)
-
-### How long each model takes
-
-Measured **end-to-end** — download + export + surgery + INT8 compile + validate — from a full
-`compile_all.sh` run on the SDK container. Not compile-only estimates.
-
-| # | Model | End-to-end | | # | Model | End-to-end |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `resnet50` | 4m32s | | 6 | `yolo11s` | 9m48s |
-| 2 | `convnext_tiny` | 9m59s | | 7 | `yolo26n` | 10m05s |
-| 3 | `densenet169` | 19m27s | | 8 | `yolo11s-seg` | 12m02s |
-| 4 | `efficientnet_v2_s` | 19m43s | | 9 | `yolo26s-pose` | 12m16s |
-| 5 | `yolo11n` | 8m32s | | 10 | `yolox_s` | 16m02s |
-
-**Total ≈ 2 h**, serial. The compile step dominates; download and export are a minute or two each.
-Times scale with host CPU — treat them as ratios, not promises.
-
-`yolov8s` was added after that run, so it is not in the table. Its **compile step** measures ≈10 min
-cold — the same range as `yolo11s`, as expected for the same size class and the same 6-head contract.
-(A re-run over a populated `work/<id>/compile_int8` finishes in ~3 min; that is a warm rebuild, not a
-comparable number.)
+YOLO26 model is expected, see [`BOX-DECODE.md`](BOX-DECODE.md).)
 
 ---
 
@@ -233,17 +217,20 @@ One model per section. Nothing is downloaded by hand — **step 1 fetches the we
 ### 1. `resnet50` — classification, no surgery
 
 ```bash
-python compile/convert_to_onnx.py --model-id resnet50      # downloads torchvision weights -> 98 MB ONNX
+python compile/convert_to_onnx.py --model-id resnet50      # downloads torchvision weights -> 102 MB ONNX
 python compile/graph_surgery.py   --model-id resnet50      # prints "kind=none ... skipping"
-python compile/compiler.py        --model-id resnet50      # the long step; whole block ≈ 4m32s
+python compile/compiler.py        --model-id resnet50      # the long step; ≈3 min
 python compile/test_model.py      --model-id resnet50 --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] resnet50: rc=0            ...  A65 : 0
-[PASS] resnet50   elf=1 so=0  (resnet50_mpk.tar.gz)
+[compile] resnet50: precision=int8 batch=1 onnx=resnet50.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] resnet50 (int8): rc=0  -> .../model-compilation/work/resnet50/compile_int8
+[PASS] resnet50         elf=1 so=0 batch=1  (compile_int8/resnet50_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -253,26 +240,37 @@ dk compile/test_model.py --model-id resnet50
 ```
 
 ```text
-[test] resnet50: imagenet_topk on real image(s)
-   000000000885.jpg   racket 0.59, tennis ball 0.02
+[PASS] resnet50         elf=1 so=0 batch=1  (compile_int8/resnet50_mpk.tar.gz)
+[test] resnet50: imagenet_topk on 3 real image(s) from inference/
+   000000000139.jpg       home theater 0.07, television 0.06, restaurant 0.04
+   000000000885.jpg       racket 0.67, tennis ball 0.02, book jacket 0.01
+   000000001000.jpg       racket 0.12, miniskirt 0.08, ballplayer 0.03
 ```
 
 ---
 
-### 2. `convnext_tiny` — classification, no surgery
+### 2. `convnext_tiny` — classification, no surgery, **bf16**
 
 ```bash
-python compile/convert_to_onnx.py --model-id convnext_tiny   # -> 110 MB ONNX
+python compile/convert_to_onnx.py --model-id convnext_tiny   # -> 114 MB ONNX
 python compile/graph_surgery.py   --model-id convnext_tiny   # skipped (surgery: none)
-python compile/compiler.py        --model-id convnext_tiny   # the long step; whole block ≈ 9m59s
+python compile/compiler.py        --model-id convnext_tiny   # precision: bf16; the long step, ≈8 min
 python compile/test_model.py      --model-id convnext_tiny --validate-only
 ```
+
+`models.yaml` builds `convnext_tiny` as **bf16**. With Model Compiler 2.1.3 its INT8 build compiles
+cleanly (1 `.elf`, 0 `.so`) but loses most of its accuracy: on `000000000885` it scores racket 0.20,
+against 0.73 for the FP32 ONNX. The bf16 build scores 0.75. The other three classifiers are fine in
+INT8.
 
 **Host:**
 
 ```text
-[compile] convnext_tiny: rc=0       ...  A65 : 0
-[PASS] convnext_tiny   elf=1 so=0
+[compile] convnext_tiny: precision=bf16 batch=1 onnx=convnext_tiny.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] convnext_tiny (bf16): rc=0  -> .../model-compilation/work/convnext_tiny/compile_bf16
+[PASS] convnext_tiny    elf=1 so=0 batch=1  (compile_bf16/convnext_tiny_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -282,8 +280,11 @@ dk compile/test_model.py --model-id convnext_tiny
 ```
 
 ```text
-   000000000139.jpg   home theater 0.29, television 0.16
-   000000000885.jpg   racket 0.57, tennis ball 0.05
+[PASS] convnext_tiny    elf=1 so=0 batch=1  (compile_bf16/convnext_tiny_mpk.tar.gz)
+[test] convnext_tiny: imagenet_topk on 3 real image(s) from inference/
+   000000000139.jpg       home theater 0.18, television 0.12, entertainment center 0.08
+   000000000885.jpg       racket 0.75, tennis ball 0.03, book jacket 0.00
+   000000001000.jpg       racket 0.40, volleyball 0.02, reel 0.02
 ```
 
 ---
@@ -291,17 +292,20 @@ dk compile/test_model.py --model-id convnext_tiny
 ### 3. `densenet169` — classification, no surgery
 
 ```bash
-python compile/convert_to_onnx.py --model-id densenet169   # -> 55 MB ONNX
+python compile/convert_to_onnx.py --model-id densenet169   # -> 57 MB ONNX
 python compile/graph_surgery.py   --model-id densenet169   # skipped
-python compile/compiler.py        --model-id densenet169   # the long step; whole block ≈ 19m27s
+python compile/compiler.py        --model-id densenet169   # the long step; ≈15 min
 python compile/test_model.py      --model-id densenet169 --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] densenet169: rc=0         ...  A65 : 0
-[PASS] densenet169   elf=1 so=0
+[compile] densenet169: precision=int8 batch=1 onnx=densenet169.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] densenet169 (int8): rc=0  -> .../model-compilation/work/densenet169/compile_int8
+[PASS] densenet169      elf=1 so=0 batch=1  (compile_int8/densenet169_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -311,7 +315,11 @@ dk compile/test_model.py --model-id densenet169
 ```
 
 ```text
-   000000000885.jpg   racket 0.99, tennis ball 0.01
+[PASS] densenet169      elf=1 so=0 batch=1  (compile_int8/densenet169_mpk.tar.gz)
+[test] densenet169: imagenet_topk on 3 real image(s) from inference/
+   000000000139.jpg       barbershop 0.72, restaurant 0.17, barber chair 0.06
+   000000000885.jpg       racket 0.98, tennis ball 0.02, baseball 0.00
+   000000001000.jpg       volleyball 0.73, swimming trunks 0.09, racket 0.04
 ```
 
 ---
@@ -319,17 +327,20 @@ dk compile/test_model.py --model-id densenet169
 ### 4. `efficientnet_v2_s` — classification, no surgery, 384×384 input
 
 ```bash
-python compile/convert_to_onnx.py --model-id efficientnet_v2_s   # -> 82 MB ONNX
+python compile/convert_to_onnx.py --model-id efficientnet_v2_s   # -> 86 MB ONNX
 python compile/graph_surgery.py   --model-id efficientnet_v2_s   # skipped
-python compile/compiler.py        --model-id efficientnet_v2_s   # the long step; whole block ≈ 19m43s
+python compile/compiler.py        --model-id efficientnet_v2_s   # the long step; ≈11 min
 python compile/test_model.py      --model-id efficientnet_v2_s --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] efficientnet_v2_s: rc=0   ...  A65 : 0
-[PASS] efficientnet_v2_s   elf=1 so=0
+[compile] efficientnet_v2_s: precision=int8 batch=1 onnx=efficientnet_v2_s.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] efficientnet_v2_s (int8): rc=0  -> .../model-compilation/work/efficientnet_v2_s/compile_int8
+[PASS] efficientnet_v2_s elf=1 so=0 batch=1  (compile_int8/efficientnet_v2_s_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -339,7 +350,11 @@ dk compile/test_model.py --model-id efficientnet_v2_s
 ```
 
 ```text
-   000000000885.jpg   racket 0.75, tennis ball 0.04
+[PASS] efficientnet_v2_s elf=1 so=0 batch=1  (compile_int8/efficientnet_v2_s_mpk.tar.gz)
+[test] efficientnet_v2_s: imagenet_topk on 3 real image(s) from inference/
+   000000000139.jpg       home theater 0.22, vacuum 0.13, swab 0.10
+   000000000885.jpg       racket 0.72, tennis ball 0.03, ping-pong ball 0.00
+   000000001000.jpg       racket 0.18, ballplayer 0.16, soccer ball 0.14
 ```
 
 ---
@@ -349,16 +364,19 @@ dk compile/test_model.py --model-id efficientnet_v2_s
 ```bash
 python compile/convert_to_onnx.py --model-id yolov8s   # downloads yolov8s.pt -> 45 MB ONNX
 python compile/graph_surgery.py   --model-id yolov8s   # cuts the decode tail, exposes 6 raw heads
-python compile/compiler.py        --model-id yolov8s   # the long step; ≈10 min
+python compile/compiler.py        --model-id yolov8s   # the long step; ≈5 min
 python compile/test_model.py      --model-id yolov8s --validate-only
 ```
 
-**Host** — note `attention_rewrites` is **empty**, unlike every YOLO11/YOLO26 model here:
+**Host** (`reports/` notes an **empty** `attention_rewrites`, unlike every YOLO11/YOLO26 model here):
 
 ```text
-[surgery] yolov8s: OK  outputs=['bbox_0','bbox_1','bbox_2','class_logit_0','class_logit_1','class_logit_2']
-[compile] yolov8s: rc=0             ...  MLA : 1   EV74: 16   A65 : 0
-[PASS] yolov8s   elf=1 so=0  (yolov8s.compile_ready_mpk.tar.gz)
+[surgery] yolov8s: OK  outputs=['bbox_0', 'bbox_1', 'bbox_2', 'class_logit_0', 'class_logit_1', 'class_logit_2']
+[compile] yolov8s: precision=int8 batch=1 onnx=yolov8s.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolov8s (int8): rc=0  -> .../model-compilation/work/yolov8s/compile_int8
+[PASS] yolov8s          elf=1 so=0 batch=1  (compile_int8/yolov8s.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit** — identical 6-tensor contract to `yolo11n`/`yolo11s`:
@@ -369,12 +387,14 @@ dk compile/test_box_decode.py --model-id yolov8s
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
-                     (1,80,80,80) (1,40,40,80) (1,20,20,80)
+[PASS] yolov8s          elf=1 so=0 batch=1  (compile_int8/yolov8s.compile_ready_mpk.tar.gz)
+[test] yolov8s: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       6 head tensor(s): (1, 80, 80, 64) (1, 40, 40, 64) (1, 20, 20, 64) (1, 80, 80, 80) (1, 40, 40, 80) (1, 20, 20, 80)
+   ...
 ```
 
 Decoding those heads on-device gives detections within 0.01–0.06 of the float ONNX on the same
-images (`000000000139`: tv 0.907 vs 0.921 float, chair 0.836 vs 0.849) — the INT8 calibration is
+images (`000000000139`: tv 0.93 vs 0.921 float, chair 0.83 vs 0.849) — the INT8 calibration is
 sound, and scores are **not** capped the way a badly-quantized package's would be.
 
 Two things differ from YOLO11 and both are handled in `compile/_surgery_ultralytics.py`:
@@ -389,6 +409,9 @@ Two things differ from YOLO11 and both are handled in `compile/_surgery_ultralyt
 The `cv2.*` bbox heads emit 64 channels (4 × 16 bins), same as YOLO11. The surgery exposes them raw:
 Neat's `YoloV8` decoder integrates the DFL and runs NMS on the board.
 
+**`yolov8l`** uses the same surgery spec (Detect at `model.22`, no attention): run the same commands
+with `--model-id yolov8l`.
+
 ---
 
 ### 6. `yolo11n` — detection, surgery
@@ -396,16 +419,19 @@ Neat's `YoloV8` decoder integrates the DFL and runs NMS on the board.
 ```bash
 python compile/convert_to_onnx.py --model-id yolo11n   # downloads yolo11n.pt -> 11 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11n   # cuts the decode tail, exposes 6 raw heads
-python compile/compiler.py        --model-id yolo11n   # the long step; whole block ≈ 8m32s
+python compile/compiler.py        --model-id yolo11n   # the long step; ≈5 min
 python compile/test_model.py      --model-id yolo11n --validate-only
 ```
 
 **Host:**
 
 ```text
-[surgery] yolo11n: OK  outputs=['bbox_0','bbox_1','bbox_2','class_logit_0','class_logit_1','class_logit_2']
-[compile] yolo11n: rc=0             ...  A65 : 0
-[PASS] yolo11n   elf=1 so=0
+[surgery] yolo11n: OK  outputs=['bbox_0', 'bbox_1', 'bbox_2', 'class_logit_0', 'class_logit_1', 'class_logit_2']
+[compile] yolo11n: precision=int8 batch=1 onnx=yolo11n.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolo11n (int8): rc=0  -> .../model-compilation/work/yolo11n/compile_int8
+[PASS] yolo11n          elf=1 so=0 batch=1  (compile_int8/yolo11n.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit** — the surgery contract, **6 tensors, NHWC**:
@@ -416,28 +442,33 @@ dk compile/test_box_decode.py --model-id yolo11n
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
-                     (1,80,80,80) (1,40,40,80) (1,20,20,80)
+[PASS] yolo11n          elf=1 so=0 batch=1  (compile_int8/yolo11n.compile_ready_mpk.tar.gz)
+[test] yolo11n: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       6 head tensor(s): (1, 80, 80, 64) (1, 40, 40, 64) (1, 20, 20, 64) (1, 80, 80, 80) (1, 40, 40, 80) (1, 20, 20, 80)
+   ...
 ```
 
-bbox = 4 ch × 3 scales · class = 80 ch × 3 scales.
+bbox = 64 ch (4 × 16 DFL bins) × 3 scales · class = 80 ch × 3 scales.
 
 ---
 
 ### 7. `yolo11s` — detection, surgery
 
 ```bash
-python compile/convert_to_onnx.py --model-id yolo11s   # -> 37 MB ONNX
+python compile/convert_to_onnx.py --model-id yolo11s   # -> 38 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11s
-python compile/compiler.py        --model-id yolo11s   # the long step; whole block ≈ 9m48s
+python compile/compiler.py        --model-id yolo11s   # the long step; ≈5 min
 python compile/test_model.py      --model-id yolo11s --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] yolo11s: rc=0             ...  A65 : 0
-[PASS] yolo11s   elf=1 so=0
+[compile] yolo11s: precision=int8 batch=1 onnx=yolo11s.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolo11s (int8): rc=0  -> .../model-compilation/work/yolo11s/compile_int8
+[PASS] yolo11s          elf=1 so=0 batch=1  (compile_int8/yolo11s.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit** — identical contract to `yolo11n`; head node names are scale-invariant, so `n`→`s` is a
@@ -449,8 +480,10 @@ dk compile/test_box_decode.py --model-id yolo11s
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)   <- raw DFL bbox (4 x 16 bins)
-                     (1,80,80,80) (1,40,40,80) (1,20,20,80)
+[PASS] yolo11s          elf=1 so=0 batch=1  (compile_int8/yolo11s.compile_ready_mpk.tar.gz)
+[test] yolo11s: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       6 head tensor(s): (1, 80, 80, 64) (1, 40, 40, 64) (1, 20, 20, 64) (1, 80, 80, 80) (1, 40, 40, 80) (1, 20, 20, 80)
+   ...
 ```
 
 ---
@@ -458,17 +491,20 @@ dk compile/test_box_decode.py --model-id yolo11s
 ### 8. `yolo26n` — detection, surgery (**one-to-one head, `YoloV26`**)
 
 ```bash
-python compile/convert_to_onnx.py --model-id yolo26n   # -> 9.5 MB ONNX
+python compile/convert_to_onnx.py --model-id yolo26n   # -> 9.9 MB ONNX
 python compile/graph_surgery.py   --model-id yolo26n   # exposes the one2one_cv* heads (4 ch)
-python compile/compiler.py        --model-id yolo26n   # the long step; whole block ≈ 10m05s
+python compile/compiler.py        --model-id yolo26n   # the long step; ≈5 min
 python compile/test_model.py      --model-id yolo26n --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] yolo26n: rc=0             ...  A65 : 0
-[PASS] yolo26n   elf=1 so=0
+[compile] yolo26n: precision=int8 batch=1 onnx=yolo26n.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolo26n (int8): rc=0  -> .../model-compilation/work/yolo26n/compile_int8
+[PASS] yolo26n          elf=1 so=0 batch=1  (compile_int8/yolo26n.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -479,8 +515,10 @@ dk compile/test_box_decode.py --model-id yolo26n
 ```
 
 ```text
-   6 head tensor(s): (1,80,80,4) (1,40,40,4) (1,20,20,4)
-                     (1,80,80,80) (1,40,40,80) (1,20,20,80)
+[PASS] yolo26n          elf=1 so=0 batch=1  (compile_int8/yolo26n.compile_ready_mpk.tar.gz)
+[test] yolo26n: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       6 head tensor(s): (1, 80, 80, 4) (1, 40, 40, 4) (1, 20, 20, 4) (1, 80, 80, 80) (1, 40, 40, 80) (1, 20, 20, 80)
+   ...
 ```
 
 YOLO26's `one2one_*` heads are already 4-channel distances and one-to-one, so this archive decodes
@@ -492,30 +530,34 @@ with `BoxDecodeType.YoloV26`, which runs no NMS (none is needed). YOLOv8/YOLO11 
 ### 9. `yolo11s-seg` — segmentation, surgery
 
 ```bash
-python compile/convert_to_onnx.py --model-id yolo11s-seg   # -> 39 MB ONNX
+python compile/convert_to_onnx.py --model-id yolo11s-seg   # -> 41 MB ONNX
 python compile/graph_surgery.py   --model-id yolo11s-seg   # + mask-coeff heads and the proto head
-python compile/compiler.py        --model-id yolo11s-seg   # the long step; whole block ≈ 12m02s
+python compile/compiler.py        --model-id yolo11s-seg   # the long step; ≈7 min
 python compile/test_model.py      --model-id yolo11s-seg --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] yolo11s-seg: rc=0         ...  A65 : 0
-[PASS] yolo11s-seg   elf=1 so=0
+[compile] yolo11s-seg: precision=int8 batch=1 onnx=yolo11s-seg.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolo11s-seg (int8): rc=0  -> .../model-compilation/work/yolo11s-seg/compile_int8
+[PASS] yolo11s-seg      elf=1 so=0 batch=1  (compile_int8/yolo11s-seg.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit** — **10 tensors**: the 6 detection heads + 3 mask-coefficient heads + the proto:
 
 ```bash
 dk compile/test_model.py --model-id yolo11s-seg
+dk compile/test_box_decode.py --model-id yolo11s-seg
 ```
 
 ```text
-   10 head tensor(s): (1,80,80,64) (1,40,40,64) (1,20,20,64)  <- raw DFL bbox (4 x 16 bins)
-                      (1,80,80,80) (1,40,40,80) (1,20,20,80)
-                      (1,80,80,32) (1,40,40,32) (1,20,20,32)     <- mask coeffs (32 ch)
-                      (1,160,160,32)                             <- proto
+[PASS] yolo11s-seg      elf=1 so=0 batch=1  (compile_int8/yolo11s-seg.compile_ready_mpk.tar.gz)
+[test] yolo11s-seg: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       10 head tensor(s): (1, 80, 80, 64) (1, 40, 40, 64) (1, 20, 20, 64) (1, 80, 80, 80) (1, 40, 40, 80) (1, 20, 20, 80) (1, 80, 80, 32) (1, 40, 40, 32) (1, 20, 20, 32) (1, 160, 160, 32)
+   ...
 ```
 
 ---
@@ -523,29 +565,34 @@ dk compile/test_model.py --model-id yolo11s-seg
 ### 10. `yolo26s-pose` — pose, surgery (**carries the 209× fix**)
 
 ```bash
-python compile/convert_to_onnx.py --model-id yolo26s-pose   # -> 40 MB ONNX
+python compile/convert_to_onnx.py --model-id yolo26s-pose   # -> 42 MB ONNX
 python compile/graph_surgery.py   --model-id yolo26s-pose   # + keypoint heads, PADDED 51 -> 64 ch
-python compile/compiler.py        --model-id yolo26s-pose   # the long step; whole block ≈ 12m16s
+python compile/compiler.py        --model-id yolo26s-pose   # the long step; ≈8 min
 python compile/test_model.py      --model-id yolo26s-pose --validate-only
 ```
 
 **Host:**
 
 ```text
-[compile] yolo26s-pose: rc=0        ...  A65 : 0
-[PASS] yolo26s-pose   elf=1 so=0
+[compile] yolo26s-pose: precision=int8 batch=1 onnx=yolo26s-pose.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolo26s-pose (int8): rc=0  -> .../model-compilation/work/yolo26s-pose/compile_int8
+[PASS] yolo26s-pose     elf=1 so=0 batch=1  (compile_int8/yolo26s-pose.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit** — **9 tensors**, note the keypoint heads are **64**, not 51:
 
 ```bash
 dk compile/test_model.py --model-id yolo26s-pose
+dk compile/test_box_decode.py --model-id yolo26s-pose
 ```
 
 ```text
-   9 head tensor(s): (1,80,80,4)  (1,40,40,4)  (1,20,20,4)      <- bbox
-                     (1,80,80,1)  (1,40,40,1)  (1,20,20,1)      <- class (1 = person)
-                     (1,80,80,64) (1,40,40,64) (1,20,20,64)     <- keypoints, padded 51 -> 64
+[PASS] yolo26s-pose     elf=1 so=0 batch=1  (compile_int8/yolo26s-pose.compile_ready_mpk.tar.gz)
+[test] yolo26s-pose: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       9 head tensor(s): (1, 80, 80, 4) (1, 40, 40, 4) (1, 20, 20, 4) (1, 80, 80, 1) (1, 40, 40, 1) (1, 20, 20, 1) (1, 80, 80, 64) (1, 40, 40, 64) (1, 20, 20, 64)
+   ...
 ```
 
 > ⚠️ **Do not remove the padding.** Keep `pad_channels_to: 64` in
@@ -559,20 +606,23 @@ dk compile/test_model.py --model-id yolo26s-pose
 
 ```bash
 python compile/convert_to_onnx.py --model-id yolox_s   # downloads Megvii's official ONNX (no torch)
-python compile/graph_surgery.py   --model-id yolox_s   # decoupled anchor-free head -> 3 raw heads
-python compile/compiler.py        --model-id yolox_s   # the long step; whole block ≈ 16m02s
+python compile/graph_surgery.py   --model-id yolox_s   # decoupled head -> 9 raw heads (bbox/obj/cls per scale, pre-sigmoid)
+python compile/compiler.py        --model-id yolox_s   # the long step; ≈9 min
 python compile/test_model.py      --model-id yolox_s --validate-only
 ```
 
 **Host:**
 
 ```text
-[surgery] yolox_s: OK  outputs=['yolox_head_0','yolox_head_1','yolox_head_2']
-[compile] yolox_s: rc=0             ...  A65 : 0
-[PASS] yolox_s   elf=1 so=0
+[surgery] yolox_s: OK  outputs=['bbox_0', 'obj_logit_0', 'class_logit_0', 'bbox_1', 'obj_logit_1', 'class_logit_1', 'bbox_2', 'obj_logit_2', 'class_logit_2']
+[compile] yolox_s: precision=int8 batch=1 onnx=yolox_s.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolox_s (int8): rc=0  -> .../model-compilation/work/yolox_s/compile_int8
+[PASS] yolox_s          elf=1 so=0 batch=1  (compile_int8/yolox_s.compile_ready_mpk.tar.gz)
 ```
 
-**DevKit** — **3 tensors**, 85 ch each (4 box + 1 obj + 80 class):
+**DevKit** — **9 tensors**: per scale a 4-ch bbox, a 1-ch objectness logit and an 80-ch class logit (`YoloX` / `Split3Interleaved`):
 
 ```bash
 dk compile/test_model.py --model-id yolox_s
@@ -580,7 +630,10 @@ dk compile/test_box_decode.py --model-id yolox_s
 ```
 
 ```text
-   3 head tensor(s): (1,80,80,85) (1,40,40,85) (1,20,20,85)
+[PASS] yolox_s          elf=1 so=0 batch=1  (compile_int8/yolox_s.compile_ready_mpk.tar.gz)
+[test] yolox_s: yolox_split_heads on 3 real image(s) from inference/
+   000000000139.jpg       9 head tensor(s): (1, 80, 80, 4) (1, 80, 80, 1) (1, 80, 80, 80) (1, 40, 40, 4) (1, 40, 40, 1) (1, 40, 40, 80) (1, 20, 20, 4) (1, 20, 20, 1) (1, 20, 20, 80)
+   ...
 ```
 
 ---
@@ -606,9 +659,12 @@ python compile/test_model.py      --model-id yolov8s-worldv2 --validate-only
 **Host** — same 6-head contract as the other detectors:
 
 ```text
-[surgery] yolov8s-worldv2: OK  outputs=['bbox_0','bbox_1','bbox_2','class_logit_0','class_logit_1','class_logit_2']
-[compile] yolov8s-worldv2: rc=0     ...  MLA : 1   EV74: 16   A65 : 0
-[PASS] yolov8s-worldv2   elf=1 so=0  (yolov8s-worldv2.compile_ready_mpk.tar.gz)
+[surgery] yolov8s-worldv2: OK  outputs=['bbox_0', 'bbox_1', 'bbox_2', 'class_logit_0', 'class_logit_1', 'class_logit_2']
+[compile] yolov8s-worldv2: precision=bf16 batch=1 onnx=yolov8s-worldv2.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
+[compile] yolov8s-worldv2 (bf16): rc=0  -> .../model-compilation/work/yolov8s-worldv2/compile_bf16
+[PASS] yolov8s-worldv2  elf=1 so=0 batch=1  (compile_bf16/yolov8s-worldv2.compile_ready_mpk.tar.gz)
 ```
 
 **DevKit:**
@@ -619,8 +675,10 @@ dk compile/test_box_decode.py --model-id yolov8s-worldv2
 ```
 
 ```text
-   6 head tensor(s): (80,80,64) (40,40,64) (20,20,64)   <- raw DFL bbox (4 x 16 bins)
-                     (80,80,80) (40,40,80) (20,20,80)
+[PASS] yolov8s-worldv2  elf=1 so=0 batch=1  (compile_bf16/yolov8s-worldv2.compile_ready_mpk.tar.gz)
+[test] yolov8s-worldv2: yolo_raw_heads on 3 real image(s) from inference/
+   000000000139.jpg       6 head tensor(s): (80, 80, 64) (40, 40, 64) (20, 20, 64) (80, 80, 80) (40, 40, 80) (20, 20, 80)
+   ...
 ```
 
 `class_logit_*` is 80 channels because 80 classes were baked — that width follows your vocabulary,
@@ -671,15 +729,15 @@ To build any other model in bf16, add `--precision bf16` to `compiler.py` (and t
 
 ```text
 [surgery] yolo26m: OK  outputs=['bbox_0', 'bbox_1', 'bbox_2', 'class_logit_0', 'class_logit_1', 'class_logit_2']
-[compile] yolo26m: precision=bf16 onnx=yolo26m.compile_ready.onnx calib=calibration (20 real imgs, using 20)
-    ... Plugin distribution per backend:
-    ...   A65 : 0
+[compile] yolo26m: precision=bf16 batch=1 onnx=yolo26m.compile_ready.onnx calib=calibration (20 real imgs, using 20)
+    ... afe.backends.mpk.interface - INFO - Plugin distribution per backend:
+    ... afe.backends.mpk.interface - INFO - 	A65 : 0
 [compile] yolo26m (bf16): rc=0  -> .../model-compilation/work/yolo26m/compile_bf16
-[PASS] yolo26m          elf=1 so=0  (yolo26m.compile_ready_mpk.tar.gz)
+[PASS] yolo26m          elf=1 so=0 batch=1  (compile_bf16/yolo26m.compile_ready_mpk.tar.gz)
 ```
 
-The compile step took 16m19s and pushed the 16 GB SDK host to ≈13 GB used — compile nothing else
-alongside it. The archive is 69 MB; almost all of it is the `.elf` (137 MB uncompressed).
+Expect the compile step to take ≈16 min and ≈13 GB of RAM on a 16 GB SDK host — compile nothing
+else alongside it. The archive is 69 MB; almost all of it is the `.elf` (137 MB uncompressed).
 
 **DevKit:**
 
@@ -749,7 +807,7 @@ in [`ACCURACY.md`](ACCURACY.md); the commands to rerun it are in
 
 `--batch-size N` compiles the archive for N images per MLA call. The build goes to its own folder,
 `compile_<precision>_b<N>/`. The batch-1 build of the same precision is needed to check it. Read
-[README > Multi-batch compilation](README.md#multi-batch-compilation) first: on Neat 0.5.0 a
+[`MULTI-BATCH.md`](MULTI-BATCH.md) first: on Neat 0.5.0 a
 batched archive is slower, less accurate, and cannot be box-decoded on the device.
 
 ```bash
@@ -782,8 +840,8 @@ The archive is 72 MB; the batch-1 INT8 build is 35 MB. Both times were measured 
 [compile] yolo26m (bf16_b6): rc=1  -> .../model-compilation/work/yolo26m/compile_bf16_b6
 ```
 
-**DevKit:** six images go in as one `[6, 640, 640, 3]` tensor, and each item is compared with the
-batch-1 build:
+**DevKit:** the five images in `assets/inference/` (the first one repeated to fill the sixth slot)
+go in as one `[6, 640, 640, 3]` tensor, and each item is compared with the batch-1 build:
 
 ```bash
 dk compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6
@@ -793,26 +851,31 @@ dk compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6
 [PASS] yolo26m          elf=1 so=0 batch=6  (compile_int8_b6/yolo26m.compile_ready_mpk.tar.gz)
 [test] yolo26m: batch 6 archive, 6 image(s) as one [6, 640, 640, 3] tensor
    6 output tensor(s): (6, 80, 80, 4) (6, 40, 40, 4) (6, 20, 20, 4) (6, 80, 80, 80) (6, 40, 40, 80) (6, 20, 20, 80)
-   item 0 000000000139.jpg       vs batch-1: cosine min 0.94686 over 6 heads
-   item 1 000000000885.jpg       vs batch-1: cosine min 0.91583 over 6 heads
+   item 0 000000000139.jpg       vs batch-1: cosine min 0.95118 over 6 heads
+   item 1 000000000885.jpg       vs batch-1: cosine min 0.92421 over 6 heads
    ...
-   FAIL: batch items vs the batch-1 build: worst cosine 0.91583 (need >= 0.999; ...)
+   NOTE: batch items differ from the batch-1 build (worst cosine 0.92421; ...). Compare the accuracy and latency of batch 1 and batch 6 before choosing one: MULTI-BATCH.md
+
+all archives: one .elf, zero .so
 ```
 
-That FAIL is the real result for this build, not a test problem:
+The batch-6 build runs, but it is **less accurate and slower** than batch 1, so compare both before
+choosing a batch size:
 
-- The two builds have the same quantization parameters.
+- The two builds have the same quantization parameters, so the difference comes from the batch-6
+  program.
 - Against the FP32 ONNX, the batch-1 build stays at a worst-head cosine of 0.97–0.99, and the
   batch-6 build at 0.92–0.97.
 - The batch-6 build finds fewer FP32 boxes: 10/15 and 3/6 on two images, where batch 1 finds
   14/15 and 6/6.
 
-Speed (`Model.benchmark`, 300 samples):
+Speed (`model-benchmark`, 1000 synthetic frames, package default route; see
+[`MULTI-BATCH.md`](MULTI-BATCH.md#7-results-yolo26m-int8-batch-1-vs-batch-6)):
 
 | | throughput | latency |
 |---|---|---|
-| batch 1 | **187.9 img/s** | 9.1 ms |
-| batch 6 | 156.4 img/s | 61.3 ms per 6 images |
+| batch 1 | **189.4 img/s** | 9.10 ms |
+| batch 6 | 156.5 img/s | 61.24 ms per 6 images |
 
 `test_box_decode.py` skips a batched build, because Neat 0.5.0's box decode returns one result per call.
 

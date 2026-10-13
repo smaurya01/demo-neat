@@ -184,6 +184,9 @@ input: images 4915200 bytes, range [6.556510925292969e-07, 0.9999999403953552]
  13  EV74  pass_through
 ```
 
+`Model SDK` is the compiler version that built the archive. A Model Zoo 2.1.3 archive can report an
+older one, as this one does.
+
 Read it top to bottom — it is the model's whole data path:
 
 1. **Input.** One tensor called `images`, 4,915,200 bytes. That is 1 × 640 × 640 × 3 values at
@@ -212,11 +215,11 @@ sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.ta
     yolo26m_raw_supported_einsum_mpk.json | python3 -m json.tool | less
 ```
 
-If `jq` is installed, it can pick out single fields — for example the input:
+To pick out a single field — for example the input:
 
 ```bash
 sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
-    yolo26m_raw_supported_einsum_mpk.json | jq '.input_nodes'
+    yolo26m_raw_supported_einsum_mpk.json | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin)['input_nodes'], indent=2))"
 ```
 
 | Where in `*_mpk.json` | What it tells you |
@@ -260,7 +263,16 @@ stays within 0.07 mAP50-95 of FP32, while INT8 costs 2.67 mAP50-95 but runs abou
 BF16. The method and full table are in
 [`model-compilation/ACCURACY.md`](../../model-compilation/ACCURACY.md).
 
-Run the inspection script on an INT8 archive of the same model and the difference is plain:
+Download the INT8 archive of the same model next to the BF16 one, and run the inspection script
+on it:
+
+```bash
+sima@modalix:/media/nvme/example/models$ export MODELZOO_VERSION="2.1.3"
+sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz"
+sima@modalix:/media/nvme/example/models$ python3 inspect_archive.py yolo26m-det-int8-b1.tar.gz
+```
+
+The difference is plain:
 
 ```text
 contract: yolo26m_raw_supported_einsum_mpk.json | Model SDK 2.1.0
@@ -449,9 +461,10 @@ EOF
 ```
 
 ```text
-Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/proc_5754/pkg_824be9b5e6b355dd/yolo26m-det-bf16-mla_tess-b1)
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/proc_12930/pkg_75eae96f7e182166/p)
+[WARN] Model preprocess planner produced 41 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
 Model: yolo26m_raw_supported_einsum
-  mpk: /media/nvme/simaai/coprocessing/models/proc_5754/pkg_824be9b5e6b355dd/yolo26m-det-bf16-mla_tess-b1/etc/yolo26m_raw_supported_einsum_mpk.json
+  mpk: /media/nvme/simaai/coprocessing/models/proc_12930/pkg_75eae96f7e182166/p/etc/yolo26m_raw_supported_einsum_mpk.json
   preprocess: disabled
   postprocess: cast
   outputs: 1 logical / 1 physical
@@ -464,7 +477,7 @@ post-MLA kernels:  ['unknown', 'cast']
 `summary()` prints the model name, the path of the extracted `*_mpk.json`, the chosen preprocess
 and postprocess, and the number of outputs. Here preprocess is `disabled` because no
 `ModelOptions` were given; the planner adds resize and colour conversion when you ask for them, as
-Chapter 12 does. The first line also shows where the archive was extracted. `info().needs` shows
+Chapter 12 does. The first line also shows where the archive was extracted; the `proc_…/pkg_…` part changes on every run. The `[WARN]` line is advisory and safe to ignore. `info().needs` shows
 what the planner read from the contract's dtypes: `pre_quantization` means the MLA expects INT8
 input, `pre_cast` means a floating-point conversion such as `float32` to `bfloat16` is needed.
 

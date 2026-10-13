@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""T5 phase 1: compile_ready graph surgery for the T5 model set.
+"""compile_ready graph surgery for the Ultralytics models (YOLOv8, YOLO11, YOLO26, -seg, -pose).
 
-Copied and generalized from 09_yolo_compile_ready_surgery.py (frozen 01-12).
 Handles three head families, all reduced to a stable set of raw-head ONNX
 outputs so the MLA compiler never sees the CPU-side decode/NMS/TopK tail. Each
 family keeps its OWN head layout, so the archive decodes with its own Neat
@@ -24,8 +23,7 @@ Shared surgery, identical to the proven yolo11n/yolo26n flow:
   3. expose the raw head Conv outputs and DELETE the decode/postprocess tail
      (Concat/Reshape/Transpose/TopK/NMS) by replacing graph.output.
 
-Node names were pinned from the actual exported ONNX (see reports/head_map.json
-written by scripts/13 inspection); yolo11s head names are identical to yolo11n
+Node names were pinned from the actual exported ONNX; yolo11s head names are identical to yolo11n
 and yolo26s-pose bbox/class names match yolo26n (one2one_* NMS-free head).
 """
 
@@ -199,9 +197,10 @@ YOLO_SPECS = {
         # full {4,1,51} -> 1782 ms. Padding 51 -> 64 aligns the head to the MLA's
         # channel tiling and the tail collapses back to normal.
         #
-        # The host decoder (apps/quad-stream-quad-model/src/decoders.py) slices
-        # channels 51..63 (zero padding) straight back off, so nothing downstream
-        # changes. Reproduce with: apps/quad-stream-quad-model/tools/pose_probe.py
+        # Pose decode runs on-device with Neat's YoloV26Pose box decoder (see the
+        # yolo26s-pose entry in models.yaml), which reads the first 51 channels and
+        # ignores channels 51..63 (zero padding), so nothing downstream changes.
+        # Reproduce with: apps/quad-stream-quad-model/tools/pose_probe.py
         "extra_scale_heads": [
             {
                 "name": "kpt",
@@ -252,6 +251,8 @@ def replace_attention_matmuls(model, blocks):
         matmul0 = node_by_name(model, f"{prefix}/MatMul")
         matmul1 = node_by_name(model, f"{prefix}/MatMul_1")
         if matmul0 is None or matmul1 is None:
+            # a listed block that is missing stays a MatMul (it lands off the MLA): say so
+            print(f"  WARNING: attention block {prefix} not found; its MatMuls are not rewritten")
             continue
         replace_node(
             model,

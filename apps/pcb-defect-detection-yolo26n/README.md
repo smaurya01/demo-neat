@@ -56,17 +56,24 @@ The precompiled BF16 model pack is required before running:
 
 ## Model Download
 
-The model is custom-trained, so it is not in the SiMa Model Zoo. Download the BF16 model pack into
-`./assets/models`:
+The model is custom-trained, so it is not in the SiMa Model Zoo. It is shared from a Google Drive
+folder, which has no command-line download:
 
-```bash
-mkdir -p ./assets/models
-# Download the BF16 latest_plc_yolo26n_mpk.tar.gz into ./assets/models
-# https://drive.google.com/drive/folders/13AcEIWG3mBlTmEgNa1IjWlOL_leyjni5?usp=sharing
-```
+1. Open the
+   [model folder](https://drive.google.com/drive/folders/13AcEIWG3mBlTmEgNa1IjWlOL_leyjni5?usp=sharing)
+   in a browser and download the BF16 model pack `latest_plc_yolo26n_mpk.tar.gz`. Keep it as a
+   `.tar.gz`; do not extract it.
+2. Copy it into this app's `./assets/models/` (under `~/workspace` on the host):
 
-Only `latest_plc_yolo26n_mpk.tar.gz` is needed to run inference. The `.pt` and `.onnx`
-files are only needed if you want to rebuild the BF16 model pack.
+   ```bash
+   mkdir -p ./assets/models
+   cp <download-dir>/latest_plc_yolo26n_mpk.tar.gz ./assets/models/
+   ```
+
+Only `latest_plc_yolo26n_mpk.tar.gz` is needed to run inference. The same folder also has the
+trained weights, `yolo26n.pt`, and the `.onnx` files; download `yolo26n.pt` into
+`./assets/models/` the same way only if you want to rebuild the BF16 model pack (see
+[Compile Model Pack](#compile-model-pack)).
 
 The model pack is built from YOLO26's end-to-end (`one2one`) head, which returns one box per
 defect. Neat decodes it on the board with `BoxDecodeType.YoloV26`, which runs no NMS, so the app

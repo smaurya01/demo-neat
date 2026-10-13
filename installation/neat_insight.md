@@ -1,14 +1,8 @@
 # NEAT Insight
 
-Scope: concise, practical guide to NEAT Insight — what it is, how to access/install it, and how to create an RTSP stream from a clean browser-based UI.
-
 Primary reference: https://developer.sima.ai/software/tools/insight/
 
 ---
-
-**NEAT insight**
-
-Run this on the host machine and you can check the insights on NEAT from a clean UI.
 
 NEAT Insight is the browser-based inspection and test console for NEAT vision application development. Use it to verify output and isolate problems across the application, stream path, and device runtime layers.
 
@@ -48,14 +42,14 @@ Reference: https://developer.sima.ai/software/tools/insight/concepts
 
 ## 2. Access NEAT Insight
 
-Open the Insight UI in a browser:
+Open the Insight UI in a browser. Run `neat` in the SDK for the exact URLs; 9900 is the default port:
 
 - **https://localhost:9900** — when browsing from the same machine where the SDK is running.
 - **https://\<host-ip>\:9900** — when browsing from another machine on the network.
 
 Before you start:
 
-- Ensure the **NMS mount** is correctly present on the workspace.
+- Ensure the **NFS mount** is correctly present on the workspace.
 - The paired **devkit-ip** is visible in the **top-right corner** of the UI.
 
 Check that the service is running:
@@ -85,8 +79,8 @@ Insight is **bundled with the NEAT Development Environment**. When the SDK conta
 Install Insight directly on a Modalix DevKit only when you want the inspection console to run on the target device, or when validating a standalone DevKit setup.
 
 ```bash
-# install a tagged release
-sima-cli neat install insight@{release-tag}
+# install a tagged release (<release-tag>: one from github.com/sima-neat/insight/releases)
+sima-cli neat install insight@<release-tag>
 
 # or install a development build (branch or tag)
 sima-cli neat install insight@main
@@ -104,7 +98,7 @@ Insight is a NEAT artifact, so upgrade it with the same install flow:
 
 ```bash
 # a release
-sima-cli neat install insight@{release-tag}
+sima-cli neat install insight@<release-tag>
 
 # the latest build from a branch
 sima-cli neat install insight@main
@@ -127,9 +121,9 @@ The Insight interface is organized into five tabs:
 
 - **Workspace:** Browse project files, search sources, inspect artifacts, and preview text/code/images, MLA stats, and pipeline sequences.
 - **Media Library:** Upload, preview, inspect, and delete test media. Supports `mp4`, `mov`, `avi`, `mkv`, and `webm`.
-- **RTSP Source:** Convert uploaded media into live streams mapped to three RTSP paths (`src1`, `src2`, `src3` on port `8554`).
-- **Video Viewer:** Display WebRTC output (up to 80 channels) with metadata overlays for detection, classification, pose estimation, segmentation, and tracking.
-- **Stats:** Placeholder for planned CPU, memory, disk, temperature, and profiling metrics.
+- **RTSP Source:** Convert uploaded media into live streams mapped to numbered RTSP paths (`src1`, `src2`, and so on, on port `8554`).
+- **Video Viewer:** Display WebRTC output (one channel per `videoUDP` port that `neat` reports) with metadata overlays for detection, classification, pose estimation, segmentation, and tracking.
+- **Stats:** System and application metrics.
 
 ![NEAT Insight — Workspace overview](images/insight/insight-workspace-overview.png)
 
@@ -143,7 +137,7 @@ The Insight interface is organized into five tabs:
 
     ![NEAT Insight — Media Library](images/insight/insight-media-library.png)
 
-3. Navigate to **RTSP Source**. Assign media files to source slots (`src1`, `src2`, `src3`) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
+3. Navigate to **RTSP Source**. Assign media files to source slots (`src1`, `src2`, …) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
 
     ![NEAT Insight — RTSP Source](images/insight/insight-rtsp-source.png)
 
@@ -159,9 +153,9 @@ Reference: https://developer.sima.ai/software/tools/insight/user-interface
 
 ## 6. Tips
 
-- Always browse to Insight over **HTTPS** on port **9900**; accept the self-signed certificate warning if prompted.
+- Always browse to Insight over **HTTPS**, on the port `neat` reports (9900 by default); accept the self-signed certificate warning if prompted.
 - If the page does not load, confirm Insight is up with `insight-admin status` and re-check the port from `neat --json`.
-- Confirm the **NMS mount** is present on the workspace and that the **devkit-ip** shows in the top-right corner before starting a stream.
+- Confirm the **NFS mount** is present on the workspace and that the **devkit-ip** shows in the top-right corner before starting a stream.
 - Refer to the official documentation for further details.
 
 ---

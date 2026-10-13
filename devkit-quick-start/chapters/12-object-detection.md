@@ -141,7 +141,8 @@ EOF
 </details>
 
 **Option 2 — copy it from your host.** If you have this repository checked out on your host, the
-same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt):
+same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). Run
+this from the folder that holds your `demo-neat` checkout:
 
 ```bash
 sima-user@host:~$ scp demo-neat/tutorial/assets/coco_labels.txt \
@@ -166,7 +167,7 @@ This repository ships six sample images for detection at
 sima@modalix:~$ mkdir -p /media/nvme/example/images
 ```
 
-Then copy the images across from your host checkout:
+Then copy the images across, from the folder on your host that holds your `demo-neat` checkout:
 
 ```bash
 sima-user@host:~$ scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
@@ -417,14 +418,25 @@ error, install the missing packages:
 
 ## What you should see
 
-A per-image line naming the detections found, then one annotated image written per input:
+Neat's start-up lines first, then one line per image, and one annotated image written per input:
 
 ```text
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/...)
+[WARN] Model preprocess planner produced 39 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
+[1/4] Initializing runtime...
+[2/4] Preparing input stream...
+[3/4] Building graph...
+[4/4] Graph ready (433 ms)
 Found 6 images
 [1/6] image.png -> image.png (10 detections)
 ...
 Done: 6/6 images
+Configuring for the decoding type: 8:yolo26
+...
 ```
+
+The `[WARN]` line is advisory and safe to ignore. The `Configuring for the decoding type` lines
+come from the box decoder and can print before or after the image lines.
 
 Open the output images in `/media/nvme/example/output` to confirm the boxes land on the right objects.
 
@@ -449,8 +461,8 @@ That is normal and not a problem to fix.
 
 | Next step | Where |
 |---|---|
-| The same detector as a packaged app, with C++ source and profiling | `~/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
-| Other ready-to-run examples | `sima-cli neat install apps@v0.5.1`, then browse `prebuilt-apps/examples/` |
+| The same detector as a packaged app, with C++ source and profiling | `/media/nvme/neat/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
+| Other ready-to-run examples | `sima-cli neat install apps@v0.5.1` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
 | Run a language model on the board | [Chapter 13](13-llima.md) |
 | The full tutorial series | [Tutorials](https://developer.sima.ai/software/tutorials) |
 | Compile your own ONNX model | [Model Compiler](https://developer.sima.ai/software/getting-started/) |

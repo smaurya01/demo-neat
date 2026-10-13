@@ -2,10 +2,11 @@
 
 How to compile a model so one MLA call processes **N images**, check it, and profile it on the
 DevKit against the batch-1 build on 50+ real images. The worked example is `yolo26m` in INT8 at
-batch 6, measured on Neat 0.5.0 / SDK 2.1.3.
+batch 6, measured on Neat 0.5.0 / SDK 2.1.3.1.
 
 **Read the result before you start:**
-- For `yolo26m` and `yolo11n`, batch 6 was **slower per image and less accurate** than batch 1.
+- For `yolo26m`, batch 6 was **slower per image and less accurate** than batch 1. For `yolo11n` it
+  was slower too (accuracy not measured).
 - Neat 0.5.0 cannot box-decode a batched archive on the device.
 
 The flow below is the way to find out whether batching pays off for *your* model.
@@ -30,7 +31,7 @@ records this as `Trigger large tensor support due to: <layer>`. It cannot also s
 batch, so every batch above 1 fails with `CannotSplitLargeTensorError … Cannot be segmented due to
 batch size`.
 
-Compile batch 1 first (step 2), then look:
+Compile batch 1 first (section 2), then look in its log (`compile_int8.log` or `compile_bf16.log`):
 
 ```bash
 grep "Trigger large tensor" work/<ID>/reports/compile_int8.log   # no output = can be batched
@@ -40,7 +41,7 @@ grep "Trigger large tensor" work/<ID>/reports/compile_int8.log   # no output = c
 |---|---|---|
 | `yolo11n` INT8 | no | ✅ |
 | `yolo26m` INT8 | no | ✅ |
-| `yolo26m` bf16 | yes (bf16 doubles the input tensor) | ❌ |
+| `yolo26m` bf16 | yes (first conv; bf16 doubles its tensors) | ❌ |
 | `yolo26x` INT8 | yes (first conv) | ❌ |
 
 INT8 halves every tensor against bf16, so a model that cannot batch in bf16 may still batch in INT8.
@@ -65,8 +66,9 @@ python compile/compiler.py        --model-id yolo26m --precision int8 --batch-si
   parameters.
 - **Achieved batch is checked.** `compiler.py` fails unless the compiler reports
   `Achieved batch size: 6`. If the model needs large-tensor splitting, it explains that instead.
-- **Making it the default:** `batch_size: 6` in the model's `models.yaml` entry does the same as the
-  flag.
+- **Making it the default:** `batch_size: 6` in the model's `models.yaml` entry makes batch 6 the
+  default for `compiler.py`, `test_model.py` and `profile_model.py`. For `yolo26m` also set
+  `precision: int8` (bf16 cannot batch), and build the batch-1 reference with `--batch-size 1`.
 
 Measured on a 24-core x86 host:
 
@@ -102,21 +104,26 @@ name.
 dk compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6
 ```
 
-- Six real images go in as **one** `[6, 640, 640, 3]` tensor, tagged N/H/W/C.
+- The five images in `assets/inference/`, with the first one repeated to fill the sixth slot, go in
+  as **one** `[6, 640, 640, 3]` tensor, tagged N/H/W/C.
 - Every head comes back with the batch first.
-- Each item is compared with the batch-1 build's output for the same image. The two builds share
-  their quantization, so they should agree to a cosine of at least 0.999.
+- Each item is compared with the batch-1 build's output for the same image, and the worst cosine
+  is reported. The two builds share their quantization, so anything below 0.999 means the batch-6
+  program computes different numbers. The script reports it as a NOTE: compare accuracy and
+  latency before choosing a batch size.
 
 ```text
 [test] yolo26m: batch 6 archive, 6 image(s) as one [6, 640, 640, 3] tensor
    6 output tensor(s): (6, 80, 80, 4) (6, 40, 40, 4) (6, 20, 20, 4) (6, 80, 80, 80) (6, 40, 40, 80) (6, 20, 20, 80)
-   item 0 000000000139.jpg       vs batch-1: cosine min 0.94686 over 6 heads
-   item 1 000000000885.jpg       vs batch-1: cosine min 0.91583 over 6 heads
+   item 0 000000000139.jpg       vs batch-1: cosine min 0.95118 over 6 heads
+   item 1 000000000885.jpg       vs batch-1: cosine min 0.92421 over 6 heads
    ...
-   FAIL: batch items vs the batch-1 build: worst cosine 0.91583 (need >= 0.999; ...)
+   NOTE: batch items differ from the batch-1 build (worst cosine 0.92421; ...). Compare the accuracy and latency of batch 1 and batch 6 before choosing one: MULTI-BATCH.md
+
+all archives: one .elf, zero .so
 ```
 
-**This FAIL is real.** Against the FP32 ONNX:
+**The difference is real, and it costs accuracy.** Against the FP32 ONNX:
 
 - **Raw heads:** batch 1 stays at a worst-head cosine of 0.97–0.99, and batch 6 drops to 0.92–0.97,
   mostly in the box heads.
@@ -143,11 +150,12 @@ says so instead of failing.
 2. host preprocessing (tensor route only)
 3. tensor creation
 4. Neat `run()`, split into its stages by Neat's own counters
-5. box decode
+5. box decode (on the tensor route, after copying the raw heads out of Neat: `outputs to numpy`)
 6. drawing
 7. JPEG encode
 
-It then times a pipelined run, with 4 calls in flight. It refuses fewer than 50 images.
+It then times a pipelined run, with 4 calls in flight. It refuses fewer than 50 images, and
+supports only YOLO detection models (`box_decode` YoloV8 or YoloV26).
 
 **The images.** Use real images at the camera's resolution, all the same size. The Neat runner is
 built for one frame size, and other sizes are resized in the read step. To cut 60 frames from four
@@ -179,8 +187,8 @@ dk compile/profile_model.py --model-id yolo26m --precision int8 --batch-size 6 -
 - **Calls:** each route makes 120 calls, and the first 10 are warm-up. Neat prints its per-stage
   counters every 120 calls; the script sets `SIMA_RUNTIME_PROFILE=1` and reads them.
 - **Batch 6:** 120 calls are 720 frames.
-- **Output:** Markdown tables, plus a JSON file with every number. The first 6 annotated frames go
-  to `--out`.
+- **Output:** Markdown tables, plus a JSON file with every number. The first 6 annotated frames of
+  each route go to `--out`.
 
 ## 6. Benchmark with `model-benchmark`
 
@@ -191,8 +199,11 @@ The Neat Apps [`model-benchmark`](https://github.com/sima-neat/apps/tree/main/ex
 - **Latency:** one call.
 - **Throughput:** images per second (calls per second × batch).
 
+Run it on the DevKit, from `model-compilation/`, with the apps repo cloned into the workspace
+(`git clone https://github.com/sima-neat/apps /workspace/apps`):
+
 ```bash
-python3 examples/benchmarking/model-benchmark/src/python/main.py \
+dk /workspace/apps/examples/benchmarking/model-benchmark/src/python/main.py \
   --model work/yolo26m/compile_int8_b6/yolo26m.compile_ready/yolo26m.compile_ready_mpk.tar.gz \
   --frames 1000 [--decode-type yolo26-det] --output-json report.json
 ```
@@ -201,7 +212,7 @@ python3 examples/benchmarking/model-benchmark/src/python/main.py \
 
 **Setup:**
 - Board: DevKit (Modalix), Neat 0.5.0.
-- Images: 60 real 1280×720 frames, 15 from each of four street, highway, parking and gym clips.
+- Images: 60 real 1280×720 frames, 15 from each of four clips: street, highway, parking garage, gym.
 - Settings: score > 0.25, top 100.
 
 **`model-benchmark` (1000 synthetic frames):**
@@ -247,7 +258,7 @@ call (section 8).
 1. **Batch 6 lowers device throughput.** Pipelined, batch 6 reaches 155 frames/s against 188–191
    for batch 1, and every frame waits for five others.
 2. **The image route is the fastest way in.** The EV74 does resize, letterbox and quantize in
-   2.55 ms; numpy on the A65 needs 29 ms for the same work. Batch N cannot use this route on
+   2.55 ms; numpy on the A65 needs 29 ms to letterbox and normalize, and the EV74 still quantizes. Batch N cannot use this route on
    Neat 0.5.0.
 3. **The host, not the device, limits a single stream.** JPEG decode and encode take 43 ms of the
    56 ms. A camera app replaces both with the hardware video decoder and encoder.
@@ -266,6 +277,14 @@ call (section 8).
 | Tensor route (raw heads, `Model.benchmark()`) | works | works. Input is one `[N,H,W,3]` tensor with `tensor.axis_semantics = [N, H, W, C]`, otherwise it is rejected ("batched packed video must use HWC layout or N/H/W/C axis semantics"). Heads come back `[N, …]`. |
 | Image route (Neat preprocess + box decode) | works | **times out** in the preprocess stage at build |
 | On-device box decode | one result per image | **one result per call**: the other N−1 images are lost |
+
+`yolo11n` INT8 shows the same speed pattern (`Model.benchmark()`; throughput with frames kept in
+flight, latency for one call):
+
+| build | latency (one call) | throughput |
+|---|---|---|
+| batch 1 | 5.7 ms | **614.7 img/s** |
+| batch 6 | 31.3 ms per 6 images | 507.6 img/s |
 
 So a batched YOLO archive needs host preprocessing (letterbox, RGB, `x/255`) and host decoding of
 the raw heads. `profile_model.py` contains both: see `letterbox()` and `decode_heads()`. That host

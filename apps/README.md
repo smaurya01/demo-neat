@@ -14,7 +14,7 @@ C++ ↔ Python naming map), see **[NEAT-API-REFERENCE.md](NEAT-API-REFERENCE.md)
 - [Test source](#test-source)
 - [C++ vs Python](#c-vs-python)
 - [Migrating to Neat 0.5.0](#migrating-to-neat-050)
-- [Migrating from NEAT 0.3.0](#migrating-from-neat-030)
+- [Migrating from NEAT 0.3.0 to 0.4.0](#migrating-from-neat-030-to-040)
 
 ---
 
@@ -38,7 +38,7 @@ to **Neat Insight**, which shows it in a browser. The exceptions are marked in t
 | app | languages | what it does |
 | --- | --- | --- |
 | [**multi-stream-yolo-yolo11**](multi-stream-yolo-yolo11/README.md) | Python | Two RTSP streams through **one shared** YOLO11 model stage, each with its own annotated UDP output. Sustains **~119 fps aggregate (≈60 fps per stream)**, the full source rate, with overlay on. |
-| [**quad-stream-quad-model**](quad-stream-quad-model/README.md) | C++, Python | Four RTSP streams, four *different* models (detection, segmentation, pose, YOLOX) on one MLA, all decoded on-device. **C++ ~236 fps aggregate**, Python ~79 fps. Pick C++ for throughput, Python to read and modify. |
+| [**quad-stream-quad-model**](quad-stream-quad-model/README.md) | C++, Python | Four RTSP streams, four *different* models (detection, segmentation, pose, YOLOX) on one MLA, all decoded on-device. **C++ ~240 fps aggregate**, Python ~75–88 fps. Pick C++ for throughput, Python to read and modify. |
 | [**16stream4model**](16stream4model/README.md) | C++ | **Sixteen 720p30 RTSP streams, four model groups** of four streams each: YOLO26n, YOLO11n and YOLOv8n detection plus YOLO26n pose. **Output to Insight**: the video passes through untouched, and detections and poses are sent as metadata. Holds **480 / 480 fps**, every stream at the source rate. |
 
 ### Other inputs / other tasks
@@ -47,7 +47,7 @@ to **Neat Insight**, which shows it in a browser. The exceptions are marked in t
 | --- | --- | --- |
 | [**usb-camera-yolo26m**](usb-camera-yolo26m/README.md) | C++, Python | **USB/UVC webcam on the board**, not RTSP → YOLO26m → annotated H.264/RTP out. MJPEG capture is mandatory; raw YUYV at 1080p is USB-bandwidth-capped at ~5 fps. Verified on a Logitech Brio 100 at 1920x1080@30: **30.0 fps C++, 28.4 fps Python**, camera-limited. |
 | [**pcb-defect-detection-yolo26n**](pcb-defect-detection-yolo26n/README.md) | Python | **Still images, not video.** A custom-trained YOLO26n on a non-COCO domain, compiled end to end, run over a folder of PCB photos to write annotated JPEGs. |
-| [**detection-vlm-assistant**](detection-vlm-assistant/README.md) | Python | Detector always on; a vision-language model captions trigger-gated crops. Shows how to gate an expensive VLM behind a cheap detector. Verified on Neat 0.5.0 with **Qwen3-VL-4B-Instruct-Autoround-a16w4** (with an earlier in-house YOLO11n build; not yet re-measured with the Model Zoo `yolo_11n`): detector at **56.5 fps** alone, **~31 fps** while the VLM captions every ~5 s (the VLM time-slices the MLA), VLM at **~13.8 tok/s, 0.6–0.8 s TTFT**. |
+| [**detection-vlm-assistant**](detection-vlm-assistant/README.md) | Python | Detector always on; a vision-language model captions trigger-gated crops. Shows how to gate an expensive VLM behind a cheap detector. Verified on Neat 0.5.0 with the Model Zoo `yolo_11n` and **Qwen3-VL-4B-Instruct-Autoround-a16w4** on a 720p30 source: **18.0 fps** while the VLM captions every 5 s (the VLM time-slices the MLA), VLM at **~13.8 tok/s, 0.6–0.9 s TTFT**. |
 | [**benchmark**](benchmark/README.md) | Python | **Synthetic input, no video.** Wraps `pyneat.Model.benchmark()` to measure one compiled model package in isolation and emit console metrics and JSON. Use it to get a model's ceiling before building a pipeline around it. |
 
 ---
@@ -57,11 +57,14 @@ to **Neat Insight**, which shows it in a browser. The exceptions are marked in t
 **The app's own README is the authority.** Binary names, config keys and how the config is
 passed differ between apps. The shape is always the same:
 
+0. **Clone this repo inside the SDK workspace** (`~/workspace` on the host, which is `/workspace`
+   in the SDK container and on the board). `dk` only runs files under `/workspace`.
 1. **Get the model.** Archives are git-ignored, so a fresh clone has **no models**. Each app's
    README has the download command. Some come from the SiMa model zoo, some from a direct URL,
    and some you compile with [`model-compilation/`](../model-compilation/README.md).
 2. **Fill in the config.** `config/default.conf` ships with placeholders, such as `<rtsp-url>`
    and `<host-ip>`, for the input, the output host and ports. Replace them before the first run.
+   `<host-ip>` is the address of the Insight host, as the DevKit can reach it.
 3. **Build it.** C++ apps need a build in the SDK shell:
 
    ```bash
@@ -138,7 +141,7 @@ Every app here was re-run on Neat 0.5.0 / SDK 2.1.3.1 (DevKit 2.1.3) on hardware
   `YoloV26` (`YoloV26Pose`). A one-to-many head decoded as `YoloV26` returns a stack of near-identical
   boxes per object. Archives built with the older `model-compilation/` surgery (4-channel heads,
   decoded as `YoloV26`) must be recompiled; see
-  [`model-compilation/`](../model-compilation/README.md#step-4b--on-device-box-decode).
+  [`model-compilation/BOX-DECODE.md`](../model-compilation/BOX-DECODE.md).
 - **Decoded NV12 frames can be padded.** A 1280×720 frame can come back with 768 Y rows, so the UV
   plane does not start at `width * height`. `quad-stream-quad-model` (Python) gets padded frames
   and reads each plane at its `byte_offset` and stride (`nv12_packed()`); code that slices the first
@@ -158,12 +161,11 @@ Every app here was re-run on Neat 0.5.0 / SDK 2.1.3.1 (DevKit 2.1.3) on hardware
 - **LLiMa 0.5.0 rejects Whisper models downloaded for 0.4.0.** Run `llima pull whisper-small-a16w8`
   again.
 
-## Migrating from NEAT 0.3.0
+## Migrating from NEAT 0.3.0 to 0.4.0
 
-Every app here was migrated to NEAT 0.4.0 / SDK 2.1.3 and re-verified on hardware.
-
-- **The C++ ABI is now 4.** Binaries built against 0.3.0 link `libsima_neat.so.3` and fail to
-  start. Delete `build/` and rebuild; the ABI break itself needs no source change.
+- **The C++ ABI changed to 4 (it is 5 since 0.5.0).** Binaries built against 0.3.0 link
+  `libsima_neat.so.3` and fail to start. Delete `build/` and rebuild; the ABI break itself needs no
+  source change.
 - **A non-dropping source sink can stall the hardware decoder permanently.**
   `OutputOptions::EveryFrame()` / `every_frame()` leave `drop = false`. On 0.4.0, the moment the
   consumer drains slower than the source, the sink fills, back-pressures the decoder, and the

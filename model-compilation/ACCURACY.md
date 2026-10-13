@@ -30,7 +30,7 @@ the host or the DevKit, and scoring — with the expected output of each step.
 
 ## The answer
 
-| Precision | Accuracy cost vs FP32 (mAP50-95) | Speed on the MLA | Archive size |
+| Precision | Accuracy cost vs FP32 (mAP50-95) | Inference time (DevKit) | Archive size |
 | --- | --- | --- | --- |
 | **bf16** | **−0.07** — no measurable loss | 18.4 ms per inference | 40 MB |
 | **INT8** | **−2.67** — about 5.6% of the model's accuracy | 11.1 ms per inference (1.7× faster) | 23 MB |
@@ -50,11 +50,13 @@ One model, four ways of running it:
 | **bf16** | That compile-ready ONNX, compiled with `compiler.py --precision bf16` | DevKit MLA |
 | **INT8** | That compile-ready ONNX, compiled with `compiler.py --precision int8` (20 real COCO calibration images, `mse`) | DevKit MLA |
 
-The model is Ultralytics' published `yolo26s.pt` (release dated 2026-01-05, 10.0 M parameters,
+The model is Ultralytics' published `yolo26s.pt` (10.0 M parameters,
 AGPL-3.0), downloaded by `compile/convert_to_onnx.py`. The bf16 and INT8 archives were compiled from
 it in the Neat SDK 2.1.3 (Model Compiler 2.1.0) and run on a Modalix DevKit with Neat 0.4.0.
+These numbers have not been re-measured on Neat 0.5.0 / SDK 2.1.3.1. The study decodes on the host,
+so the Neat 0.5.0 `YoloV26` decoder change does not affect it.
 
-**Dataset:** COCO val2017 — **4,980 images, 36,178 objects**. That is all 5,000 val2017 images
+**Dataset:** COCO val2017 — **4,980 images, 36,178 objects** (not counting crowd regions). That is all 5,000 val2017 images
 except the 20 in `assets/calibration/`, which the INT8 build was calibrated on; a model should not be
 scored on the images it was calibrated with.
 
@@ -91,7 +93,7 @@ and Ultralytics rows, step 5 the bf16 row, step 6 the INT8 row, and step 7 print
    graph surgery) scores 0.3 *above* the Ultralytics row, not below it. That gap most likely comes
    from preprocessing, [explained below](#why-this-differs-from-the-accuracy-ultralytics-publishes).
 
-An earlier run on the first 500 of these images showed the same picture — `yolo26s` bf16 −0.12,
+On the first 500 of these images (`prepare_coco_subset.py --num 500`) the picture is the same — `yolo26s` bf16 −0.12,
 INT8 −2.60 — and also measured **`yolo26m` in bf16: 55.55 against 55.42 for FP32 (+0.13)**, at
 30.9 ms per inference.
 

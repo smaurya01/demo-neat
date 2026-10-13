@@ -25,6 +25,7 @@
 | Neat SDK | 2.1.3.1 |
 | Neat Library | 0.5.0 |
 | Neat Apps | 0.5.1 |
+| Model Zoo | 2.1.3 |
 
 Confirm against the live
 [compatibility matrix](https://developer.sima.ai/software/getting-started/compatibility) — this is

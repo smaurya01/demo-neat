@@ -90,8 +90,10 @@ udp_port=9000
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -203,8 +205,10 @@ read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assum
 
 # Appendix
 
+## Appendix: Building YOLO11 Yourself
+
 <details>
-<summary><h2>Appendix: Building YOLO11 Yourself</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

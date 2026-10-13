@@ -8,7 +8,8 @@ called **`framemarker`**, load it on a Modalix DevKit, put it inside a real Neat
 If you have never written a GStreamer plugin before, start here. Every step is explained, and
 every command is one you can copy.
 
-> Tested on: Modalix DevKit, eLxr 2.1.3, Neat runtime 0.5.0, GStreamer 1.22, Neat SDK v2.1.3.1.
+> Requires: a Modalix DevKit on board software 2.1.3 (eLxr), Neat Library 0.5.0 and Neat SDK 2.1.3.1
+> (GStreamer 1.22).
 
 ---
 
@@ -208,13 +209,14 @@ custom-plugin/
 
 In the commands below:
 
-- **`<sdk-host-ip>`** is the machine running the SDK and Insight. `neat --json` shows it as
-  `insight.webUiUrl`.
+- **`<sdk-host-ip>`** is the machine running the SDK and Insight: the IP on the **Insight (remote)**
+  line of `neat`.
 - **`<devkit-ip>`** is your DevKit's address.
-- **`/path/to/demo-neat`** is where you cloned this repository. Everything here lives in its
-  `custom-plugin/` folder.
-- The DevKit must be able to reach the SDK host on **TCP 8554** (RTSP in) and **UDP 9000–9015 /
-  9100–9115** (video and boxes out).
+- **`/path/to/demo-neat`** is where you cloned this repository. Clone it into your host workspace
+  (`cd ~/workspace && git clone <repo-url> demo-neat`) so it is `/workspace/demo-neat` in the SDK
+  and on the DevKit. Everything here lives in its `custom-plugin/` folder.
+- The DevKit must be able to reach the SDK host on **TCP 8554** (RTSP in) and the `videoUDP` /
+  `metadataUDP` ranges that `neat` reports, e.g. **UDP 9000–9023 / 9100–9123** (video and boxes out).
 
 ### Helpful knowledge
 
@@ -254,11 +256,10 @@ Insight can play a video file as an RTSP "camera" for the DevKit to read.
 
 1. Open Insight at **`https://<sdk-host-ip>:9900/`**. It's HTTPS, so accept the certificate
    warning.
-2. Go to the **Media Sources** tab and select a video from the **catalog** to load it.
-3. Go to the **Streaming** tab, select the loaded video and press **Play**. This creates the
-   RTSP stream.
+2. Go to **Media Library** → **Import Media** → **Catalog** and import a 720p30 H.264 variant.
+3. Go to **RTSP Source**, assign the video to `src1` and start it. This creates the RTSP stream.
 
-The Streaming tab shows the stream's source number. From the DevKit, the stream is
+The RTSP Source tab shows the stream's source number. From the DevKit, the stream is
 **`rtsp://<sdk-host-ip>:8554/srcN`**, where N is that number. This guide uses **`src1`**;
 replace it with yours.
 
@@ -386,11 +387,10 @@ The viewer shows colour video with a **red border and bar** (the plugin) and **l
 model receives the clean frames on its own branch.
 
 > **60 fps sources.** The app stamps each metadata message with its frame's timestamp, so the boxes
-> stay locked to the frame they belong to. That works on a 30 fps stream. With Insight 0.0.8, on a
-> **60 fps** stream the viewer matches none of them and draws no boxes, although Insight's own
-> ingest stats show every message matched (`/api/ingest/stats`, channel `metadata`). Use a 30 fps
-> source, or add **`--no-frame-timestamps`**: the viewer then pairs each message with the newest
-> frame, and boxes trail fast-moving objects slightly.
+> stay locked to the frame they belong to. That works on a 30 fps stream. With Insight 0.0.8 the
+> viewer draws no boxes on a **60 fps** stream. Use a 30 fps source, or add
+> **`--no-frame-timestamps`**: the viewer then pairs each message with the newest frame, and boxes
+> trail fast-moving objects slightly.
 
 ### I. Watch it in Insight (any browser)
 
@@ -400,8 +400,8 @@ the certificate warning. For a direct link, run
 
 > **Channels:** for a single stream, use **channel 0**. It's the apps' default (`--channel` can
 > be left out), and Insight's default single-stream view shows channel 0. Other channels are only
-> needed when you run several streams at once. The SDK exposes channels **0–15** (UDP 9000–9015
-> for video, 9100–9115 for boxes); a channel outside that range receives nothing. Check yours
+> needed when you run several streams at once. The SDK exposes one channel per port in the `videoUDP` range
+> (e.g. UDP 9000–9023 for video, 9100–9123 for boxes); a channel outside that range receives nothing. Check yours
 > with `neat --json` → `videoUDP`.
 
 ---

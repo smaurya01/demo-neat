@@ -88,28 +88,38 @@ each one and how to run it.
 
 ## 4. Model compilation
 
-**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Fourteen models: download
+**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Fifteen models: download
 the ten prebuilt archives, or set up to compile them yourself. Any model can be built as INT8 or bf16.
 
 Models with a compile recipe (each links to its commands):
 
 | Task | | | | |
 | --- | --- | --- | --- | --- |
-| **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
+| **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery-bf16) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
 | **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-one-to-one-head-yolov26) |
 |  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) | [yolo26m&nbsp;(bf16)](model-compilation/COMPILE-COMMANDS.md#13-yolo26m--detection-bf16) | [yolo26s](model-compilation/COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study) |  |
 | **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
 | **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
 | **Open-vocab** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |  |
+| **Multi-batch** | [yolo26m&nbsp;batch&nbsp;6&nbsp;(INT8)](model-compilation/COMPILE-COMMANDS.md#15-yolo26m-at-batch-6--multi-batch-int8) |  |  |  |
 
 **[`model-compilation/COMPILE-COMMANDS.md`](model-compilation/COMPILE-COMMANDS.md)** — the commands.
-`compile_all.sh` for eleven INT8 models (the ten in the prebuilt zip plus `yolov8s`), or a
+`compile_all.sh` for eleven models (the ten in the prebuilt zip plus `yolov8s`), or a
 copy-paste block per model with its exact expected result.
 
 **[`model-compilation/ACCURACY.md`](model-compilation/ACCURACY.md)** — what INT8 and
 bf16 cost against FP32 for Ultralytics `yolo26s` on COCO val2017 (4,980 images): bf16 matches FP32
 (−0.07 mAP50-95), INT8 costs 2.67 mAP50-95 and runs 1.7× faster than bf16 on the MLA. To replicate
 the numbers step by step: [`model-compilation/accuracy/README.md`](model-compilation/accuracy/README.md).
+
+**[`model-compilation/BOX-DECODE.md`](model-compilation/BOX-DECODE.md)** — the Neat box decoder
+(`decode_type` / `decode_type_option`) each compiled model needs, and how it is checked on the
+DevKit.
+
+**[`model-compilation/MULTI-BATCH.md`](model-compilation/MULTI-BATCH.md)** — compiling a model to run
+N images per MLA call, which models can be batched, and profiling batch 1 against batch N on the
+DevKit. **[`model-compilation/YOLO26X-STUDY.md`](model-compilation/YOLO26X-STUDY.md)** — `yolo26x` INT8,
+the largest YOLO26: its compile, why it cannot be batched, and its time profile on the DevKit.
 
 **[`model-compilation/MODEL-COMPILATION.md`](model-compilation/MODEL-COMPILATION.md)** — the
 reasoning. Why graph surgery is needed, what a good archive looks like (**one `.elf`, zero `.so`**),
@@ -169,9 +179,10 @@ From the Quick Start Guide:
 
 Everything here was re-verified against **Neat Library 0.5.0 / SDK 2.1.3.1** (DevKit software
 2.1.3), on a Modalix DevKit. The C++ apps build with zero warnings, and the apps were run on real
-hardware, most against a 1280x720 H.264 60 fps RTSP source. The exceptions are listed in
-[`apps/README.md`](apps/README.md#test-source). All 14 tutorial notebooks and the LLiMa notebooks run
-on Neat 0.5.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating-to-neat-050).
+hardware, most against a 1280x720 H.264 60 fps RTSP source (the other sources are listed in
+[`apps/README.md`](apps/README.md#test-source)). All 14 tutorial notebooks and the LLiMa notebooks run
+on Neat 0.5.0. The one exception is the [accuracy study](model-compilation/ACCURACY.md), measured on
+Neat 0.4.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating-to-neat-050).
 
 | | Version |
 | --- | --- |
