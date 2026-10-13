@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import sys
 import urllib.request
+from pathlib import Path
 
 from common import ensure_dirs, model_cfg, all_model_ids, paths
 
@@ -46,8 +47,10 @@ def export_torch(cfg: dict, project: dict, out_path) -> None:
 
 
 def export_ultralytics(cfg: dict, project: dict, out_path) -> None:
+    import os
     from ultralytics import YOLO
 
+    os.chdir(Path(__file__).resolve().parents[1])   # the .pt downloads into model-compilation/
     model = YOLO(cfg["arch"])                   # downloads the .pt on first use
     imgsz = cfg["input_shape"][2]
     produced = model.export(
@@ -68,8 +71,10 @@ def export_ultralytics_world(cfg: dict, project: dict, out_path) -> None:
     subprocess.run([sys.executable, str(here / "_export_world.py"),
                     "--model-id", model_id, "--weights", cfg["arch"],
                     "--imgsz", str(cfg["input_shape"][2]),
-                    "--opset", str(project.get("default_opset", 17)), "--force"],
-                   check=True)
+                    "--opset", str(project.get("default_opset", 17)), "--force",
+                    "--labels", str(here.parent / "assets" / "labels" /
+                                    f"{cfg.get('vocabulary', 'coco80')}.txt")],
+                   check=True, cwd=str(here.parent))   # weights download into model-compilation/
     # _export_world writes straight to work/<id>/onnx/<id>.onnx (== out_path); nothing to move.
 
 
@@ -77,7 +82,9 @@ def export_megvii(cfg: dict, project: dict, out_path) -> None:
     """YOLOX ships an official pre-exported ONNX -- no need to install the yolox package."""
     url = cfg["source"]
     print(f"  downloading pre-exported ONNX: {url}")
-    urllib.request.urlretrieve(url, str(out_path))
+    part = out_path.with_suffix(".part")         # an interrupted download never looks finished
+    urllib.request.urlretrieve(url, str(part))
+    part.replace(out_path)
 
 
 EXPORTERS = {
@@ -120,7 +127,16 @@ def main() -> int:
         raise SystemExit("give --model-id <id> or --all")
     rc = 0
     for mid in ids:
-        rc |= run(mid, args.force)
+        try:
+            rc |= run(mid, args.force)
+        except Exception as e:            # with --all, report and go on to the next model
+            if len(ids) == 1:
+                raise
+            print(f"[FAIL] {mid}: {e}"); rc |= 1
+        except SystemExit as e:
+            if len(ids) == 1:
+                raise
+            print(e); rc |= 1
     return rc
 
 

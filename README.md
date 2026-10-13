@@ -10,7 +10,7 @@ below.
 
 | Where | What you get |
 | --- | --- |
-| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 19 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development. **Start here.** |
+| [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 20 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development, and what is inside a model archive. **Start here.** |
 | [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, model options, RTSP, senders, GenAI in a graph. |
 | [`apps/`](apps/README.md) | Complete, runnable applications, most of them RTSP in → inference → output to Neat Insight. |
 | [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
@@ -45,7 +45,7 @@ the only thing you need open the first time.
 | [10. Install simaai-sentinel](devkit-quick-start/chapters/10-install-simaai-sentinel.md) | [11. Install pyneat](devkit-quick-start/chapters/11-install-pyneat.md) | [12. Object detection on images](devkit-quick-start/chapters/12-object-detection.md) |
 | [13. LLiMa: search, list, pull](devkit-quick-start/chapters/13-llima.md) | [14. The Neat stack](devkit-quick-start/chapters/14-neat-components.md) | [15. Install the Neat SDK](devkit-quick-start/chapters/15-install-neat-sdk.md) |
 | [16. The `dk` command](devkit-quick-start/chapters/16-devkit-tool-dk.md) | [17. Neat Insight](devkit-quick-start/chapters/17-neat-insight.md) | [18. A C++ video application, end to end](devkit-quick-start/chapters/18-cpp-video-app.md) |
-| [19. Agentic development](devkit-quick-start/chapters/19-agentic-development.md) |  |  |
+| [19. Agentic development](devkit-quick-start/chapters/19-agentic-development.md) | [20. Inside a model archive](devkit-quick-start/chapters/20-model-archive.md) |  |
 
 Work through it in order the first time; afterwards each chapter stands alone.
 
@@ -80,31 +80,46 @@ each one and how to run it.
 | Type | | | | |
 | --- | --- | --- | --- | --- |
 | **Single&nbsp;stream** | [YOLO11](apps/single-stream-yolo-yolo11/README.md) | [YOLOv8m](apps/single-stream-yolo-yolov8m/README.md) | [YOLO26n](apps/single-stream-yolo26n/README.md) | [YOLOv8n&nbsp;seg](apps/single-stream-yolov8n-seg/README.md) |
-|  | [YOLO&nbsp;+&nbsp;Insight](apps/single-stream-yolo-insight/README.md) | [OpenPose](apps/single-stream-open-pose/README.md) |  |  |
-| **Multi-stream** | [2&nbsp;streams,&nbsp;YOLO11](apps/multi-stream-yolo-yolo11/README.md) | [4&nbsp;streams,&nbsp;4&nbsp;models](apps/quad-stream-quad-model/README.md) | [16&nbsp;streams,&nbsp;4&nbsp;models](apps/16stream4model/README.md) | [Multi-model&nbsp;probe](apps/multi-model-load-probe/README.md) |
+|  | [YOLO&nbsp;+&nbsp;Insight](apps/single-stream-yolo-insight/README.md) |  |  |  |
+| **Multi-stream** | [2&nbsp;streams,&nbsp;YOLO11](apps/multi-stream-yolo-yolo11/README.md) | [4&nbsp;streams,&nbsp;4&nbsp;models](apps/quad-stream-quad-model/README.md) | [16&nbsp;streams,&nbsp;4&nbsp;models](apps/16stream4model/README.md) |  |
 | **Other** | [USB&nbsp;camera](apps/usb-camera-yolo26m/README.md) | [PCB&nbsp;defects](apps/pcb-defect-detection-yolo26n/README.md) | [Detection&nbsp;+&nbsp;VLM](apps/detection-vlm-assistant/README.md) | [Benchmark](apps/benchmark/README.md) |
 
 ---
 
 ## 4. Model compilation
 
-**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Twelve models: download
-the ten prebuilt archives, or set up to compile them yourself.
+**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Fifteen models: download
+the ten prebuilt archives, or set up to compile them yourself. Any model can be built as INT8 or bf16.
 
 Models with a compile recipe (each links to its commands):
 
 | Task | | | | |
 | --- | --- | --- | --- | --- |
-| **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
-| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-no-dfl-rebuild) |
-|  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) |  |  |  |
+| **Classify** | [resnet50](model-compilation/COMPILE-COMMANDS.md#1-resnet50--classification-no-surgery) | [convnext_tiny](model-compilation/COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery-bf16) | [densenet169](model-compilation/COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | [efficientnet_v2_s](model-compilation/COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) |
+| **Detection** | [yolov8s](model-compilation/COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | [yolo11n](model-compilation/COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | [yolo11s](model-compilation/COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | [yolo26n](model-compilation/COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-one-to-one-head-yolov26) |
+|  | [yolox_s](model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery) | [yolo26m&nbsp;(bf16)](model-compilation/COMPILE-COMMANDS.md#13-yolo26m--detection-bf16) | [yolo26s](model-compilation/COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study) |  |
 | **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
 | **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
 | **Open-vocab** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |  |
+| **Multi-batch** | [yolo26m&nbsp;batch&nbsp;6&nbsp;(INT8)](model-compilation/COMPILE-COMMANDS.md#15-yolo26m-at-batch-6--multi-batch-int8) |  |  |  |
 
 **[`model-compilation/COMPILE-COMMANDS.md`](model-compilation/COMPILE-COMMANDS.md)** — the commands.
-`compile_all.sh` for eleven of the twelve (`yolov8s-worldv2` needs bf16 and is built separately), or
-a copy-paste block per model with its exact expected result.
+`compile_all.sh` for eleven models (the ten in the prebuilt zip plus `yolov8s`), or a
+copy-paste block per model with its exact expected result.
+
+**[`model-compilation/ACCURACY.md`](model-compilation/ACCURACY.md)** — what INT8 and
+bf16 cost against FP32 for Ultralytics `yolo26s` on COCO val2017 (4,980 images): bf16 matches FP32
+(−0.07 mAP50-95), INT8 costs 2.67 mAP50-95 and runs 1.7× faster than bf16 on the MLA. To replicate
+the numbers step by step: [`model-compilation/accuracy/README.md`](model-compilation/accuracy/README.md).
+
+**[`model-compilation/BOX-DECODE.md`](model-compilation/BOX-DECODE.md)** — the Neat box decoder
+(`decode_type` / `decode_type_option`) each compiled model needs, and how it is checked on the
+DevKit.
+
+**[`model-compilation/MULTI-BATCH.md`](model-compilation/MULTI-BATCH.md)** — compiling a model to run
+N images per MLA call, which models can be batched, and profiling batch 1 against batch N on the
+DevKit. **[`model-compilation/YOLO26X-STUDY.md`](model-compilation/YOLO26X-STUDY.md)** — `yolo26x` INT8,
+the largest YOLO26: its compile, why it cannot be batched, and its time profile on the DevKit.
 
 **[`model-compilation/MODEL-COMPILATION.md`](model-compilation/MODEL-COMPILATION.md)** — the
 reasoning. Why graph surgery is needed, what a good archive looks like (**one `.elf`, zero `.so`**),
@@ -160,18 +175,20 @@ From the Quick Start Guide:
 
 ---
 
-## Tested on NEAT 0.4.0
+## Tested on Neat 0.5.0
 
-Everything here was migrated to and re-verified against **NEAT Library 0.4.0 / SDK 2.1.3**, on a
-Modalix DevKit. The 10 C++ apps build with zero warnings, and all 14 apps were run on real
-hardware, most against a 1280x720 H.264 60 fps RTSP source. The exceptions are listed in
-[`apps/README.md`](apps/README.md#test-source). All 14 tutorial notebooks run on NEAT 0.4.0.
+Everything here was re-verified against **Neat Library 0.5.0 / SDK 2.1.3.1** (DevKit software
+2.1.3), on a Modalix DevKit. The C++ apps build with zero warnings, and the apps were run on real
+hardware, most against a 1280x720 H.264 60 fps RTSP source (the other sources are listed in
+[`apps/README.md`](apps/README.md#test-source)). All 14 tutorial notebooks and the LLiMa notebooks run
+on Neat 0.5.0. The one exception is the [accuracy study](model-compilation/ACCURACY.md), measured on
+Neat 0.4.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating-to-neat-050).
 
 | | Version |
 | --- | --- |
-| NEAT Library | **0.4.0** (`libsima_neat.so.4`, ABI 4) |
-| pyneat | **0.4.0** |
-| SDK container | **2.1.3** |
+| Neat Library | **0.5.0** (`libsima_neat.so.5`, ABI 5) |
+| pyneat | **0.5.0** |
+| SDK container | **2.1.3.1** |
 | Board interpreter | `/home/sima/pyneat/bin/python` |
 
 ---

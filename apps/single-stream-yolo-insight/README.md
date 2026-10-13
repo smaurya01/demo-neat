@@ -40,6 +40,8 @@ The pipeline shape (one graph, `branch` to video + model, detections pulled from
 metadata sent from the app loop) follows the upstream example
 [`single-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/single-stream-object-detector).
 
+![single-stream-yolo-insight in Neat Insight](docs/insight.jpg)
+
 ## About Project
 
 - Application: `single_stream_yolo_insight`
@@ -78,7 +80,7 @@ YOLO11 is published in the SiMa model zoo, so just download it:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
 cd ../..
 ```
 
@@ -99,13 +101,19 @@ insight_host=<host-ip>
 channel=0
 ```
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+
 Do not assume the default Insight ports — read the real ones from `neat --json` on the Insight
 host and set `video_port_base` / `metadata_port_base` if they differ.
 
 For a bounded smoke test, set `frames=30`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -127,9 +135,10 @@ or overlays land on the wrong viewer tile.
 
 `model_width` / `model_height`: Model input size used by Neat preprocessing.
 
-`width` / `height` / `fps`: Decoded frame geometry used when RTSP caps
-are incomplete. The C++ demo also sizes the encoder contract from these, so set them to match
-your stream.
+`width` / `height` / `fps`: Resolution and frame rate (whole number) of the RTSP stream. Fallback,
+used only if the camera cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the camera at start; `false` uses the values above.
 
 `latency_ms`: RTSP receiver latency buffer in milliseconds.
 
@@ -225,8 +234,8 @@ see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadat
 
 - `messages_received` flat at `0` — the datagrams never arrive: wrong `insight_host`,
   wrong `metadata_port_base`, or a firewall.
-- `messages_received` climbing but `messages_forwarded` flat at `0` — vf is rejecting the
-  envelope. The usual cause is an integer `"timestamp"` field; see
+- `messages_received` climbing but `messages_forwarded` flat at `0` — the messages carry a
+  `"timestamp"` that matches no video frame, so Insight's viewer holds them until they expire; see
   [Metadata Wire Format](#appendix-metadata-wire-format).
 - `messages_forwarded` climbing but still no boxes — video and metadata are on mismatched
   channels, or every detection is below `score_threshold`.
@@ -235,8 +244,10 @@ see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadat
 
 # Appendix
 
+## Appendix: Metadata Wire Format
+
 <details>
-<summary><h2>Appendix: Metadata Wire Format</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -262,25 +273,35 @@ viewer. `data_json` looks like:
 frame. Insight renders the types `object-detection`, `classification`, `pose-estimation`,
 `segmentation` and `tracking`; other types are delivered but not drawn.
 
-**Do not pass an epoch-millisecond timestamp to `send_metadata`.** Insight's vf ingest drops every
-metadata message whose top-level `"timestamp"` is a **JSON integer** — the datagram is counted in
-`/api/ingest/stats` under `metadata.messages_received` (and `invalid_json` stays `0`), but
-`metadata.messages_forwarded` never leaves `0`, so nothing reaches the browser DataChannel and no
-boxes are drawn. Passing `-1` makes `MetadataSender` omit the field entirely, vf forwards the
-message, and the viewer pairs metadata to frames by arrival order. A float timestamp (seconds, as
-`neat-insight-metadata-test` emits) is also forwarded; an integer of any magnitude is not.
+**Why this app sends no `timestamp`.** Insight draws a metadata message on the video frame whose RTP
+timestamp matches the message's integer-millisecond `"timestamp"` within one millisecond. In this
+app the branch's video leg (the `video_sender` group, encoding from raw NV12) re-stamps each frame
+as it enters the encoder, so neither the camera's timestamp nor wall-clock time can match a frame:
+Insight's viewer holds such messages until they expire, `messages_received` climbs,
+`messages_forwarded` stays at `0`, and no boxes are drawn. Passing `-1` makes `MetadataSender` omit the field, and the viewer pairs each message with
+the newest frame instead (boxes trail fast-moving objects by the pipeline latency).
+
+An app whose encoded video keeps the source timestamp should send it: `sample.pts_ns / 1'000'000`.
+The custom-plugin `detect_to_insight` example and quick-start chapter 18 do; their boxes stay
+frame-locked on a 30 fps source. (With Insight 0.0.8, the browser fails to match a 60 fps stream this way; see the
+custom-plugin README.)
 
 </details>
 
+## Appendix: Decode Family
+
 <details>
-<summary><h2>Appendix: Decode Family</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
 The zoo `yolo_11n` archive exposes raw 64-channel DFL heads and decodes with
 `BoxDecodeType.YoloV8`. A **self-compiled** YOLO11 archive (via
-[`model-compilation/`](../../model-compilation/README.md)) folds the DFL into the model and emits
-4-channel l/t/r/b heads — switch to `BoxDecodeType.YoloV26` in `make_model()`. Getting this wrong
-still runs and still produces boxes; they are just decoded from the wrong channels.
+[`model-compilation/`](../../model-compilation/README.md)) keeps the same 64-channel DFL heads but
+emits class **logits** instead of probabilities: keep `BoxDecodeType.YoloV8` and set
+`decode_type_option = BoxDecodeTypeOption.GroupedByRoleLogit` in `make_model()`. Without the option
+the logits are read as probabilities, so scores exceed 1 and the threshold is meaningless. Never
+decode a YOLO11 with `YoloV26`: since Neat 0.5.0 that decoder skips NMS, and you get a stack of
+duplicate boxes per object.
 
 </details>

@@ -22,6 +22,10 @@
 This demo runs one RTSP stream through the SiMa Neat YOLO11 object detection model, draws decoded
 detections on NV12 frames, and publishes the annotated video as H.264/RTP over UDP.
 
+![single-stream-yolo-yolo11 in Neat Insight](docs/insight.jpg)
+
+*YOLO11n detections (Python app) on a 1280×720 street stream, viewed in Neat Insight.*
+
 ## About Project
 
 - Application: `single_stream_yolo_yolo11`
@@ -49,7 +53,7 @@ YOLO11 is published in the SiMa model zoo, so just download it:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
 cd ../..
 ```
 
@@ -80,10 +84,16 @@ udp_host=<host-ip>
 udp_port=9000
 ```
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -101,11 +111,13 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
 `model_height`: Model input height used by Neat preprocessing.
 
-`width`: Fallback decoded frame width used when RTSP caps are incomplete.
+`width`: Width of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`height`: Fallback decoded frame height used when RTSP caps are incomplete.
+`height`: Height of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
+`fps`: Frame rate of the RTSP stream (whole number). Fallback, used only if the camera cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the camera at start; `false` uses the values above.
 
 `latency_ms`: RTSP receiver latency buffer in milliseconds.
 
@@ -193,8 +205,10 @@ read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assum
 
 # Appendix
 
+## Appendix: Building YOLO11 Yourself
+
 <details>
-<summary><h2>Appendix: Building YOLO11 Yourself</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -224,18 +238,15 @@ cp ../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz \
    ./assets/models/yolo_11n_mpk.tar.gz
 ```
 
-**A self-compiled archive decodes differently from the zoo one.** The two expose different detection
-heads, and the decode family must match:
+**A self-compiled archive has the same heads as the zoo one, but outputs class logits:**
 
-| archive | bbox head | decode family |
-| --- | --- | --- |
-| zoo `yolo_11n` | 3x 64-channel raw DFL | `BoxDecodeType.YoloV8` |
-| self-compiled `yolo11n` | 3x 4-channel l/t/r/b | `BoxDecodeType.YoloV26` |
+| archive | bbox head | class scores | decode |
+| --- | --- | --- | --- |
+| zoo `yolo_11n` | 3x 64-channel raw DFL | probabilities | `BoxDecodeType.YoloV8` |
+| self-compiled `yolo11n` | 3x 64-channel raw DFL | logits | `BoxDecodeType.YoloV8` + `BoxDecodeTypeOption.GroupedByRoleLogit` |
 
-`model_spec()` in [`main.py`](main.py) reports `yolo11`, which selects `YoloV8` — correct for the
-**zoo** archive. If you drop in a self-compiled archive, its graph surgery folds the DFL into the
-model and emits 4-channel distance heads instead, so switch the decode family to
-`pyneat.BoxDecodeType.YoloV26` in `make_model()`. Getting this wrong still runs and still draws
-boxes; they are just decoded from the wrong channels.
+`model_spec()` in [`main.py`](main.py) reports `yolo11`, which selects `YoloV8` for the zoo archive.
+For a self-compiled archive, also set `opt.decode_type_option =
+pyneat.BoxDecodeTypeOption.GroupedByRoleLogit` in `make_model()`.
 
 </details>

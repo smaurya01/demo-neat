@@ -34,7 +34,7 @@ source $HOME/pyneat/bin/activate
 
 python -m pip install notebook   # only once, if Jupyter is missing
 
-cd /workspace/demo-neat
+cd /workspace/demo-neat   # your clone of this repo under /workspace
 jupyter notebook --no-browser --ip=0.0.0.0 --port=8888
 ```
 
@@ -57,7 +57,7 @@ The core objects. Nothing here needs a camera.
 | 2 | [`02_node_and_graph.ipynb`](I-easy/02_node_and_graph.ipynb) | `Node` and `Graph` — how a pipeline is assembled |
 | 3 | [`03_interpret_model_output_samples.ipynb`](I-easy/03_interpret_model_output_samples.ipynb) | `Sample` — reading what a model actually returned |
 | 4 | [`04_image_classification_resnet.ipynb`](I-easy/04_image_classification_resnet.ipynb) | A first end-to-end model: ResNet-50 classification |
-| 5 | [`05_yolo_cpu_decode.ipynb`](I-easy/05_yolo_cpu_decode.ipynb) | Decoding raw YOLO heads on the CPU — what box decode does for you |
+| 5 | [`05_yolo_cpu_decode.ipynb`](I-easy/05_yolo_cpu_decode.ipynb) | Parsing Neat's decoded BBOX payload on the CPU (count + 24-byte records) |
 | 6 | [`06_yolov8_image_detection_pipeline.ipynb`](I-easy/06_yolov8_image_detection_pipeline.ipynb) | A full image detection pipeline with Neat box decode |
 
 ## II — Medium
@@ -124,7 +124,7 @@ folder **on the DevKit**:
 ```bash
 mkdir -p assets/models
 cd assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get resnet_50
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get resnet_50
 cd ../..
 ```
 
@@ -135,7 +135,7 @@ cd ../..
 ```bash
 mkdir -p assets/models
 cd assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8s
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8s
 cd ../..
 ```
 
@@ -146,23 +146,26 @@ cd ../..
 ```bash
 mkdir -p assets/models
 cd assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
 cd ../..
 ```
 
 → `assets/models/yolo_v8n_mpk.tar.gz`
 
-These 2.1.2 zoo archives are the ones every notebook here was run with on NEAT 0.4.0 / SDK 2.1.3.
+These 2.1.3 zoo archives are the ones every notebook here was run with on Neat 0.5.0 / SDK 2.1.3.1.
+If a `sima-cli` update prompt aborts the download, set `SIMA_CLI_CHECK_FOR_UPDATE=0` first.
 
-> **YOLO11 is in the model zoo** — `sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11n`
+> **YOLO11 is in the model zoo** — `sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n`
 > works, as do `yolo_11s/m/l/x`. No notebook here needs it, but the YOLO11 apps do; see
 > [`single-stream-yolo-yolo11`](../apps/single-stream-yolo-yolo11/README.md). A zoo YOLO11 archive
 > decodes with `BoxDecodeType.YoloV8` (raw 64-channel DFL bbox heads), which is why `II-medium/01`
 > describes that family as YOLOv8/YOLO11-style. Compile YOLO11 yourself only for a variant the zoo
-> does not publish — the graph-surgery flow in
-> [`model-compilation/`](../model-compilation/README.md) produces 4-channel l/t/r/b heads instead,
-> which need `BoxDecodeType.YoloV26`. The zoo carries a large catalog of models — always check it
-> before compiling something from scratch.
+> does not publish. The graph-surgery flow in [`model-compilation/`](../model-compilation/README.md)
+> keeps the same 64-channel DFL heads, so the archive still decodes with `BoxDecodeType.YoloV8`; it
+> emits class logits rather than probabilities, so also set
+> `decode_type_option = BoxDecodeTypeOption.GroupedByRoleLogit`. Never decode a YOLOv8/YOLO11 with
+> `YoloV26`: that decoder runs no NMS (YOLO26 heads don't need it), so you get duplicate boxes. The zoo
+> carries a large catalog of models — always check it before compiling something from scratch.
 
 ## References
 

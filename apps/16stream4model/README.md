@@ -13,6 +13,10 @@ re-encodes one.
 **Result:** the output rate equals the input rate, 480 / 480 fps, with every stream at 30 fps.
 See [Measured results](#measured-results).
 
+![16stream4model in Neat Insight](docs/insight.jpg)
+
+*All 16 streams in Neat Insight: three detector groups and the pose group.*
+
 ## Contents
 
 - [Topology](#topology)
@@ -102,9 +106,9 @@ Download commands, run from `assets/models/`:
 
 ```bash
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz"
-sima-cli modelzoo --boardtype modalix get yolo_11n
-sima-cli modelzoo --boardtype modalix get yolo_v8n
-sima-cli modelzoo --boardtype modalix get yolo_26n_pose
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_26n_pose
 ```
 
 Model archives are gitignored, so download them after cloning.
@@ -120,7 +124,7 @@ Metadata sent to Insight:
 ## Build (SDK host)
 
 ```bash
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr \
       -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-gnu-g++-12
@@ -153,16 +157,23 @@ Before the first run, fill in the placeholders in `config/default.conf`:
 - `insight_host=<insight-host-ip>`: the Insight host's IP as seen from the DevKit. `curl -sk
   https://127.0.0.1:9900/api/server-ip` on the SDK host reports it.
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height`, `fps` and
+> `stream<i>_fps` in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+>
+> All cameras must have the same resolution. Each must run at a whole-number frame rate
+> (30, not 29.97); the rates can differ between cameras.
+
 The app refuses to start, and names the key, while any `<...>` placeholder is left. To keep a
-filled-in copy out of git, save it outside the repo, or under `logs/`, and pass it with
-`--config <path>`.
+filled-in copy out of git, save it outside the repo, or under `logs/` (create it with
+`mkdir -p logs`; it is git-ignored), and pass it with `--config <path>`.
 
 ### 2. Run the app on the DevKit
 
 **From the SDK host with `dk`.** This is the usual way. Run it from the app directory:
 
 ```bash
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 dk ./build/16stream4model --duration 60 --report-interval 10
 ```
 
@@ -191,13 +202,14 @@ dk ./build/16stream4model --config ./config/default.conf --duration 300 --report
 
 ```bash
 ssh sima@<devkit-ip>
-cd /workspace/demo-neat/apps/16stream4model
+cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 ./build/16stream4model --duration 60 --report-interval 10
 ```
 
 For a long detached soak, run this on the board:
 
 ```bash
+mkdir -p logs
 nohup ./build/16stream4model --duration 1800 --report-interval 60 > logs/soak.log 2>&1 &
 ```
 
@@ -289,7 +301,7 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 |---|---|---|
 | `stream<i>_rtsp` | none (required) | Source URL (`<rtsp-url-i+1>` in the config). |
 | `stream<i>_model` | `i / 4` | Which model this stream feeds. |
-| `stream<i>_fps` | global `fps` | This stream's integer source rate (pinned). |
+| `stream<i>_fps` | global `fps` | This stream's integer source rate, used when the stream cannot be probed. |
 
 **Global:**
 
@@ -300,7 +312,8 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | `decoder_tuning` | `throughput-low-latency` | Hardware decoder profile. |
 | `verbose`, `print_backend` | `false`, `false` | Same as `--verbose` and `--print-backend`. |
 | `insight_host`, `video_port_base`, `metadata_port_base` | `127.0.0.1`, 9000, 9100 | Insight destination: the Insight host's IP as seen from the DevKit (`<insight-host-ip>` in the config). Channel `i` uses base + `i`. |
-| `width`, `height`, `fps` | 1280, 720, 30 | Source contract. |
+| `width`, `height`, `fps` | 1280, 720, 30 | Source contract when a stream cannot be probed. |
+| `probe_source` | `true` | Read every stream's width, height and frame rate with `ffprobe` at start; `false` trusts the values above. |
 | `skip_rtsp_probe` | `true` | Trust the contract instead of probing each URL. This is also what lets Core admit decoders with zero-copy output. |
 | `decoder_buffers`, `decoder_input_buffers` | 8, 2 | Core admission raises output buffers to 18 when every decoder has known caps. |
 | `max_inflight_per_stream`, `max_inflight_total` | 2, 8 | Frames admitted into each model, per stream and per model. |
@@ -340,5 +353,5 @@ config/default.conf         16 streams, 4 models (the configuration above)
 scripts/start_sources.sh    assign, start, and verify the 16 Insight sources (the mapping above)
 assets/models/              model archives (gitignored; see Models for download commands)
 assets/labels/              coco_label.txt (80 classes), person.txt (pose)
-logs/                       run logs (gitignored)
+logs/                       run logs (gitignored; create with mkdir -p logs)
 ```

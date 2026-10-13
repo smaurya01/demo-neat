@@ -66,8 +66,7 @@ the board; `print()` lands in your SDK terminal.
 Cross-compile in the SDK, then run the ARM64 binary on the board with the same command:
 
 ```bash
-sima-user@sdk:/workspace$ dk build/sima_neat_hello
-sima-user@sdk:/workspace$ dk build/my_app --config config.yaml
+sima-user@sdk:/workspace/rtsp-detector$ dk ./build/rtsp_detector --config ./config.yaml
 ```
 
 Arguments after the binary are passed straight through, including file paths — `dk` translates

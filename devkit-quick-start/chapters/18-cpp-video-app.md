@@ -58,7 +58,9 @@ there before going further:
 sima-user@sdk:/workspace$ dk status
 ```
 
-<!-- screenshot: VS Code attached to the sima-neat/sdk container with /workspace open -->
+<p align="center">
+  <img src="../../installation/images/VS-3.png" alt="VS Code attached to the SDK container with /workspace open" width="600">
+</p>
 
 ---
 
@@ -70,8 +72,9 @@ Ask the SDK for the URL rather than assuming the port:
 sima-user@sdk:/workspace$ neat
 ```
 
-Take the **Insight Web UI** address from the `Exposed Ports` block and open it in a browser. Note
-two more rows from that same table — you will need them in the config:
+Open the **Insight (local)** address from the `Web Access` block in a browser (use **Insight
+(remote)** from another machine). Then note two rows from the `Exposed Ports` table — you will
+need them in the config:
 
 | Row | Used for |
 |---|---|
@@ -80,8 +83,6 @@ two more rows from that same table — you will need them in the config:
 
 Accept the self-signed certificate warning. Check the **devkit-ip** appears in the top-right corner
 of the UI — if it does not, the SDK is not paired and the video will have nowhere to come from.
-
-<!-- screenshot: Insight landing page with devkit-ip visible top right -->
 
 ---
 
@@ -106,10 +107,12 @@ is given. A 120 fps or 1080p variant will run, but you would have to change all 
 Uploading your own clip through **Local files** works equally well — as long as it is **H.264,
 1280×720, 30 fps**. Select it after import and confirm those numbers on the metadata panel.
 
-<!-- screenshot: Media Library with the 720p H.264 catalog variant imported -->
+<p align="center">
+  <img src="../images/insight-import-catalog.jpg" alt="Insight Import Media dialog on the Catalog tab" width="720">
+</p>
 
-**3b. Assign it to a source slot.** Go to the **RTSP Source** tab. Insight has three slots —
-`src1`, `src2`, `src3` — all served on port `8554`. Assign your file to **`src1`**, either by
+**3b. Assign it to a source slot.** Go to the **RTSP Source** tab. Insight has numbered slots —
+`src1`, `src2`, and so on — all served on port `8554`. Assign your file to **`src1`**, either by
 picking it in the slot's dropdown or with **auto-assign**.
 
 **3c. Start the stream.** Press start on `src1`. The slot should switch to a running state and
@@ -121,7 +124,9 @@ rtsp://<host-ip>:8554/src1
 
 Copy that URL exactly — it goes straight into the config. Leave the stream running.
 
-<!-- screenshot: RTSP Source tab, src1 assigned and started, URL visible -->
+<p align="center">
+  <img src="../images/insight-rtsp.jpg" alt="Insight RTSP Source tab with media assigned to source slots" width="720">
+</p>
 
 > **Copy that URL.** It is `<rtsp-url>` in the config in Step 4.
 
@@ -155,7 +160,8 @@ sima-user@sdk:/workspace/rtsp-detector$ export MODELZOO_VERSION="2.1.3"
 sima-user@sdk:/workspace/rtsp-detector$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
-If the download asks you to log in, run `sima-cli login` in the SDK shell first.
+If the download asks you to log in, run `sima-cli login` in the SDK shell first. To see what is
+inside the archive, and what each file in it does, read [Chapter 20](20-model-archive.md).
 
 ### The labels
 
@@ -255,8 +261,9 @@ EOF
 </details>
 
 **Option 2 — copy it from your host.** If you have this repository checked out on your host, the
-same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). Copy it
-into the workspace folder you chose at setup prompt 4:
+same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). From the
+folder that holds your `demo-neat` checkout, copy it into the workspace folder you chose at setup
+prompt 4:
 
 ```bash
 sima-user@host:~$ cp demo-neat/tutorial/assets/coco_labels.txt ~/workspace/rtsp-detector/
@@ -309,7 +316,7 @@ metadata_port: 9100
 
 # Detection
 min_score: 0.30
-nms_iou: 0.60
+nms_iou: 0.60      # unused by YOLO26: its decoder returns one box per object, no NMS
 max_detections: 50
 ```
 
@@ -318,9 +325,14 @@ Fill in the two placeholders:
 | Placeholder | Value |
 |---|---|
 | `<rtsp-url>` | The URL Insight showed for `src1` in Step 3, copied exactly |
-| `<host-ip>` | The machine running Insight — the IP from the **Insight Web UI** row of `neat` |
+| `<host-ip>` | The machine running Insight — the IP on the **Insight (remote)** line of `neat` |
 
 Both must be reachable **from the board**, which is where the application runs.
+
+> **Set `stream_width`, `stream_height` and `stream_fps` to your stream's values.** A frame rate that
+> differs stops the app at start. Check with
+> `ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0 <rtsp-url>`
+> (a `30000/1001` camera is `30`).
 
 The `stream_*` values are already correct for the `720p30` variant from Step 3.
 
@@ -508,6 +520,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
     model_opt.decode_type = neat::BoxDecodeType::YoloV26;
     model_opt.score_threshold = static_cast<float>(as_double(cfg, "min_score", 0.30));
+    // YoloV26 runs no NMS (one-to-one head); this matters only if you switch to a YoloV8 model.
     model_opt.nms_iou_threshold = static_cast<float>(as_double(cfg, "nms_iou", 0.60));
     model_opt.top_k = max_detections;
     neat::Model model(model_path, model_opt);
@@ -626,8 +639,6 @@ sima-user@sdk:/workspace/rtsp-detector$ cmake --build ./build --parallel
 `CMAKE_PREFIX_PATH` points CMake at the SDK sysroot, where the aarch64 Neat package lives. Without
 it, `find_package(SimaNeat)` fails.
 
-<!-- screenshot: successful cmake build in the VS Code terminal -->
-
 ---
 
 ## Step 6 — Run it on the board
@@ -638,14 +649,29 @@ Do not run the binary in the container — it was cross-compiled for the board. 
 sima-user@sdk:/workspace/rtsp-detector$ dk ./build/rtsp_detector --config ./config.yaml
 ```
 
-The binary executes on the DevKit and its output comes back to your SDK terminal:
+The binary executes on the DevKit and its output comes back to your SDK terminal. `dk` tags each
+line `[DEVKIT][STDOUT]` or `[DEVKIT][STDERR]`; without the tags it reads:
 
 ```text
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: ...)
+[WARN] Model preprocess planner produced 39 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
+[1/4] Initializing runtime...
+...
+[4/4] Graph ready (114 ms)
+Pipeline:
+rtspsrc name=n0_rtspsrc_1 location="rtsp://<host-ip>:8554/src1" ...
 source=rtsp://<host-ip>:8554/src1 stream=1280x720@30 insight=<host-ip> video=9000 metadata=9100
 Ctrl-C to stop.
+Pipeline:
+appsrc name=mysrc_1 ...
+Configuring for the decoding type: 8:yolo26
+...
 frames=50
 frames=100
 ```
+
+The `[WARN]` line is advisory and safe to ignore. `Pipeline:` prints the GStreamer pipeline Neat
+built for each graph.
 
 `Ctrl-C` stops it cleanly — the signal handler closes the `Run` so the encoder, decoder and model
 release properly.
@@ -663,7 +689,9 @@ What you are confirming, in order:
 3. **Boxes sit on the objects** — the two branches are timestamp-aligned, which is the whole point
    of keeping them in one graph.
 
-<!-- screenshot: Insight Video Viewer, channel 0, boxes on the 720p stream -->
+<p align="center">
+  <img src="../images/insight-detections.jpg" alt="Insight Video Viewer showing detection boxes on the 720p parking garage stream" width="760">
+</p>
 
 ---
 
@@ -678,7 +706,7 @@ version of `single-stream-object-detector`, which adds source probing, MJPEG and
 annotated-frame saving and profiling:
 
 ```bash
-sima@modalix:~$ ls ~/prebuilt-apps/examples/object-detection/
+sima@modalix:~$ ls /media/nvme/neat/prebuilt-apps/examples/object-detection/
 ```
 
 | Next | Where |
@@ -686,10 +714,11 @@ sima@modalix:~$ ls ~/prebuilt-apps/examples/object-detection/
 | Build apps by prompting a coding agent | [Chapter 19](19-agentic-development.md) |
 | Neat concepts as runnable notebooks | [`tutorial/`](../../tutorial/README.md) in this repository |
 | More complete applications | [`apps/`](../../apps/README.md) in this repository |
+| What is inside a model archive | [Chapter 20](20-model-archive.md) |
 | Compile your own model | [`model-compilation/`](../../model-compilation/README.md) in this repository |
 | LLMs, VLMs and speech | [`llima/`](../../llima/README.md) in this repository |
 | Multiple streams at once | `multi-stream-object-detector` in the apps bundle |
-| Tracking, pose, segmentation | The other categories under `prebuilt-apps/examples/` |
+| Tracking, pose, segmentation | The other categories under `/media/nvme/neat/prebuilt-apps/examples/` |
 | The C++ API reference | [developer.sima.ai](https://developer.sima.ai/software/develop-apps/) |
 
 ---

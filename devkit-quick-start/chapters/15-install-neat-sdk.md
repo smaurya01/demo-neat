@@ -42,7 +42,7 @@ sima-user@host:~$ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.s
 ## Install SDK
 
 > Screenshots of every step are in the
-> [full installation guide](../../installation/README.md#walkthrough).
+> [full installation guide](../../installation/README.md#detailed-walkthrough-with-screenshots).
 
 One command, on the host:
 
@@ -59,7 +59,7 @@ There is no separate setup step afterwards — it is one continuous flow that:
 5. Installs Neat Core into the container, and onto the paired DevKit.
 
 `release-2.1` tracks the latest patch in the 2.1 series. For the set this guide uses — board
-software **2.1.3** — that is SDK **2.1.3.0**; check it against the table in
+software **2.1.3** — that is SDK **2.1.3.1**; check it against the table in
 [Chapter 9](09-check-and-update-image.md#which-version-should-you-be-on). The board, the SDK and
 the Neat Library move as a set.
 
@@ -130,7 +130,7 @@ VS Code terminal once you have attached, below.
 ## Check it works
 
 From inside the attached container, `dk` runs things on the paired board. Save this as
-`hello_neat.py`:
+`/workspace/hello_neat.py`:
 
 ```python
 import pyneat
@@ -140,11 +140,17 @@ print("pyneat import successful")
 Then:
 
 ```bash
-sima-user@sdk:/workspace$ dk hello_neat.py        # a pyneat script
-sima-user@sdk:/workspace$ dk build/<binary-name>  # a compiled C++ binary
+sima-user@sdk:/workspace$ dk hello_neat.py
 ```
 
-If it prints, the runtime is live on the DevKit and the workspace share is working.
+It should end with:
+
+```text
+[DEVKIT][STDOUT] pyneat import successful
+```
+
+If it prints, the runtime is live on the DevKit and the workspace share is working. `dk` runs
+compiled C++ binaries the same way — [Chapter 18](18-cpp-video-app.md) builds and runs one.
 
 ---
 

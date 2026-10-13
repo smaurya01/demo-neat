@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 import glob
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -118,6 +119,7 @@ class Config:
     width: int = 1280
     height: int = 720
     fps: int = 30
+    probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     latency_ms: int = 200
     score_threshold: float = 0.25
     nms_iou: float = 0.50
@@ -221,7 +223,7 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         "udp_port_base": ("udp_port_base", int), "udp_port_stride": ("udp_port_stride", int),
         "model_width": ("model_width", int), "model_height": ("model_height", int),
         "width": ("width", int), "height": ("height", int),
-        "fps": ("fps", int), "latency_ms": ("latency_ms", int),
+        "fps": ("fps", int), "probe_source": ("probe_source", parse_bool), "latency_ms": ("latency_ms", int),
         "score_threshold": ("score_threshold", float), "nms_iou": ("nms_iou", float),
         "top_k": ("top_k", int), "bitrate_kbps": ("bitrate_kbps", int),
         "queue_depth": ("queue_depth", int), "frames": ("frames", int),
@@ -687,15 +689,34 @@ def tensor_dim(t, name):
     return int(v() if callable(v) else v)
 
 
+def nv12_packed(tensor, width: int, height: int):
+    """Contiguous (height * 3 / 2, width) NV12 from a decoded tensor, honouring its plane layout.
+
+    The decoder may pad the Y plane (1280x720 comes back with 768 Y rows on Neat 0.5.0), so the
+    UV plane does not necessarily start at width * height. Read each plane at its own byte
+    offset and row stride; slicing the first width * height * 3 / 2 bytes would read the
+    padding as chroma (a green band, and every colour shifted).
+    """
+    payload = np.frombuffer(tensor.copy_payload_bytes(), dtype=np.uint8)
+    y_off, y_stride, uv_off, uv_stride = 0, width, width * height, width
+    for plane in tensor.planes:
+        if plane.role == pyneat.PlaneRole.Y:
+            y_off, y_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
+        elif plane.role == pyneat.PlaneRole.UV:
+            uv_off, uv_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
+    if payload.size < uv_off + (height // 2) * uv_stride or payload.size < y_off + height * y_stride:
+        raise RuntimeError(f"NV12 payload too small: {payload.size} bytes for {width}x{height}")
+    out = np.empty((height * 3 // 2, width), dtype=np.uint8)
+    out[:height] = payload[y_off:y_off + height * y_stride].reshape(height, y_stride)[:, :width]
+    out[height:] = payload[uv_off:uv_off + (height // 2) * uv_stride].reshape(height // 2, uv_stride)[:, :width]
+    return out
+
+
 def tensor_nv12_from_decoded(t):
     if not t.is_nv12():
         raise RuntimeError("expected decoded NV12 frame")
     w = tensor_dim(t, "width"); h = tensor_dim(t, "height")
-    payload = np.frombuffer(t.copy_payload_bytes(), dtype=np.uint8)
-    need = w * h * 3 // 2
-    if payload.size < need:
-        raise RuntimeError(f"NV12 payload too small: {payload.size} < {need}")
-    return np.ascontiguousarray(payload[:need].reshape((h * 3 // 2, w))).copy(), w, h
+    return nv12_packed(t, w, h), w, h
 
 
 def make_nv12_tensor(nv12, w, h):
@@ -1037,12 +1058,65 @@ def print_profile(contexts: list, wall_s: float, mode: str, no_overlay: bool) ->
 
 
 # ── probing + main loop ───────────────────────────────────────────────────────
-def probe_rtsp(cfg, url):
-    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init and OpenCV's
-    # capture backend calls gst_init() itself, so probing tripped the guard and the app died with
-    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
-    # probe FAILED to open the URL -- the case the probe exists for -- so a working URL hid it.
-    return cfg.width, cfg.height, cfg.fps
+def probe_stream(url: str, tcp: bool = True):
+    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+
+    Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
+    a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
+    them from the stream at start-up, as the reference Neat apps do. ffprobe runs as a separate
+    process, so it cannot clash with Neat's GStreamer instance the way cv2.VideoCapture did.
+    """
+    cmd = ["ffprobe", "-v", "error"] + (["-rtsp_transport", "tcp"] if tcp else []) + [
+        "-timeout", "5000000", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
+        "-of", "default=nw=1", url]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+    def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
+        num, _, den = (text or "0").partition("/")
+        try:
+            value = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0
+        return int(round(value)) if value > 0 else 0
+
+    try:
+        width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
+    except ValueError:
+        return None
+    fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
+    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+
+
+def resolve_stream_geometry(cfg, specs):
+    """Set cfg.width/height/fps from the streams themselves (config values only if probing fails).
+
+    All four streams share one source graph and one geometry, so they must agree; a mismatch is
+    reported here, by stream, rather than as a misconfig.media_caps from build().
+    """
+    if not cfg.probe_source:
+        return
+    probed = {s.stream_id: probe_stream(s.rtsp_url, cfg.tcp) for s in specs}
+    found = {sid: g for sid, g in probed.items() if g is not None}
+    for sid, g in probed.items():
+        if g is None:
+            print(f"[warn] could not probe stream {sid} with ffprobe", file=sys.stderr, flush=True)
+    if not found:
+        print(f"[warn] using the config's {cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+        return
+    if len(set(found.values())) > 1:
+        detail = ", ".join(f"stream {sid} {g[0]}x{g[1]}@{g[2]}" for sid, g in found.items())
+        raise RuntimeError(f"all streams must share one resolution and frame rate: {detail}")
+    geometry = next(iter(found.values()))
+    if geometry != (cfg.width, cfg.height, cfg.fps):
+        print(f"[source] streams are {geometry[0]}x{geometry[1]}@{geometry[2]} (config says "
+              f"{cfg.width}x{cfg.height}@{cfg.fps}); using the streams' values", flush=True)
+    cfg.width, cfg.height, cfg.fps = geometry
+
 
 
 def build_run_options(cfg, *, model: bool = False):
@@ -1069,9 +1143,10 @@ def run(cfg: Config) -> int:
         if not Path(s.model_path).exists():
             raise FileNotFoundError(f"stream {s.stream_id} ({s.task}) archive not found: {s.model_path}")
 
+    resolve_stream_geometry(cfg, specs)
     contexts: list[StreamContext] = []
     for s in specs:
-        w, h, fps = probe_rtsp(cfg, s.rtsp_url)
+        w, h, fps = cfg.width, cfg.height, cfg.fps
         model_graph, _ = build_model_graph(cfg, s, w, h, fps)
         model_run = model_graph.build(build_run_options(cfg, model=True))
         _, video_run, port = build_video_graph(cfg, s, w, h, fps)

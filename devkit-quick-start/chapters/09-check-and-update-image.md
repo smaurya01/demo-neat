@@ -48,7 +48,8 @@ Units shipped before mid-December 2025 are typically Yocto.
 
 | DevKit software | Neat SDK | Neat Library | Neat Apps | Model Compiler |
 |---|---|---|---|---|
-| **2.1.3** ← this guide | 2.1.3.0 | 0.4.0 | 0.5.0 | 2.1.3 |
+| **2.1.3** ← this guide | 2.1.3.1 | 0.5.0 | 0.5.1 | 2.1.3 |
+| 2.1.3 (previous) | 2.1.3.0 | 0.4.0 | 0.5.0 | 2.1.3 |
 | 2.1.2 | 2.1.2.3 | — | — | 2.1.2 |
 | 2.0.0 | 2.0.0 | — | — | 2.0.0 |
 

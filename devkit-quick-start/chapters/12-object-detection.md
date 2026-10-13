@@ -19,6 +19,7 @@
 ## Get a compiled model
 
 Models for the MLA are distributed as compiled `.tar.gz` archives.
+[Chapter 20](20-model-archive.md) shows what is inside one and how to check it.
 
 Set the Model Zoo release first — it can differ from your board software version:
 
@@ -36,7 +37,8 @@ sima@modalix:~$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODEL
 
 `yolo26m-det-bf16-mla_tess-b1` is a good default: BF16 weights with MLA tessellation, which is what
 the example applications use. The `n`, `s`, `l` and `x` sizes are published alongside it — swap the
-letter after `yolo26` to trade accuracy for speed.
+letter after `yolo26` to trade accuracy for speed. To confirm the precision and tessellation from the
+files themselves, see [Chapter 20](20-model-archive.md#int8-and-bf16).
 
 ---
 
@@ -139,7 +141,8 @@ EOF
 </details>
 
 **Option 2 — copy it from your host.** If you have this repository checked out on your host, the
-same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt):
+same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). Run
+this from the folder that holds your `demo-neat` checkout:
 
 ```bash
 sima-user@host:~$ scp demo-neat/tutorial/assets/coco_labels.txt \
@@ -164,7 +167,7 @@ This repository ships six sample images for detection at
 sima@modalix:~$ mkdir -p /media/nvme/example/images
 ```
 
-Then copy the images across from your host checkout:
+Then copy the images across, from the folder on your host that holds your `demo-neat` checkout:
 
 ```bash
 sima-user@host:~$ scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
@@ -214,7 +217,7 @@ io:
 
 decode:
   score_threshold: 0.40   # minimum confidence to keep a box
-  nms_iou: 0.60           # overlap above which duplicate boxes are merged
+  nms_iou: 0.60           # NMS overlap; ignored by YOLO26 (one box per object, no NMS needed)
   max_detections: 50      # cap per image
 
 runtime:
@@ -326,7 +329,7 @@ def main():
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
     opt.decode_type = pyneat.BoxDecodeType.YoloV26
     opt.score_threshold = float(decode.get("score_threshold", 0.40))
-    opt.nms_iou_threshold = float(decode.get("nms_iou", 0.60))
+    opt.nms_iou_threshold = float(decode.get("nms_iou", 0.60))  # unused by YoloV26 (NMS-free)
     opt.top_k = max_detections
 
     model = pyneat.Model(model_path, opt)
@@ -415,14 +418,25 @@ error, install the missing packages:
 
 ## What you should see
 
-A per-image line naming the detections found, then one annotated image written per input:
+Neat's start-up lines first, then one line per image, and one annotated image written per input:
 
 ```text
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/...)
+[WARN] Model preprocess planner produced 39 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
+[1/4] Initializing runtime...
+[2/4] Preparing input stream...
+[3/4] Building graph...
+[4/4] Graph ready (433 ms)
 Found 6 images
 [1/6] image.png -> image.png (10 detections)
 ...
 Done: 6/6 images
+Configuring for the decoding type: 8:yolo26
+...
 ```
+
+The `[WARN]` line is advisory and safe to ignore. The `Configuring for the decoding type` lines
+come from the box decoder and can print before or after the image lines.
 
 Open the output images in `/media/nvme/example/output` to confirm the boxes land on the right objects.
 
@@ -447,8 +461,8 @@ That is normal and not a problem to fix.
 
 | Next step | Where |
 |---|---|
-| The same detector as a packaged app, with C++ source and profiling | `~/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
-| Other ready-to-run examples | `sima-cli neat install apps@v0.5.0`, then browse `prebuilt-apps/examples/` |
+| The same detector as a packaged app, with C++ source and profiling | `/media/nvme/neat/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
+| Other ready-to-run examples | `sima-cli neat install apps@v0.5.1` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
 | Run a language model on the board | [Chapter 13](13-llima.md) |
 | The full tutorial series | [Tutorials](https://developer.sima.ai/software/tutorials) |
 | Compile your own ONNX model | [Model Compiler](https://developer.sima.ai/software/getting-started/) |

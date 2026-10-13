@@ -8,11 +8,12 @@
 - [Full Architecture](#full-architecture)
 - [Split Validation — read this](#split-validation--read-this)
 - [Requirements](#requirements)
-- [Model Setup](#model-setup)
+- [Model Download](#model-download)
 - [Configure](#configure)
   - [Config parameters](#config-parameters)
 - [How To Run (human UX)](#how-to-run-human-ux)
 - [How To Run (CI / automation fallback)](#how-to-run-ci--automation-fallback)
+- [How To See The Output](#how-to-see-the-output)
 - [Expected Output](#expected-output)
 - [Visualization — boxes over UDP (H.264/RTP)](#visualization--boxes-over-udp-h264rtp)
   - [How the VLM box is chosen (what the red box means)](#how-the-vlm-box-is-chosen-what-the-red-box-means)
@@ -29,27 +30,34 @@ An **always-on YOLO11 detector** watches a video stream (or a folder of images).
 Selected detections are cropped and handed to a **vision-language model (VLM)**, which
 returns a natural-language description of the crop. Output = detections **plus** a caption.
 
-This is **trigger-based multimodal**: the detector is cheap and runs on every frame
-(~37 fps on the sibling 2-stream YOLO11 app; 46.4 fps single-stream here on NEAT 0.4.0); the
+This is **trigger-based multimodal**: the detector is cheap and runs on every frame; the
 VLM is expensive (seconds per call) and fires **only** on interesting, de-duplicated
 events. A bounded background worker absorbs VLM latency so the detection loop never blocks.
 
-Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape) and
-`apps/multi-stream-yolo-yolo11` (its YOLO11 detection pattern).
+Adapted from
+[`detection-to-vlm-assistant`](https://github.com/sima-neat/apps/tree/main/examples/genai/detection-to-vlm-assistant)
+(crop-to-VLM shape) and [`multi-stream-yolo-yolo11`](../multi-stream-yolo-yolo11/README.md) (its
+YOLO11 detection pattern).
+
+![detection-vlm-assistant in Neat Insight](docs/insight.jpg)
+
+*Detections with the box the VLM is captioning in red, viewed in Neat Insight.*
 
 ## About Project
 
 - Application: `detection-vlm-assistant` (`main.py` + `src/vlm_commenter.py`)
-- Detector model: `yolo_11n_mpk.tar.gz`, a YOLO11n compiled with this repo's
-  [`model-compilation/`](../../model-compilation/README.md) flow (see [Model Setup](#model-setup))
+- Detector model: `yolo_11n_mpk.tar.gz`, YOLO11n from the SiMa Model Zoo (see
+  [Model Download](#model-download))
 - VLM model: `Qwen3-VL-4B-Instruct-Autoround-a16w4`, deployed on the DevKit with `llima pull`
-  (see [Model Setup](#model-setup))
+  (see [Model Download](#model-download))
 - Input: one RTSP H.264 stream **or** still image(s)
 - Output: per-frame detection log + VLM caption per selected crop
 - Runtime config: `./config/default.conf`
 
+## Pipeline Shape
+
 <details>
-<summary><h2>Pipeline Shape</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -57,7 +65,7 @@ Adapted from `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM shape
 frame (RTSP NV12 -> BGR, or still image BGR)
         |
         v
-  YOLO11 detector (Neat model-managed box decode, BoxDecodeType.YoloV26)   <- cheap, every frame
+  YOLO11 detector (Neat model-managed box decode, BoxDecodeType.YoloV8)    <- cheap, every frame
         |
         v
   trigger gate (class allow-list + min score + min area) + dedup (IoU/cooldown) + rate limit
@@ -66,15 +74,18 @@ frame (RTSP NV12 -> BGR, or still image BGR)
   bounded background VLM worker  ->  pyneat.genai.VisionLanguageModel  ->  caption   <- expensive, gated
 ```
 
-References: `apps/examples/genai/detection-to-vlm-assistant` (crop-to-VLM),
-`apps/multi-stream-yolo-yolo11/main.py` (detector, `push`+`pull("detections")`,
-`pyneat.decode_bbox`), `core/include/genai/VisionLanguageModel.h`,
-`core/include/genai/GenAITypes.h`, `llima/02-run-llm-vlm/02_run_vlm.ipynb`.
+References:
+[`detection-to-vlm-assistant`](https://github.com/sima-neat/apps/tree/main/examples/genai/detection-to-vlm-assistant)
+(crop-to-VLM), [`multi-stream-yolo-yolo11/main.py`](../multi-stream-yolo-yolo11/main.py) (detector,
+`push`+`pull("detections")`, `pyneat.decode_bbox`), the Neat core `VisionLanguageModel` and GenAI
+types, and [`llima/02-run-llm-vlm/02_run_vlm.ipynb`](../../llima/02-run-llm-vlm/02_run_vlm.ipynb).
 
 </details>
 
+## Full Architecture
+
 <details>
-<summary><h2>Full Architecture</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -98,7 +109,7 @@ the real send, `gate_candidate` uses it (non-mutating) for the red highlight.
                                         v                                           |
      +-------------------------------------------------------+                      |
      |  detect(): push([BGR]) -> pull("detections")          |  YOLO11n             |
-     |  -> pyneat.decode_bbox() -> boxes[x1,y1,x2,y2,score,c] |  (YoloV26 head)      |
+     |  -> pyneat.decode_bbox() -> boxes[x1,y1,x2,y2,score,c] |  (YoloV8 head + NMS) |
      +-------------------------------------------------------+                      |
                                         |                                           |
                  +----------------------+-----------------------+                   |
@@ -126,8 +137,10 @@ mode is stdout-only.
 
 </details>
 
+## Split Validation — read this
+
 <details>
-<summary><h2>Split Validation — read this</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -137,7 +150,7 @@ The two legs are validated differently on purpose:
 - **VLM leg:** needs a deployed VLM. Without one, run in **dry-run** mode: the app logs the
   selected crop and the **exact prompt that WOULD be sent**, and never loads or calls the VLM.
 
-Both legs were run end to end on NEAT 0.4.0 (see "Verified" below).
+Both legs were run end to end on Neat 0.5.0 (see "Verified" below).
 
 Dry-run turns on automatically when `--no-vlm` is passed, when `vlm_enabled=false`, or when
 the configured `vlm_model_dir` is missing. This is also how you validate the detection leg
@@ -147,7 +160,7 @@ without a VLM present, and it is genuinely useful for tuning the trigger/prompt.
 
 ## Requirements
 
-Run on the DevKit. `pyneat` (0.3.0+), `numpy`, and OpenCV (`cv2`) must be importable there.
+Run on the DevKit. `pyneat` 0.5.0, `numpy`, and OpenCV (`cv2`) must be importable there.
 `/workspace` is NFS-mounted on the board at the same path, so write host-side and run
 board-side — no copying.
 
@@ -155,21 +168,19 @@ board-side — no copying.
 cd /path/to/demo-neat/apps/detection-vlm-assistant
 ```
 
-## Model Setup
+## Model Download
 
 `./assets/models/` is git-ignored, so a fresh clone has no models. Get both before running.
 
-**Detector.** The app needs the YOLO11n archive produced by this repo's
-[`model-compilation/`](../../model-compilation/README.md) flow. Either:
+**Detector.** Download YOLO11n from the SiMa Model Zoo, from the app directory:
 
-- download the prebuilt archives (`Models-v1.zip`, linked from that README) and copy
-  `yolo11n/yolo11n.compile_ready_mpk.tar.gz` to `./assets/models/yolo_11n_mpk.tar.gz`, or
-- compile it yourself with that README's steps; the compiled archive lands at
-  `../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz`.
+```bash
+cd assets/models
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n   # -> yolo_11n_mpk.tar.gz
+cd ../..
+```
 
-That `compile_ready` YOLO11n exposes the YoloV26 grouped-tensor head, so it decodes with
-`BoxDecodeType.YoloV26` (NOT YoloV8). Keep `model_name=yolo11`. A model-zoo `yolo_11n` archive has a
-different head and is not a drop-in replacement here.
+`model_name=yolo11` decodes it with `BoxDecodeType.YoloV8`, which runs NMS on the board.
 
 **VLM (only for real captions; skip it for dry-run).** Deploy it on the DevKit with LLiMa:
 
@@ -193,19 +204,30 @@ Edit `./config/default.conf`. At minimum for the RTSP demo:
 source=rtsp
 rtsp_url=<rtsp-url>
 model_path=./assets/models/yolo_11n_mpk.tar.gz
+udp_host=<host-ip>
 vlm_trigger_classes=person
 ```
 
+`udp_host` is the Insight host that receives the annotated video; leave it empty for stdout only.
+
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+
+### Config parameters
+
 <details>
-<summary><h3>Config parameters</h3></summary>
+<summary>Click to expand</summary>
 
 <br>
 
 - `source`: `rtsp` (always-on demo) or `image` (still file / directory / glob).
-- `rtsp_url`, `rtsp_transport`, `latency_ms`, `fallback_*`: RTSP input.
+- `rtsp_url`, `rtsp_transport`, `latency_ms`: RTSP input.
 - `image_path`: file, directory, or glob for `source=image`.
 - `model_path` / `models_dir` / `model_name`: detector archive and decode family
-  (`yolo11`/`yolo26n` => `BoxDecodeType.YoloV26`).
+  (`yolov8`/`yolo11` => `BoxDecodeType.YoloV8`, `yolo26` => `BoxDecodeType.YoloV26`).
+- `width`, `height`, `fps`: fallback, used only if the camera cannot be read.
+  `probe_source`: `true` reads them from the camera at start; `false` uses the values in the config.
 - `model_width`, `model_height`: compiled model input size (Neat letterbox-resizes to it).
 - `score_threshold`, `nms_iou`, `top_k`: box-decode controls.
 - `frames`: frames to process; `0` runs until interrupted (rtsp) / processes all images.
@@ -221,14 +243,13 @@ vlm_trigger_classes=person
   - `vlm_max_new_tokens`, `vlm_prompt`: generation controls. `{label}` in the prompt is
     substituted with the detected class.
 
-Every value is overridable on the command line; run `python main.py --help`.
+Every value is overridable on the command line; run `dk ./main.py --help`.
 
 </details>
 
 ## How To Run (human UX)
 
-On the DevKit, from a real terminal, use the `dk` helper (source it once:
-`source /usr/local/bin/devkit.sh <devkit-ip> sima 22`).
+From the SDK shell, run it on the DevKit with `dk`.
 
 Detection leg, dry-run VLM (validate live without a VLM):
 
@@ -239,10 +260,10 @@ dk ./main.py --config ./config/default.conf --no-vlm --frames 40
 Still-image dry-run over a folder:
 
 ```bash
-dk ./main.py --source image --image ../../model-compilation/assets/inference --no-vlm
+dk ./main.py --source image --image <folder-of-images> --no-vlm
 ```
 
-Full pipeline with the real VLM (after deploying it; see [Model Setup](#model-setup)):
+Full pipeline with the real VLM (after deploying it; see [Model Download](#model-download)):
 
 ```bash
 dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir present
@@ -251,7 +272,7 @@ dk ./main.py --config ./config/default.conf     # vlm_enabled=true, model dir pr
 ## How To Run (CI / automation fallback)
 
 For CI or scripts, plain passwordless ssh works too. `/workspace` is NFS-mounted, so run the
-same on-disk file:
+same on-disk file (replace `/workspace/demo-neat` with where your clone is under `/workspace`):
 
 ```bash
 timeout 200 ssh -o BatchMode=yes sima@<devkit-ip> \
@@ -296,7 +317,9 @@ vlm[dry-run] WOULD send crop -> VLM
 frame=30 detections=12 fps=53.65
 ```
 
-VLM (real, with a deployed VLM) — each dry-run block is replaced by a caption line:
+VLM (real, with a deployed VLM) — each dry-run block is replaced by a caption line. This example
+is from `Qwen3-VL-4B-Instruct-GPTQ-a16w4`; the shipped Autoround VLM runs at about 13.8 tok/s (see
+[Verified](#verified)):
 
 ```text
 vlm[PERSON score=0.81 bbox=(927, 429, 1019, 666)]: A person in a dark jacket is walking
@@ -305,8 +328,10 @@ across the platform carrying a bag.  (58 tok, 22.4 tok/s, ttft=0.34s)
 
 Exact wording depends on the image and the model's sampling; the shape is what to verify.
 
+## Visualization — boxes over UDP (H.264/RTP)
+
 <details>
-<summary><h2>Visualization — boxes over UDP (H.264/RTP)</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -344,8 +369,10 @@ the rate limit (`vlm_interval_seconds`), IoU/cooldown dedup (`vlm_dedup_iou`,
 
 </details>
 
+## Colour Correctness (a real trap)
+
 <details>
-<summary><h2>Colour Correctness (a real trap)</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -356,8 +383,10 @@ every answer. The dry-run log prints the crop shape and reminds you of the conve
 
 </details>
 
+## Direct `VisionLanguageModel` vs `GenAIServer`
+
 <details>
-<summary><h2>Direct `VisionLanguageModel` vs `GenAIServer`</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -365,38 +394,43 @@ This app calls the VLM **in-process** via `pyneat.genai.VisionLanguageModel` —
 latency, no network hop, one model handle holding LM weights + vision encoder resident.
 Use `GenAIServer` (OpenAI-compatible HTTP) instead only when the boundary is a network: a
 browser UI or a separate service that should not link the Neat runtime. The upstream
-`apps/examples/genai/detection-to-vlm-assistant` uses the HTTP path; see `llima/05-genai-server`.
+[`detection-to-vlm-assistant`](https://github.com/sima-neat/apps/tree/main/examples/genai/detection-to-vlm-assistant)
+uses the HTTP path; see [`llima/05-genai-server`](../../llima/05-genai-server/).
 
 </details>
 
+## Verified
+
 <details>
-<summary><h2>Verified</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
-- **Detection leg, live on the DevKit (<devkit-ip>)** via ssh, `--no-vlm`:
-  - Still-image mode over `model-compilation/assets/yolo_calibration`: real detections,
-    e.g. `000000000885.jpg detections=4 [PERSON:0.92, PERSON:0.85, PERSON:0.66, TENNIS RACKET:0.81]`;
-    the dry-run trigger logged the PERSON crop + exact prompt.
-  - RTSP mode `<rtsp-url>` (1280x720@60): `frame=1 detections=13`,
-    `frame=30 detections=12 fps=53.65`; dry-run trigger fired on `PERSON:0.81`.
-- **Full run on NEAT 0.4.0** with `Qwen3-VL-4B-Instruct-Autoround-a16w4`: detector at
-  **46.4 fps** sustained for 3 min while the VLM captioned triggered detections at
-  **~13.8 tok/s, 0.6–0.7 s TTFT**.
-- The detection-leg log lines above (`fps=53.65`) are from an earlier run on NEAT 0.3.0 with the
-  GPTQ VLM.
+With the shipped config, Neat 0.5.0, the Model Zoo `yolo_11n` and
+`Qwen3-VL-4B-Instruct-Autoround-a16w4`, on a 1280×720 30 fps RTSP source, a 60 s run ends with:
+
+```text
+done: frames=1082 elapsed=60.1s avg_fps=18.00 vlm_captions=12 reconnects=0
+```
+
+- **Detections:** 7–15 per frame, one box per object (`YoloV8` decode, NMS on the device).
+- **VLM:** a caption every 5 s, as configured, at about 13.8 tok/s and 0.6–0.9 s to the first token.
+- **Frame rate:** the VLM shares the MLA, so each caption pauses detection. The average falls as the
+  caption rate rises.
 
 </details>
 
+## Notes
+
 <details>
-<summary><h2>Notes</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
 - The detector uses `push([tensor])` + `pull("detections", ...)` (the same pattern as
   `multi-stream-yolo-yolo11`). The
   synchronous `run([...])` helper does **not** surface this archive's model-managed
-  box-decode output — push + named pull does. Verified on the DevKit.
+  box-decode output — push + named pull does.
 - `vlm_interval_seconds` is wall-clock: over a fast batch of still images only the first
   qualifying crop fires. That is intended for the always-on RTSP use case; lower it (or set
   it to 0) if you want a caption per image.

@@ -56,17 +56,28 @@ The precompiled BF16 model pack is required before running:
 
 ## Model Download
 
-The model is custom-trained, so it is not in the SiMa Model Zoo. Download the BF16 model pack into
-`./assets/models`:
+The model is custom-trained, so it is not in the SiMa Model Zoo. It is shared from a Google Drive
+folder, which has no command-line download:
 
-```bash
-mkdir -p ./assets/models
-# Download the BF16 latest_plc_yolo26n_mpk.tar.gz into ./assets/models
-# https://drive.google.com/drive/folders/13AcEIWG3mBlTmEgNa1IjWlOL_leyjni5?usp=sharing
-```
+1. Open the
+   [model folder](https://drive.google.com/drive/folders/13AcEIWG3mBlTmEgNa1IjWlOL_leyjni5?usp=sharing)
+   in a browser and download the BF16 model pack `latest_plc_yolo26n_mpk.tar.gz`. Keep it as a
+   `.tar.gz`; do not extract it.
+2. Copy it into this app's `./assets/models/` (under `~/workspace` on the host):
 
-Only `latest_plc_yolo26n_mpk.tar.gz` is needed to run inference. The `.pt` and `.onnx`
-files are only needed if you want to rebuild the BF16 model pack.
+   ```bash
+   mkdir -p ./assets/models
+   cp <download-dir>/latest_plc_yolo26n_mpk.tar.gz ./assets/models/
+   ```
+
+Only `latest_plc_yolo26n_mpk.tar.gz` is needed to run inference. The same folder also has the
+trained weights, `yolo26n.pt`, and the `.onnx` files; download `yolo26n.pt` into
+`./assets/models/` the same way only if you want to rebuild the BF16 model pack (see
+[Compile Model Pack](#compile-model-pack)).
+
+The model pack is built from YOLO26's end-to-end (`one2one`) head, which returns one box per
+defect. Neat decodes it on the board with `BoxDecodeType.YoloV26`, which runs no NMS, so the app
+needs none either.
 
 ## Configure
 
@@ -96,13 +107,15 @@ dk ./main.py \
   --config ./config/default.conf
 ```
 
-Run with stricter thresholds:
+Run with a stricter score threshold:
 
 ```bash
 dk ./main.py \
   --config ./config/default.conf \
-  --score 0.30 --nms 0.50
+  --score 0.30
 ```
+
+`nms` has no effect with this end-to-end model: the YoloV26 decoder runs no NMS.
 
 After the run, annotated images are written to:
 
@@ -133,13 +146,22 @@ Open any of them to see the detected defects boxed and labelled. Five sample PCB
 ## Compile Model Pack
 
 Use this section only if you want to rebuild the BF16
-`./assets/models/latest_plc_yolo26n_mpk.tar.gz` from the trained ONNX artifact.
+`./assets/models/latest_plc_yolo26n_mpk.tar.gz` from the trained model, `./assets/models/yolo26n.pt`.
 
-Expected compile input:
+Export the ONNX with the end-to-end head, in a Python environment with `ultralytics` installed:
 
-```text
-./assets/models/yolo26n.onnx
+```bash
+python - <<'EOF'
+from ultralytics import YOLO
+model = YOLO("./assets/models/yolo26n.pt")
+model.model.model[-1].end2end = True   # export the one2one (NMS-free) head
+model.export(format="onnx", imgsz=640, opset=17, simplify=True, end2end=True)
+EOF
+# -> ./assets/models/yolo26n.onnx (output [1, 300, 6])
 ```
+
+Without the end-to-end head, the archive returns several overlapping boxes per defect.
+`surgery_einsum_attention.py` prints a warning when the ONNX has no `one2one` head.
 
 Activate the model compiler environment from the Neat SDK host system:
 

@@ -20,6 +20,10 @@
 This demo runs one RTSP stream through the SiMa Neat YOLOv8n segmentation model, draws
 class-colored masks plus labeled boxes, and publishes one annotated H.264/RTP UDP stream.
 
+![single-stream-yolov8n-seg in Neat Insight](docs/insight.jpg)
+
+*YOLOv8n-seg instance masks (C++ app) on a 1280×720 street stream, viewed in Neat Insight.*
+
 ## About Project
 
 - Application: `single_stream_yolov8n_seg`
@@ -47,7 +51,8 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_v8n_seg
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n_seg
+cd ../..
 ```
 
 Expected model path:
@@ -67,10 +72,16 @@ udp_host=<host-ip>
 udp_port_base=9000
 ```
 
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -88,11 +99,13 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
 `model_height`: Model input height used by Neat preprocessing.
 
-`width`: Fallback decoded frame width used when RTSP caps are incomplete.
+`width`: Width of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`height`: Fallback decoded frame height used when RTSP caps are incomplete.
+`height`: Height of the RTSP stream. Fallback, used only if the camera cannot be read.
 
-`fps`: Fallback decoded stream FPS used when RTSP caps are incomplete.
+`fps`: Frame rate of the RTSP stream (whole number). Fallback, used only if the camera cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the camera at start; `false` uses the values above.
 
 `latency_ms`: RTSP receiver latency buffer in milliseconds.
 

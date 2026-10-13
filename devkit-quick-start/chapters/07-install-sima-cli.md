@@ -69,6 +69,9 @@ sima@modalix:~$ sima-cli login
 
 Follow the prompt. Do this **on both machines**, host and board.
 
+> If any `sima-cli` command asks `Do you want to update sima-cli now? [Y/n]`, either answer
+> works: `Y` updates sima-cli first, `n` carries on with the installed version.
+
 > This needs an **approved** SiMa Developer Portal account. Approval is not instant. If you have not
 > signed up yet, do it at [community.sima.ai/signup](https://community.sima.ai/signup) — you cannot
 > get past this point without it.

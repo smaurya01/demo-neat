@@ -18,11 +18,13 @@ What each surgery kind does (see models.yaml `surgery:`):
   yolo_ultralytics  1) attention MatMul -> Einsum (MLA-friendly)
                     2) expose pre-decode head convs: cv2.* = bbox, cv3.* = class
                        (YOLO26 uses one2one_cv*), plus seg mask-coeff/proto and pose kpt heads
-                    3) YOLO11 only: rebuild DFL as Split(64->16x4)->Softmax->Conv(arange)->Concat
-                       to get 4 distance channels. YOLO26 heads are already 4-channel -> skipped.
+                    3) YOLOv8/YOLO11 keep their raw 64-channel DFL bbox heads (Neat's YoloV8
+                       decoder integrates the DFL); YOLO26 one2one heads are already 4-channel.
   yolox             Megvii YOLOX: decoupled anchor-free head with numeric node names, no DFL/attn.
-                    Trace back from the output through Transpose/Concat/Reshape to the three
-                    [1,85,H,W] heads, expose them, and cut the flatten/transpose tail.
+                    Trace back to each scale's Concat and expose its three PRE-sigmoid inputs,
+                    (bbox 4, obj 1, cls 80) x 3 scales (YoloX / Split3Interleaved).
+  world             YOLO-World v2: fold the fixed-vocabulary contrastive Einsum into a 1x1 Conv,
+                    expose the 64-ch DFL bbox heads and the class logits (YoloV8).
 
 Input : work/<id>/onnx/<id>.onnx
 Output: work/<id>/surgery/<id>.compile_ready.onnx  (+ reports/)
@@ -65,9 +67,16 @@ def run(model_id: str, force: bool = False) -> int:
         cmd.append("--force")
     print(f"[surgery] {model_id}: kind={kind} -> {p['surgery']}")
     proc = subprocess.run(cmd, cwd=str(HERE.parent))
-    if proc.returncode == 0:
-        print(f"[surgery] {model_id}: OK  outputs={cfg['output_names']}")
-    return proc.returncode
+    if proc.returncode != 0:
+        return proc.returncode
+    import onnx                                    # the compiler is told to expect these names
+    got = [o.name for o in onnx.load(str(p["surgery"]), load_external_data=False).graph.output]
+    if got != list(cfg["output_names"]):
+        print(f"[surgery] {model_id}: FAIL  outputs {got} != models.yaml output_names "
+              f"{cfg['output_names']}")
+        return 1
+    print(f"[surgery] {model_id}: OK  outputs={got}")
+    return 0
 
 
 def main() -> int:
@@ -82,7 +91,16 @@ def main() -> int:
         raise SystemExit("give --model-id <id> or --all")
     rc = 0
     for mid in ids:
-        rc |= run(mid, args.force)
+        try:
+            rc |= run(mid, args.force)
+        except Exception as e:            # with --all, report and go on to the next model
+            if len(ids) == 1:
+                raise
+            print(f"[FAIL] {mid}: {e}"); rc |= 1
+        except SystemExit as e:
+            if len(ids) == 1:
+                raise
+            print(e); rc |= 1
     return rc
 
 

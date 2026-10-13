@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 import glob
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -66,6 +67,7 @@ class Config:
     width: int = 1280
     height: int = 720
     fps: int = 25
+    probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
@@ -248,6 +250,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.height = int(value)
     elif key == "fps":
         cfg.fps = int(value)
+    elif key == "probe_source":
+        cfg.probe_source = parse_bool(value)
     elif key == "model_width":
         cfg.model_width = int(value)
     elif key == "model_height":
@@ -418,12 +422,53 @@ def validate_config(cfg: Config) -> None:
         raise FileNotFoundError(f"model file not found: {model_path}")
 
 
+def probe_stream(url: str, tcp: bool = True):
+    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+
+    Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
+    a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
+    them from the stream at start-up, as the reference Neat apps do. ffprobe runs as a separate
+    process, so it cannot clash with Neat's GStreamer instance the way cv2.VideoCapture did.
+    """
+    cmd = ["ffprobe", "-v", "error"] + (["-rtsp_transport", "tcp"] if tcp else []) + [
+        "-timeout", "5000000", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
+        "-of", "default=nw=1", url]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+    def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
+        num, _, den = (text or "0").partition("/")
+        try:
+            value = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0
+        return int(round(value)) if value > 0 else 0
+
+    try:
+        width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
+    except ValueError:
+        return None
+    fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
+    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+
+
 def probe_rtsp(cfg: Config, url: str) -> tuple[int, int, int]:
-    # NO cv2.VideoCapture here. NEAT 0.4.0 enforces a single global GStreamer init and OpenCV's
-    # capture backend calls gst_init() itself, so probing tripped the guard and the app died with
-    # "GStreamer was already initialized" before the Neat source could build. It only bit when the
-    # probe FAILED to open the URL -- the case the probe exists for -- so a working URL hid it.
-    return cfg.width, cfg.height, cfg.fps
+    """Width, height and fps from the stream itself; the config's values only if probing fails."""
+    probed = probe_stream(url, cfg.tcp) if cfg.probe_source else None
+    if probed is None:
+        if cfg.probe_source:
+            print(f"[warn] could not probe {url} with ffprobe; using the config's "
+                  f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+        return cfg.width, cfg.height, cfg.fps
+    if probed != (cfg.width, cfg.height, cfg.fps):
+        print(f"[source] {url} is {probed[0]}x{probed[1]}@{probed[2]} (config says "
+              f"{cfg.width}x{cfg.height}@{cfg.fps}); using the stream's values", flush=True)
+    return probed
+
 
 
 def source_endpoint(stream_id: int) -> str:
@@ -511,12 +556,16 @@ def make_model(cfg: Config):
     opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
     opt.preprocess.resize.pad_value = 114
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
-    # The compile_ready YOLO11 surgery exposes the 6 YoloV26 grouped tensors, so
-    # a compiled yolo11n/yolo26n archive decodes with BoxDecodeType.YoloV26.
-    if cfg.model_name in {"yolo26n", "yolo11"}:
+    # yolov8: the zoo archive (64-ch DFL heads, class probabilities) -> YoloV8.
+    # yolo11: a model-compilation/ archive (same 64-ch DFL heads, class LOGITS) -> YoloV8 with
+    #         GroupedByRoleLogit, so the decoder applies the sigmoid. YoloV8 runs NMS.
+    # yolo26n: one-to-one heads -> YoloV26, which runs no NMS.
+    if cfg.model_name == "yolo26n":
         opt.decode_type = pyneat.BoxDecodeType.YoloV26
     else:
         opt.decode_type = pyneat.BoxDecodeType.YoloV8
+        if cfg.model_name == "yolo11":
+            opt.decode_type_option = pyneat.BoxDecodeTypeOption.GroupedByRoleLogit
     opt.score_threshold = cfg.score_threshold
     opt.nms_iou_threshold = cfg.nms_iou
     opt.top_k = cfg.top_k

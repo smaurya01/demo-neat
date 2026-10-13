@@ -1,6 +1,6 @@
 # NEAT on Windows — Installation & Setup Guide
 
-Scope: end-to-end steps to install and run Palette **NEAT** on a **Windows 11** laptop, from prerequisites through installing `sima-cli`, the NEAT SDK, and pairing with a Modalix DevKit.
+End-to-end steps to install and run **Neat** on a **Windows 11** laptop, from prerequisites through installing `sima-cli`, the NEAT SDK, and pairing with a Modalix DevKit.
 
 Primary references:
 
@@ -34,11 +34,10 @@ Primary references:
   - [9.2 Allow NFS traffic through the Windows firewall](#92-allow-nfs-traffic-through-the-windows-firewall)
   - [9.3 Run guided setup](#93-run-guided-setup)
 - [10. (Optional) Install the Model Compiler](#10-optional-install-the-model-compiler)
-  - [10.1 Check your processor architecture](#101-check-your-processor-architecture)
-  - [10.2 Install for your architecture](#102-install-for-your-architecture)
-  - [10.3 Authorize the device login](#103-authorize-the-device-login)
-  - [10.4 If it reports missing system packages](#104-if-it-reports-missing-system-packages)
-  - [10.5 Activate](#105-activate)
+  - [10.1 Install](#101-install)
+  - [10.2 Authorize the device login](#102-authorize-the-device-login)
+  - [10.3 If it reports missing system packages](#103-if-it-reports-missing-system-packages)
+  - [10.4 Activate](#104-activate)
 - [11. Open the SDK in VS Code, then build and run](#11-open-the-sdk-in-vs-code-then-build-and-run)
 - [12. Troubleshooting (Windows-specific)](#12-troubleshooting-windows-specific)
 - [References](#references)
@@ -79,7 +78,7 @@ What you are installing and how the pieces fit together — the same NEAT softwa
 - **NEAT Insight:** Browser-based inspection and debugging tool for runtime streams, files, and logs. See [neat_insight.md](neat_insight.md).
 - **NEAT Apps:** User applications built with NEAT C++ or PyNeat deployed to the DevKit.
 
-![NEAT software stack diagram](https://developer.sima.ai/software/assets/images/neat-software-stack-animated-cdd17bb3f6d7e02b6b2742cdf649b6bf.svg)
+![NEAT software stack diagram](../devkit-quick-start/images/neat-stack.svg)
 
 ---
 
@@ -312,7 +311,7 @@ Install the current NEAT SDK 2.1 release channel. From the **Ubuntu terminal**, 
 sima-cli neat install sdk@release-2.1
 ```
 
-`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **NEAT SDK 2.1.2.2**, which is compatible with **DevKit software 2.1.2**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
+`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **Neat SDK 2.1.3.1** (Neat Library 0.5.0), which is compatible with **DevKit software 2.1.3**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
 
 > **If this fails with a Docker permission error** — `Docker daemon is running, but this user lacks permission to access it` (cannot access `/var/run/docker.sock`) — your shell has not picked up `docker` group membership yet. `sima-cli` prints the exact fix: run `newgrp docker` (or log out and back in), then re-run the install:
 >
@@ -377,7 +376,7 @@ On Windows, the recommended setup is a **direct USB/Ethernet connection** betwee
 7. In **Home networking connection**, select the **USB/Ethernet** adapter going to the DevKit.
 8. **Apply** (reconnect the adapter if needed).
 
-The shared adapter is typically assigned an address on the `<host-ip>/24` subnet; the DevKit gets an address in that range.
+Windows gives the shared adapter `192.168.137.1`, and the DevKit gets an address in `192.168.137.0/24`.
 
 ### 9.2 Allow NFS traffic through the Windows firewall
 
@@ -401,7 +400,7 @@ The `sima-cli neat install sdk@release-2.1` command in [Step 8](#8-install-the-n
 
 ```text
 Do you want to pair this SDK with a DevKit now? [y/N]: y
-Enter DevKit IP address: <host-ip>
+Enter DevKit IP address: <devkit-ip>
 ```
 
 Run the commands below directly only when you need to re-run setup later (for example, to re-pair or restart the container). From the Ubuntu terminal, if you know the DevKit IP:
@@ -459,34 +458,17 @@ References:
 
 Install only if you need to compile/quantize ONNX or GenAI models for Modalix.
 
-### 10.1 Check your processor architecture
+### 10.1 Install
 
-Pick the build that matches your CPU — `amd64` (Intel/AMD) or `arm64`.
-
-**Command Prompt :** Press the **Windows key**, type `cmd`, and press **Enter**. Then run:
-
-```bat
-echo %PROCESSOR_ARCHITECTURE%
-```
-
-- `AMD64` → use **amd64**
-- `ARM64` → use **arm64**
-
-(Equivalently, inside the Ubuntu terminal `uname -m` prints `x86_64` for amd64 or `aarch64` for arm64.)
-
-### 10.2 Install for your architecture
-
-From the Ubuntu terminal, run the build that matches your architecture (version `2.1.2` shown — match it to your board/SDK):
+From the Ubuntu terminal (version `2.1.3` shown — match it to your board/SDK):
 
 ```bash
-# amd64
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
-
-# or arm64
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli install -v 2.1.3 tools/model-compiler/amd64
 ```
 
-### 10.3 Authorize the device login
+This guide targets Windows 11 on x86_64 (section 1.2), so the build is always `amd64`.
+
+### 10.2 Authorize the device login
 
 The installer needs a one-time device login. It tries to open a browser, but in WSL the auto-open usually fails with `gio: ... : Operation not supported`. **Copy the printed `https://auth.sima.ai/activate?user_code=XXXX-XXXX` link into a browser on Windows, sign in, and return to the terminal** — `sima-cli` continues automatically once authorized.
 
@@ -496,20 +478,20 @@ After you sign in, the terminal greets you and downloads the package (~180 MB do
 
 ![Model Compiler install — signed in and downloading](images/windows/model-compiler-download.png)
 
-### 10.4 If it reports missing system packages
+### 10.3 If it reports missing system packages
 
 If the installer stops with `Missing required system packages` and `Installation failed with return code: 1`, it prints the exact command to fix it. **Run the recommended command, then rerun the installer:**
 
 ```bash
 sudo apt-get update && sudo apt-get install -y cmake libbz2-dev libffi-dev libllvm18 liblzma-dev libopenblas0-pthread libreadline-dev libsqlite3-dev libssl-dev tk-dev
-sima-cli install -v 2.1.2 tools/model-compiler/amd64   # rerun for your architecture
+sima-cli install -v 2.1.3 tools/model-compiler/amd64   # rerun for your architecture
 ```
 
 ![Model Compiler install — missing packages and the recommended apt command](images/windows/model-compiler-missing-packages.png)
 
 > Copy the package list from your own terminal output rather than relying on this snippet — it can change between SDK versions.
 
-### 10.5 Activate
+### 10.4 Activate
 
 ```bash
 activate-model-compiler

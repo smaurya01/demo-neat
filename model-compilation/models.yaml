@@ -4,12 +4,28 @@
 # model's input name, shape, normalization and output contract can never drift between steps.
 #
 # Key fields
-#   surgery      : none | yolo_ultralytics | yolox   (which rewrite graph_surgery.py applies)
+#   surgery      : none | yolo_ultralytics | yolox | world   (which rewrite graph_surgery.py applies)
 #   output_names : the EXACT tensors the compiled archive exposes (surgery models expose raw heads)
 #   decode       : how test_model.py interprets the outputs
+#   box_decode   : the Neat BoxDecodeType that decodes the archive ON-DEVICE (NMS included), and
+#   box_decode_option : its BoxDecodeTypeOption. Each family keeps its own decoder:
+#                  YOLOv8/YOLO11 (+ world)  -> YoloV8 / YoloV8Seg, GroupedByRoleLogit (raw 64-ch DFL
+#                                              bbox heads, class LOGITS: the decoder applies sigmoid)
+#                  YOLO26                   -> YoloV26 / YoloV26Pose, Auto (one2one heads, NMS-free)
+#                  YOLOX                    -> YoloX, Split3Interleaved
+#                  test_box_decode.py uses exactly this pair and fails on duplicate boxes.
+#   num_classes  : class count for the box decoder (default 80, COCO); pose models need 1.
+#   precision    : int8 | bf16   what `compiler.py --model-id <id>` builds, and what the test scripts
+#                  check. Every model states it. To build the OTHER precision once, pass
+#                  `--precision int8|bf16` on the command line; to change the default, edit this line.
+#   batch_size   : optional, default 1. Images per MLA call the archive is compiled for. A batch-N
+#                  build goes to work/<id>/compile_<precision>_b<N>/, beside the batch-1 one. Usually
+#                  left out and given once on the command line: `compiler.py --model-id yolo26m
+#                  --precision int8 --batch-size 6`. Read MULTI-BATCH.md before using one: Neat
+#                  0.5.0 cannot box-decode a batched archive on the device.
 #
 # Calibration is ALWAYS real images (assets/calibration). Synthetic calibration produces a
-# valid-looking archive with meaningless activation ranges -- see README.
+# valid-looking archive with meaningless activation ranges -- see MODEL-COMPILATION.md.
 
 project:
   default_device: modalix
@@ -38,6 +54,7 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   - id: densenet169
@@ -54,6 +71,7 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   - id: convnext_tiny
@@ -70,6 +88,9 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    # bf16, not INT8: with Model Compiler 2.1.3 the INT8 build compiles cleanly but loses most of
+    # its accuracy (e.g. COCO 000000000885: racket 0.20 INT8 vs 0.73 FP32); bf16 matches FP32 (0.75).
+    precision: bf16
     enabled: true
 
   - id: efficientnet_v2_s
@@ -86,6 +107,7 @@ models:
     input_shape: [1, 3, 384, 384]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
+    precision: int8
     enabled: true
 
   # ----------------------------------------------------------------- detection (YOLO)
@@ -100,11 +122,14 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV8
+    box_decode_option: GroupedByRoleLogit
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolov8l
@@ -115,11 +140,14 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV8
+    box_decode_option: GroupedByRoleLogit
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo11n
@@ -130,11 +158,14 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV8
+    box_decode_option: GroupedByRoleLogit
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo11s
@@ -145,11 +176,14 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV8
+    box_decode_option: GroupedByRoleLogit
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo26n
@@ -160,11 +194,53 @@ models:
     license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV26
+    box_decode_option: Auto
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
+    enabled: true
+
+  # yolo26s: same one2one head as yolo26n. INT8 by default; the accuracy study also builds it in bf16
+  # with `compiler.py --model-id yolo26s --precision bf16`.
+  - id: yolo26s
+    task: detection
+    family: ultralytics
+    arch: yolo26s.pt
+    source: https://docs.ultralytics.com/
+    license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    box_decode: YoloV26
+    box_decode_option: Auto
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    precision: int8
+    enabled: true
+
+  # yolo26m: compiled in bf16 (no 8-bit ranges to calibrate). `precision` is read by compiler.py.
+  - id: yolo26m
+    task: detection
+    family: ultralytics
+    arch: yolo26m.pt
+    source: https://docs.ultralytics.com/
+    license_note: Confirm upstream/license for the YOLO26 variant before redistribution.
+    surgery: yolo_ultralytics
+    decode: yolo_raw_heads
+    box_decode: YoloV26
+    box_decode_option: Auto
+    input_name: images
+    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
+    input_shape: [1, 3, 640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
+    precision: bf16
     enabled: true
 
   - id: yolo11s-seg
@@ -175,12 +251,15 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV8Seg
+    box_decode_option: GroupedByRoleLogit
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2,
                    mask_coeff_0, mask_coeff_1, mask_coeff_2, proto]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   - id: yolo26s-pose
@@ -191,12 +270,16 @@ models:
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics
     decode: yolo_raw_heads
+    box_decode: YoloV26Pose
+    box_decode_option: Auto
+    num_classes: 1                 # the pose decoder rejects any other value
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2,
                    kpt_0, kpt_1, kpt_2]
     input_shape: [1, 3, 640, 640]
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
+    precision: int8
     enabled: true
 
   # ----------------------------------------------------------------- open-vocabulary (YOLO-World)
@@ -213,6 +296,8 @@ models:
     license_note: Ultralytics AGPL-3.0; YOLO-World weights (Tencent) — review before redistribution.
     surgery: world
     decode: yolo_raw_heads
+    box_decode: YoloV8
+    box_decode_option: GroupedByRoleLogit
     vocabulary: coco80
     input_name: images
     output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
@@ -222,7 +307,7 @@ models:
     # COMPILE IN BF16 (not INT8): the 4D attn rewrite exposes the text-similarity score
     # maps as intermediate tensors; in INT8 they saturate and the MLA sim-check fails.
     # bf16 places identically (MLA:1 EV74:16 A65:0, 1 elf / 0 so) and is numerically clean.
-    #   python compile/compiler.py --model-id yolov8s-worldv2 --bf16-weights --bf16-activations
+    #   python compile/compiler.py --model-id yolov8s-worldv2      # precision: bf16 below
     precision: bf16
     enabled: true
 
@@ -238,6 +323,8 @@ models:
     # This is BoxDecodeType::YoloX (Split3Interleaved) -> decoded on-device by Neat.
     # obj/class are PRE-sigmoid logits; Neat applies the sigmoid itself.
     decode: yolox_split_heads
+    box_decode: YoloX
+    box_decode_option: Split3Interleaved
     input_name: images
     output_names:
       - bbox_0
@@ -263,4 +350,5 @@ models:
     # full speed and reporting healthy FPS.
     mean: [0.0, 0.0, 0.0]
     std: [0.00392156862745098, 0.00392156862745098, 0.00392156862745098]
+    precision: int8
     enabled: true

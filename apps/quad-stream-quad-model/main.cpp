@@ -14,6 +14,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -137,6 +138,7 @@ struct Config {
   int width = 1280;
   int height = 720;
   int fps = 30;
+  bool probe_source = true;  // read width/height/fps from the streams (ffprobe)
   int latency_ms = 200;
   float score_threshold = 0.25f;
   float nms_iou = 0.50f;
@@ -216,6 +218,7 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   else if (key == "width") cfg.width = std::stoi(value);
   else if (key == "height") cfg.height = std::stoi(value);
   else if (key == "fps") cfg.fps = std::stoi(value);
+  else if (key == "probe_source") cfg.probe_source = to_bool(value);
   else if (key == "latency_ms") cfg.latency_ms = std::stoi(value);
   else if (key == "score_threshold") cfg.score_threshold = std::stof(value);
   else if (key == "nms_iou") cfg.nms_iou = std::stof(value);
@@ -1657,6 +1660,113 @@ void print_usage() {
 
 }  // namespace
 
+// ---- stream geometry ------------------------------------------------------------------------
+// Neat 0.5.0 sets the RTSP decoder up from width/height/fps even when the stream reports its own,
+// and a value that differs from the camera stops build() with misconfig.media_caps. So the app
+// reads them from the streams at start-up, as the reference Neat apps do, and uses the config
+// values only when no stream can be probed (or probe_source=false). ffprobe runs as a separate
+// process, so it cannot clash with Neat's GStreamer instance.
+struct StreamGeometry {
+  int width = 0;
+  int height = 0;
+  int fps = 0;
+};
+
+// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+int fps_from_rate(const std::string& rate) {
+  try {
+    const auto slash = rate.find('/');
+    const double num = std::stod(rate.substr(0, slash));
+    const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
+    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+StreamGeometry probe_stream(const std::string& url, bool tcp) {
+  std::string quoted = "'";
+  for (const char c : url) {
+    quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+  }
+  quoted += "'";
+  const std::string command = std::string("ffprobe -v error ") +
+                              (tcp ? "-rtsp_transport tcp " : "") +
+                              "-timeout 5000000 -select_streams v:0 "
+                              "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
+                              "-of default=nw=1 " +
+                              quoted + " 2>/dev/null";
+  StreamGeometry g;
+  int avg_fps = 0;
+  int r_fps = 0;
+  if (FILE* pipe = popen(command.c_str(), "r")) {
+    char buffer[256];
+    while (std::fgets(buffer, sizeof(buffer), pipe)) {
+      std::string line(buffer);
+      while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+      }
+      const auto eq = line.find('=');
+      if (eq == std::string::npos) {
+        continue;
+      }
+      const std::string key = line.substr(0, eq);
+      const std::string value = line.substr(eq + 1);
+      if (key == "width") {
+        g.width = std::atoi(value.c_str());
+      } else if (key == "height") {
+        g.height = std::atoi(value.c_str());
+      } else if (key == "avg_frame_rate") {
+        avg_fps = fps_from_rate(value);
+      } else if (key == "r_frame_rate") {
+        r_fps = fps_from_rate(value);
+      }
+    }
+    pclose(pipe);
+  }
+  g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  return g;
+}
+
+// All streams share one source geometry, so they must agree; a mismatch is reported here, by
+// stream, rather than as a misconfig.media_caps from build().
+void apply_stream_geometry(Config& cfg, const std::vector<StreamSpec>& specs) {
+  if (!cfg.probe_source) {
+    return;
+  }
+  std::optional<StreamGeometry> found;
+  for (const auto& spec : specs) {
+    const StreamGeometry g = probe_stream(spec.rtsp_url, cfg.tcp);
+    if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+      std::cerr << "[warn] could not probe stream " << spec.id << " (" << spec.rtsp_url
+                << ") with ffprobe\n";
+      continue;
+    }
+    if (found && (g.width != found->width || g.height != found->height || g.fps != found->fps)) {
+      throw std::runtime_error(
+          "all streams must share one resolution and frame rate: stream " +
+          std::to_string(spec.id) + " is " + std::to_string(g.width) + "x" +
+          std::to_string(g.height) + "@" + std::to_string(g.fps) + ", an earlier stream is " +
+          std::to_string(found->width) + "x" + std::to_string(found->height) + "@" +
+          std::to_string(found->fps));
+    }
+    found = g;
+  }
+  if (!found) {
+    std::cerr << "[warn] using the config's " << cfg.width << "x" << cfg.height << "@" << cfg.fps
+              << "\n";
+    return;
+  }
+  if (found->width != cfg.width || found->height != cfg.height || found->fps != cfg.fps) {
+    std::cout << "[source] streams are " << found->width << "x" << found->height << "@"
+              << found->fps << " (config says " << cfg.width << "x" << cfg.height << "@"
+              << cfg.fps << "); using the streams' values\n";
+  }
+  cfg.width = found->width;
+  cfg.height = found->height;
+  cfg.fps = found->fps;
+}
+
 int main(int argc, char** argv) {
   std::signal(SIGINT, handle_signal);
   std::signal(SIGTERM, handle_signal);
@@ -1698,6 +1808,7 @@ int main(int argc, char** argv) {
     }
 
     const auto specs = build_specs(cfg);
+    apply_stream_geometry(cfg, specs);
 
     neat::RunOptions run_options;
     run_options.preset = neat::RunPreset::Realtime;

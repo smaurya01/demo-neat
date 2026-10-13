@@ -128,7 +128,8 @@ Neat apps is closest to RTSP object detection?
 ```
 
 **Object detection on images (Python)** — the agent's version of [Chapter 12](12-object-detection.md).
-Put a few images in the folder first — for example the six samples from this repository:
+Put a few images in the folder first — for example the six samples from this repository. Run this
+from the folder that holds your `demo-neat` checkout:
 
 ```bash
 sima-user@host:~$ mkdir -p ~/workspace/agent-demo/images
@@ -203,7 +204,7 @@ Put in what the agent would otherwise have to rediscover:
 ## Environment
 - DevKit: <devkit-ip>, user sima
 - Insight host: <host-ip> — video UDP 9000, metadata UDP 9100
-- Board software 2.1.3, SDK 2.1.3.0, Neat Library 0.4.0
+- Board software 2.1.3, SDK 2.1.3.1, Neat Library 0.5.0
 
 ## Build and run
 - Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
@@ -243,7 +244,7 @@ stopped. Call it `PROGRESS.md`:
 You do not have to write them yourself. Start a project with:
 
 ```text
-Create AGENTS.md with the facts about this project's environment, build and run commands,
+Create AGENTS.md (Codex) or CLAUDE.md (Claude Code) with the facts about this project's environment, build and run commands,
 and keep it updated whenever we learn something new. Also keep PROGRESS.md updated after
 every step: what is done, what is in progress, what is next, and any decisions we make.
 Read both files at the start of every session.
@@ -271,4 +272,4 @@ there repeats a mistake in every session until you remove it.
 
 | ← Previous | Contents | Next → |
 |:---|:---:|---:|
-| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Troubleshooting](troubleshooting.md) |
+| [Chapter 18 · A C++ video application](18-cpp-video-app.md) | [All chapters](../README.md) | [Chapter 20 · Inside a model archive](20-model-archive.md) |

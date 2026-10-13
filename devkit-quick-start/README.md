@@ -10,8 +10,8 @@ object detection and a local LLM.
 Work through it in order the first time. After that, each chapter stands on its own — jump
 straight to the one you need.
 
-> **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.0** ·
-> Neat Library **0.4.0** · Neat Apps **0.5.0**
+> **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.1** ·
+> Neat Library **0.5.0** · Neat Apps **0.5.1**
 >
 > **Default login:** Username: `sima` / Password: `edgeai`
 
@@ -66,6 +66,7 @@ Everything above runs on the board. This part sets up the host side.
 | 17 | [Neat Insight](chapters/17-neat-insight.md) | A browser console for streams, output and runtime state |
 | 18 | [A C++ video application](chapters/18-cpp-video-app.md) | **The capstone** — RTSP in, detection on the MLA, result in Insight |
 | 19 | [Agentic development](chapters/19-agentic-development.md) | Build Neat apps by prompting Codex or Claude Code with the SiMa skills |
+| 20 | [Inside a model archive](chapters/20-model-archive.md) | What is in the `.tar.gz` you pass to `Model`, INT8 vs BF16, and how to check one before you use it |
 
 ### Reference
 

@@ -17,8 +17,7 @@
   - [Where the remaining cost is](#where-the-remaining-cost-is)
 - [Appendix](#appendix)
   - [Measured behaviour](#appendix-measured-behaviour)
-    - [C++ — current](#c-buildquad_stream_quad_model--current)
-    - [How it got there](#how-it-got-there)
+    - [C++ (`./build/quad_stream_quad_model`)](#c-buildquad_stream_quad_model)
     - [Python (`./main.py`)](#python-mainpy--same-models-same-config-threaded-per-stream)
   - [`tools/pose_probe.py` — study one model on its own](#appendix-toolspose_probepy--study-one-model-on-its-own)
   - [Known limitations](#appendix-known-limitations)
@@ -36,6 +35,10 @@ frame pushed into stream *i*'s model, decoded for stream *i*'s task, annotated i
 published on stream *i*'s own UDP port. Each frame carries a burned-in `S<i> <TASK> :<port>` banner
 so you can tell the four windows apart.
 
+![quad-stream-quad-model in Neat Insight](docs/insight.jpg)
+
+*Four streams, four models (C++ app): detection, segmentation, pose and YOLOX, viewed in Neat Insight.*
+
 ## About Project
 
 - Application: `quad_stream_quad_model` — **C++ (`main.cpp`) and Python (`main.py`)**
@@ -43,9 +46,12 @@ so you can tell the four windows apart.
 - Output: 4x UDP/RTP H.264 streams, one port per stream
 - Runtime config: `./config/default.conf` — **shared by both implementations**
 
-Both do exactly the same thing. The C++ build is **about 3x faster end to end** on NEAT 0.4.0
-(**~236 fps** aggregate in C++ against **~79 fps** in Python), because Python's overlay is
+Both do exactly the same thing. The C++ build is **about 3x faster end to end** on Neat 0.5.0
+(**~240 fps** aggregate in C++ against **~75–88 fps** in Python), because Python's overlay is
 serialised by the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
+
+What building this app taught (decode families, normalization, backpressure, the GIL) is written
+up lesson by lesson in [LEARNING.md](LEARNING.md).
 
 | slot | task | model | source | Neat on-device decode |
 | --- | --- | --- | --- | --- |
@@ -80,17 +86,18 @@ Two of the four are published in the SiMa model zoo. Download them:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11s
-sima-cli modelzoo -v 2.1.2 --boardtype modalix get yolo_11s_seg
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s_seg
 cd ../..
 ```
 
-The zoo publishes **no YOLO-pose and no YOLOX**. The quickest option is to grab the prebuilt
-archives — **📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)** —
-and copy `yolo26s-pose` and `yolox_s`'s `*_mpk.tar.gz` into `./assets/models/`.
-
-Otherwise, build those two yourself with the graph-surgery flow in
-[`model-compilation/`](../../model-compilation/README.md).
+The zoo publishes **no YOLO-pose and no YOLOX**, so build those two with the graph-surgery flow in
+[`model-compilation/`](../../model-compilation/README.md)
+([`yolo26s-pose`](../../model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix),
+[`yolox_s`](../../model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery)) and copy
+their `*_mpk.tar.gz` into `./assets/models/`. `yolo26s-pose` can also come from the prebuilt
+**📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**,
+but not `yolox_s`: the zip's build has the older packed heads, which `BoxDecodeType.YoloX` cannot decode.
 
 Expected model paths (`assets/models/` is git-ignored — the archives are large and not committed):
 
@@ -111,20 +118,34 @@ Edit `./config/default.conf` before running. At minimum, set:
 
 ```text
 rtsp_default=<rtsp-url>
+stream0_rtsp=<rtsp-url>
+stream1_rtsp=<rtsp-url>
+stream2_rtsp=<rtsp-url>
+stream3_rtsp=<rtsp-url>
 udp_host=<host-ip>
 udp_port_base=9000
 udp_port_stride=1
 ```
+
+Each `stream<i>_rtsp` overrides `rtsp_default` for its slot, and the shipped config sets all four
+to the `<rtsp-url>` placeholder. Either set all four (the same URL, or four different cameras), or
+delete those four lines so every slot uses `rtsp_default`.
+
+> **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
+> in the config are used only if that fails; then set them to your camera's values.
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+>
+> All 4 cameras must have the same resolution and frame rate.
 
 With those defaults stream *i* publishes on `9000 + i` → `9000`, `9001`, `9002`, `9003`, Insight
 viewer channels 0–3.
 
 For a bounded smoke test, set `frames=30`.
 
-<a id="config-parameters"></a>
+## Config Parameters
 
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -133,14 +154,17 @@ For a bounded smoke test, set `frames=30`.
 `rtsp_default`: RTSP URL used by any stream slot that does not set its own `stream<i>_rtsp`.
 
 `stream0_rtsp` … `stream3_rtsp`: Per-slot RTSP URL. Each slot builds its **own** source graph, so
-four streams means four real H.264 decodes — not one decode fanned out. All four default to the same
-source; point them at four different cameras and stream identity still holds.
+four streams means four real H.264 decodes — not one decode fanned out. The shipped config sets all
+four to the `<rtsp-url>` placeholder: set each one, or delete them to fall back to `rtsp_default`.
+Point them at four different cameras and stream identity still holds.
 
 `rtsp_transport`: RTSP transport mode. Use `tcp` for reliability or `udp` for lower latency.
 
 `latency_ms`: RTSP receiver jitter buffer, in milliseconds.
 
-`width`, `height`, `fps`: Used when RTSP caps are incomplete.
+`width`, `height`, `fps`: Resolution and frame rate (whole number) of the RTSP streams. Fallback, used only if the cameras cannot be read.
+
+`probe_source`: `true` reads width, height and fps from the cameras at start; `false` uses the values above.
 
 **Streams & models**
 
@@ -172,6 +196,13 @@ on the accelerator and the host never sees a sub-threshold box.
 
 `queue_depth`: Bounded per-graph queue depth (Realtime preset, KeepLatest overflow).
 
+`model_queue_depth`: Frames each model graph may hold in flight (C++ only; default 4). The pusher
+hands the model no more than this, and excess frames are dropped at the source. This is the
+backpressure bound shown as `inflt` in the time profile.
+
+`output_queue_depth`: Frames parked between the model and the output thread (postproc + overlay +
+encode) (C++ only; default 2). Each holds a model output buffer, so keep it small.
+
 `cvu_pre_target`, `cvu_post_target`: Where the model's pre/post CVU stages run — `AUTO` | `EV74` |
 `A65`. Defaults to `EV74`; `AUTO` measured ~12% slower.
 
@@ -181,7 +212,10 @@ on the accelerator and the host never sees a sub-threshold box.
 
 `print_backend`: Print the generated GStreamer backends when `true`.
 
-Every value is also overridable on the command line. Run `python main.py --help`.
+`profile_interval`: Seconds between live time-profile prints (default 5). `0` prints only the
+summary at exit.
+
+Every value is also overridable on the command line. Run `dk ./main.py --help`.
 
 Useful flags: `--num-streams {1..4}`, `--tasks a,b,c` (custom model set), `--task <t>` (run ONE model
 solo), `--no-overlay` (isolate the model rate from the host overlay cost), `--duration <seconds>`,
@@ -203,7 +237,7 @@ cmake --build ./build --parallel
 
 ## How To Run
 
-**C++** (recommended — ~2x the throughput):
+**C++** (recommended — ~3x the throughput):
 
 ```bash
 dk ./build/quad_stream_quad_model --duration 20
@@ -253,8 +287,10 @@ Make sure `udp_host` in `./config/default.conf` points at the machine running In
 where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
 read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
+## Time Profile
+
 <details>
-<summary><h2>Time Profile</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -339,10 +375,10 @@ compute, that could not happen. Per-frame MLA time is on the order of **1–2 ms
 large internal edge queue and `push()` returns as soon as the frame lands in it. Any model slower
 than the source then outruns it and the queue fills toward its physical limit.
 
-That is not hypothetical — it is what this app did. Segmentation reached **~600 frames in flight and
-11 seconds of latency**, while still reporting a healthy 59 fps *because it was draining a backlog*.
-The aggregate briefly read **261 fps from a 240 fps source**, which is the tell that a number is
-backlog, not throughput.
+Without a bound of its own, segmentation reaches **~600 frames in flight and 11 seconds of
+latency** while still reporting a healthy 59 fps, *because it is draining a backlog*. An aggregate
+above the source rate (say **261 fps from a 240 fps source**) is the tell that a number is backlog,
+not throughput.
 
 So the pusher gates on its own in-flight count (`model_queue_depth`), and excess frames are dropped
 at the source mailbox — where a live camera **should** shed load. `inflt` in the table is that bound,
@@ -356,7 +392,7 @@ A65. The other three streams are under 1.7 ms. If seg dips below 60 fps, that is
 
 The structural cost is the **host round-trip**: every frame is copied out of the zero-copy pool to
 the A65 (`decode`), then copied back CPU→EV74 inside `push`. The official
-[`multi-stream-object-detector`](../../../apps/examples/object-detection/multi-stream-object-detector/)
+[`multi-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/multi-stream-object-detector)
 avoids this entirely with `graphs::Branch` — the frame goes decoder → encoder **in-graph** and the
 host only pulls detections. But that design does not burn the overlay into the video; it ships boxes
 as metadata for the viewer to draw. `nodes::SimaRender` can annotate on-device, but it draws
@@ -370,54 +406,38 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
    ---
    # Appendix
 
-   <a id="appendix-measured-behaviour"></a>
+   ## Appendix: Measured behaviour
 
    <details>
-   <summary><h2>Appendix: Measured behaviour</h2></summary>
+   <summary>Click to expand</summary>
 
    <br>
 
    Modalix DevKit, RTSP 1280×720 H.264 @ 59.94 fps, all four streams concurrent, `cvu_*_target=EV74`,
    overlay on.
 
-   ### C++ (`./build/quad_stream_quad_model`) — current
+   ### C++ (`./build/quad_stream_quad_model`)
 
    **~236 fps against a 239.8 fps ceiling (4 × 59.94) — 98% of what the cameras can supply.** All four
-   streams deliver at the source rate; the pipeline is not the bottleneck any more. The per-stream
+   streams deliver at the source rate; the pipeline is not the bottleneck. The per-stream
    numbers are the [Time Profile](#time-profile) live table above — the same run, not repeated here.
 
-   ### How it got there
+   Two design choices get it there, and neither touches a model:
 
-   An earlier build ran each stream on **one thread doing infer → postproc → overlay → encode with
-   nothing overlapping**, which delivered **~165 fps**:
+   1. **postproc + overlay + encode run on their own thread**, so a stream's frame period is
+      `max(infer, rest)`, not the *sum* of every stage. Segmentation gains most: its 14 ms mask blend
+      is not charged against its frame rate.
+   2. **`push` and `pull` run on two threads**, so the model graph holds several frames at once
+      instead of exactly one. Frame *i+1*'s EV74 preprocess overlaps frame *i*'s MLA.
 
-   | stream | old infer | old delivered | now delivered |
-   | --- | --- | --- | --- |
-   | 0 detection | 18.3 | 44.5 | **59.1** |
-   | 1 segmentation | 22.2 | 28.2 | **58.3** |
-   | 2 pose | 16.6 | 44.5 | **59.3** |
-   | 3 yolox | 16.2 | 47.7 | **59.3** |
-   | | | **164.9 fps** | **~236 fps  (+43%)** |
-
-   Two changes did it, and neither touched a model:
-
-   1. **postproc + overlay + encode moved to their own thread.** Before, a stream's frame period was the
-      *sum* of every stage (`latency == infer + postproc + overlay + encode` held to 0.01 ms). Now it is
-      `max(infer, rest)`. Segmentation gained most — its 14 ms mask blend had been charged straight
-      against its frame rate.
-   2. **`push` and `pull` split across two threads**, so the model graph holds several frames at once
-      instead of exactly one. Frame *i+1*'s EV74 preprocess now overlaps frame *i*'s MLA.
-
-   `infer` went **up** as a result (16–22 ms → 20–32 ms) while throughput went up. That is not a
-   contradiction: with frames in flight, `infer` is a **latency**, not a period. See the Time Profile
-   section.
+   With frames in flight, `infer` is a **latency**, not a period, so it can be 20–32 ms while each
+   stream still delivers ~59 fps. See the Time Profile section.
 
    ### Python (`./main.py`) — same models, same config, threaded per stream
 
-   Measured on NEAT 0.3.0 over a 3-minute `--duration 180` run: **aggregate 95.64 fps**, 37 profile
-   windows, zero stalls, zero errors, no degradation across the run. **On NEAT 0.4.0 the same build
-   measures ~79 fps aggregate**; the cause of the drop is not resolved. The per-stage breakdown
-   below is from the 0.3.0 run.
+   On Neat 0.5.0 the Python build delivers **~75–88 fps aggregate**. The per-stage breakdown below
+   was measured on NEAT 0.3.0 over a 3-minute `--duration 180` run (**aggregate 95.64 fps**, zero
+   stalls, zero errors, no degradation across the run); read it for where the time goes.
 
    | stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
    | --- | --- | --- | --- | --- | --- |
@@ -427,35 +447,35 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
    | 3 yolox | `yolox_s` | 24 | 0.4 | ~10 | ~56 |
    | | | | | | **aggregate ~95 fps** |
 
-Two changes got it here from a build that **did not run at all** (4.7 fps, then 0.0 fps permanently
-with every stream reporting `no RTSP frame`):
+Two things the Python build depends on:
 
 1. **The source sink must drop.** `OutputOptions.every_frame()` leaves `drop=False`, and a
-   non-dropping sink back-pressures the *admitted* hardware decoder into a permanent stall as soon as
-   the Python consumer falls behind. `main.cpp` survives the same setting only because it drains at
-   61 fps/stream.
+   non-dropping sink back-pressures the *admitted* hardware decoder into a permanent stall (every
+   stream reporting `no RTSP frame`) as soon as the Python consumer falls behind. `main.cpp`
+   survives the same setting only because it drains at 61 fps/stream.
 2. **`annotate()` batches its OpenCV calls.** One `cv2.rectangle` per box, the whole skeleton in one
-   `cv2.polylines`, and all keypoint dots in one indexed write — 3.5× on pose, and 42.5 → 95.6 fps
-   aggregate.
+   `cv2.polylines`, and all keypoint dots in one indexed write — 3.5× faster on pose than one call
+   per element.
 
-`infer` is now at **parity with the C++** (24 ms vs 21.7 ms), so the remaining gap to the C++'s
-~236 fps is entirely the host-side overlay: **58 ms vs 0.51 ms** (detection) and **87 ms vs 10.4 ms**
+`infer` is at **parity with the C++** (24 ms vs 21.7 ms), so the remaining gap to the C++'s
+~240 fps is entirely the host-side overlay: **58 ms vs 0.51 ms** (detection) and **87 ms vs 10.4 ms**
 (segmentation). Python's per-frame drawing serialises on the GIL; the C++ overlay runs on four real
 OS threads with no interpreter lock.
 
-> **Do not raise `pipeline_depth` to chase this.** It is 2 for a reason: at 4 the aggregate *falls*
-> to 75.6 fps and `infer` doubles to 56 ms. Queueing more frames on a shared MLA buys latency, not
-> throughput. Lesson 14 lists the other optimisations that measured worse than they sounded.
+> **Do not raise the Python pipeline depth to chase this.** The Python app's `--pipeline-depth`
+> option (frames kept in flight in each model graph; `pipeline_depth=` in the config) is 2 for a
+> reason: at 4 the aggregate *falls* to 75.6 fps and `infer` doubles to 56 ms. Queueing more frames
+> on a shared MLA buys latency, not throughput.
+> [Lesson 14](LEARNING.md#lesson-14-things-that-sounded-right-and-measured-wrong) lists the other
+> optimisations that measured worse than they sounded.
 
-**Post-processing is not a cost in either.** It used to be: segmentation, pose and YOLOX were decoded
-in NumPy on the A65, costing **~340 ms** and **~143 ms** per frame. Every model now box-decodes
-on-device — so the host `postproc` stage is only **0.04 – 0.91 ms** in C++ and **0.5 – 6.6 ms** in
-Python (there it is just the cost of reshaping the payload through NumPy).
+**Post-processing is not a cost in either.** Every model box-decodes on-device (decoding
+segmentation, pose and YOLOX in NumPy on the A65 would cost **~340 ms** and **~143 ms** per frame),
+so the host `postproc` stage is only **0.04 – 0.91 ms** in C++ and **0.5 – 6.6 ms** in Python
+(there it is just the cost of reshaping the payload through NumPy).
 
-> **`postproc` was called `decode` in earlier builds.** It was always the *host-side read of the
-> already-decoded payload*, never a decode. The column is now named for what it measures, and
-> `decode` now means the RTSP/H.264 frame decode — a genuinely different stage that earlier builds
-> never measured at all.
+> **`postproc` is not a decode.** It is the *host-side read of the already-decoded payload*. The
+> `decode` column is the RTSP/H.264 frame decode, a different stage.
 
 > **Measure with `--duration`, not `--frames`, whenever streams share the MLA.** A per-stream frame
 > cap only stops the run when *all* streams reach it, so a fast stream keeps running — and keeps
@@ -464,10 +484,10 @@ Python (there it is just the cost of reshaping the payload through NumPy).
 
 </details>
 
-<a id="appendix-toolspose_probepy--study-one-model-on-its-own"></a>
+## Appendix: `tools/pose_probe.py` — study one model on its own
 
 <details>
-<summary><h2>Appendix: `tools/pose_probe.py` — study one model on its own</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -477,23 +497,23 @@ possible place to debug it. `tools/pose_probe.py` strips everything away: ONE mo
 
 ```bash
 # what does this model actually cost, and are its outputs right?
-python tools/pose_probe.py --task pose --iters 20 --save-out /tmp/pose.jpg
+dk ./tools/pose_probe.py --task pose --iters 20 --save-out /tmp/pose.jpg
 
 # control: the same probe on a different model
-python tools/pose_probe.py --task segmentation --iters 20
+dk ./tools/pose_probe.py --task segmentation --iters 20
 
 # can ANY runtime option move the number?
-python tools/pose_probe.py --sweep
+dk ./tools/pose_probe.py --sweep
 ```
 
 Because it is lock-step, its `infer` is the real model service time, not graph latency.
 
 </details>
 
-<a id="appendix-known-limitations"></a>
+## Appendix: Known limitations
 
 <details>
-<summary><h2>Appendix: Known limitations</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

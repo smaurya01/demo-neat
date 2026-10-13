@@ -17,6 +17,7 @@
 //                     [--video-port-base 9000] [--metadata-port-base 9100]
 //                     [--mode none|grayscale|invert] [--border 12] [--color 0xFF0000]
 //                     [--no-bar] [--min-score 0.35] [--frames N] [--print-graph]
+//                     [--no-frame-timestamps]
 
 #include "../common/app_common.h"
 #include "../common/framemarker_node.h"
@@ -109,12 +110,15 @@ int main(int argc, char** argv) {
                    "--insight-host <host> --model <yolo26 .tar.gz> [--labels coco_labels.txt] "
                    "[--channel 0] [--mode none|grayscale|invert] [--border N] "
                    "[--color 0xRRGGBB] [--no-bar] [--min-score 0.35] [--frames N] "
-                   "[--print-graph]\n";
+                   "[--print-graph] [--no-frame-timestamps]\n";
       return (url.empty() || model_path.empty()) ? 1 : 0;
     }
     const std::string insight_host = args.get("--insight-host", "127.0.0.1");
     const int channel = args.get_int("--channel", 0);
     const int frames_limit = args.get_int("--frames", 0);
+    // Frame timestamps keep the boxes locked to their frame. With Insight 0.0.8 the viewer fails to
+    // match them on a 60 fps stream (it draws nothing); this flag falls back to arrival order.
+    const bool frame_timestamps = !args.has("--no-frame-timestamps");
     const float min_score = std::stof(args.get("--min-score", "0.35"));
     const auto labels = load_labels(args.get("--labels", "coco_labels.txt"));
     if (labels.empty())
@@ -134,9 +138,11 @@ int main(int argc, char** argv) {
     model_opt.preprocess.input_max_width = geometry.width;
     model_opt.preprocess.input_max_height = geometry.height;
     model_opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
+    // YOLO26's one-to-one head returns one box per object; the YoloV26 decoder runs no NMS, so
+    // there is no nms_iou_threshold to set. Use a YOLO26 archive here (or switch to YoloV8 with
+    // NMS for a YOLOv8/YOLO11 one).
     model_opt.decode_type = neat::BoxDecodeType::YoloV26;
     model_opt.score_threshold = min_score;
-    model_opt.nms_iou_threshold = 0.5f;
     model_opt.top_k = kTopK;
     neat::Model model(model_path, model_opt);
 
@@ -230,7 +236,8 @@ int main(int argc, char** argv) {
       }
 
       // Insight matches metadata.timestamp (ms) against the video frame's timestamp.
-      const int64_t ts_ms = sample.pts_ns >= 0 ? sample.pts_ns / 1'000'000 : -1;
+      const int64_t ts_ms =
+          (frame_timestamps && sample.pts_ns >= 0) ? sample.pts_ns / 1'000'000 : -1;
       const std::string frame_id = sample.frame_id >= 0 ? std::to_string(sample.frame_id) : "";
       std::string send_err;
       if (!metadata.send_metadata("object-detection",
