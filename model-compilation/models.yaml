@@ -4,7 +4,7 @@
 # model's input name, shape, normalization and output contract can never drift between steps.
 #
 # Key fields
-#   surgery      : none | yolo_ultralytics | yolox   (which rewrite graph_surgery.py applies)
+#   surgery      : none | yolo_ultralytics | yolox | world   (which rewrite graph_surgery.py applies)
 #   output_names : the EXACT tensors the compiled archive exposes (surgery models expose raw heads)
 #   decode       : how test_model.py interprets the outputs
 #   box_decode   : the Neat BoxDecodeType that decodes the archive ON-DEVICE (NMS included), and
@@ -21,11 +21,11 @@
 #   batch_size   : optional, default 1. Images per MLA call the archive is compiled for. A batch-N
 #                  build goes to work/<id>/compile_<precision>_b<N>/, beside the batch-1 one. Usually
 #                  left out and given once on the command line: `compiler.py --model-id yolo26m
-#                  --batch-size 6`. Check README > Multi-batch compilation before using one: Neat
+#                  --precision int8 --batch-size 6`. Read MULTI-BATCH.md before using one: Neat
 #                  0.5.0 cannot box-decode a batched archive on the device.
 #
 # Calibration is ALWAYS real images (assets/calibration). Synthetic calibration produces a
-# valid-looking archive with meaningless activation ranges -- see README.
+# valid-looking archive with meaningless activation ranges -- see MODEL-COMPILATION.md.
 
 project:
   default_device: modalix
@@ -88,7 +88,9 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
-    precision: int8
+    # bf16, not INT8: with Model Compiler 2.1.3 the INT8 build compiles cleanly but loses most of
+    # its accuracy (e.g. COCO 000000000885: racket 0.20 INT8 vs 0.73 FP32); bf16 matches FP32 (0.75).
+    precision: bf16
     enabled: true
 
   - id: efficientnet_v2_s
@@ -305,7 +307,7 @@ models:
     # COMPILE IN BF16 (not INT8): the 4D attn rewrite exposes the text-similarity score
     # maps as intermediate tensors; in INT8 they saturate and the MLA sim-check fails.
     # bf16 places identically (MLA:1 EV74:16 A65:0, 1 elf / 0 so) and is numerically clean.
-    #   python compile/compiler.py --model-id yolov8s-worldv2 --bf16-weights --bf16-activations
+    #   python compile/compiler.py --model-id yolov8s-worldv2      # precision: bf16 below
     precision: bf16
     enabled: true
 

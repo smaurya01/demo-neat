@@ -62,9 +62,9 @@ The five sections build on each other:
 
 > **On `04-llm-vlm-compilation/`:** there is **no `llima compile` subcommand** — the on-board `llima`
 > CLI is runtime + model-manager only (`run, search, pull, list, rm, benchmark-server`). GenAI
-> compilation is a separate **host-side `llima-compile` (Model Compiler)** tool. Its exact flags
-> should be confirmed against the official SiMa documentation. The load-bearing, testable part — the
-> deployed model-directory contract — is verified against `core/src/genai/GenAIInternal.cpp`.
+> compilation is a separate **host-side `llima-compile` (Model Compiler)** tool. For its flags, see the
+> [SiMa LLiMa compilation docs](https://developer.sima.ai/software/genai-llima/compilation_genai) and
+> [`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb).
 
 ## Models
 
@@ -99,21 +99,18 @@ source $HOME/pyneat/bin/activate
 
 python -m pip install notebook   # only once
 
-cd /workspace/demo-neat
+cd /workspace/demo-neat   # your clone of this repo under /workspace
 jupyter notebook --no-browser --ip=0.0.0.0 --port=8888
 ```
 
-Then open the DevKit notebook URL from your machine (host system):
+Then open the notebook URL the server prints, from your machine:
 
-```bash
-http://modalix:8888/tree?token=************************
+```text
+http://modalix:8888/tree?token=<token>
 ```
 
-Replace the `modalix` name in above URL with devkit ip.
-
-```bash
-http://<devkit-ip>:8888/tree?token=<token>
-```
+If `modalix` does not resolve on your network, use the DevKit's IP instead:
+`http://<devkit-ip>:8888/tree?token=<token>`.
 
 From the file tree, open `llima/` and start at
 [`01-llima-basics/llima-introduction.ipynb`](01-llima-basics/llima-introduction.ipynb).
@@ -130,5 +127,6 @@ If you would rather not run Jupyter, lift the code cells into a script and run t
   [`020_run_a_vlm`](https://github.com/sima-neat/core/tree/main/tutorials/020_run_a_vlm),
   [`021_serve_genai_models`](https://github.com/sima-neat/core/tree/main/tutorials/021_serve_genai_models)
 - Concept doc: [`genai-model.mdx`](https://github.com/sima-neat/core/blob/main/docs/develop-apps/development-workflow/genai-model.mdx)
-- Official docs: developer.sima.ai — `/software/getting-started/`,
-  `/software/develop-apps/development-workflow/genai-model`, `/software/genai-llima/runtime`
+- Official docs: [Getting started](https://developer.sima.ai/software/getting-started/),
+  [GenAI model workflow](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model),
+  [LLiMa runtime](https://developer.sima.ai/software/genai-llima/runtime)

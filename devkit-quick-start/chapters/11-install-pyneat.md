@@ -42,7 +42,7 @@ If a selection screen appears, the useful extras are:
 While you are here, install the example applications too:
 
 ```bash
-sima@modalix:~$ sima-cli neat install apps@v0.5.1
+sima@modalix:/media/nvme/neat$ sima-cli neat install apps@v0.5.1
 ```
 
 > **Versions are a matched set.** Neat Apps 0.5.1 goes with Neat Library 0.5.0, which goes with

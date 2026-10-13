@@ -101,9 +101,27 @@ def ensure_dirs(model_id: str, precision: str = "int8", batch: int = 1) -> dict[
 
 
 def compile_input_onnx(model_id: str) -> Path:
-    """The ONNX the compiler should consume: the surgery output if present, else the raw export."""
+    """The ONNX the compiler should consume: the raw export for `surgery: none`, else the surgery
+    output (which must exist -- compiling the raw export of a surgery model cannot work)."""
+    cfg, _ = model_cfg(model_id)
     p = paths(model_id)
-    return p["surgery"] if p["surgery"].exists() else p["onnx"]
+    if cfg.get("surgery", "none") == "none":
+        return p["onnx"]
+    if not p["surgery"].exists():
+        raise SystemExit(f"{model_id}: no {p['surgery'].relative_to(ROOT)} -- run "
+                         f"graph_surgery.py --model-id {model_id} first")
+    return p["surgery"]
+
+
+def _pick_archive(model_id: str, hits: list[Path]) -> Path | None:
+    """Of the archives in a compile dir, the one built from the current compile input, newest first
+    (a dir can still hold an older build from another input, e.g. from before surgery)."""
+    if not hits:
+        return None
+    cfg, _ = model_cfg(model_id)
+    stem = (f"{model_id}.compile_ready" if cfg.get("surgery", "none") != "none" else model_id)
+    pool = [h for h in hits if h.name == f"{stem}_mpk.tar.gz"] or hits
+    return max(pool, key=lambda h: h.stat().st_mtime)
 
 
 def archive_path(model_id: str, precision: str | None = None,
@@ -113,16 +131,18 @@ def archive_path(model_id: str, precision: str | None = None,
     prec = model_precision(model_id, precision)
     batch = 1 if batch is None else model_batch_size(model_id, batch)
     if batch > 1:
-        hits = sorted(paths(model_id, prec, batch)["compile_dir"].rglob("*_mpk.tar.gz"))
-        return hits[0] if hits else None
+        return _pick_archive(model_id, list(paths(model_id, prec, batch)["compile_dir"].rglob("*_mpk.tar.gz")))
     int8_dir = paths(model_id, "int8")["compile_dir"]
     # Archives built before compile_bf16/ existed were all written to compile_int8/, bf16 ones
     # included; their command record (reports/compile.command.txt) says which precision they are.
-    legacy_cmd = paths(model_id)["reports"] / "compile.command.txt"
-    legacy_bf16 = legacy_cmd.exists() and "--bf16-weights" in legacy_cmd.read_text(encoding="utf-8")
+    # A new-style record (compile_int8.command.txt) means compile_int8/ was rebuilt since.
+    reports = paths(model_id)["reports"]
+    legacy_cmd = reports / "compile.command.txt"
+    legacy_bf16 = (legacy_cmd.exists() and not (reports / "compile_int8.command.txt").exists()
+                   and "--bf16-weights" in legacy_cmd.read_text(encoding="utf-8"))
     if prec == "int8" and legacy_bf16:
         return None                       # compile_int8/ holds a bf16 build, not an int8 one
     hits = sorted(paths(model_id, prec)["compile_dir"].rglob("*_mpk.tar.gz"))
     if not hits and prec == "bf16" and legacy_bf16:
         hits = sorted(int8_dir.rglob("*_mpk.tar.gz"))
-    return hits[0] if hits else None
+    return _pick_archive(model_id, hits)

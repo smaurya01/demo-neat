@@ -121,11 +121,12 @@ custom-plugin/
 Throughout this tutorial:
 
 - **`<sdk-host-ip>`** is the IP address of the machine running the SDK container, which is also
-  where Insight runs. `neat --json` prints it as `insight.webUiUrl`.
+  where Insight runs: the IP on the **Insight (remote)** line of `neat`.
 - **`<devkit-ip>`** is your DevKit's IP address.
 - **Build** commands run in the SDK. **Run** commands run on the DevKit.
-- **`/path/to/demo-neat`** is where you cloned the demo-neat repository. This tutorial lives in
-  its `custom-plugin/` folder.
+- **`/path/to/demo-neat`** is where you cloned the demo-neat repository. Clone it into your host
+  workspace (`cd ~/workspace && git clone <repo-url> demo-neat`) so it is `/workspace/demo-neat` in the
+  SDK and on the DevKit. This tutorial lives in its `custom-plugin/` folder.
 - If your SDK shares its workspace with the DevKit (the SDK's DevKit sync sets this up over NFS),
   the DevKit already sees the build output at the same path. If not, copy the folder over after
   building:
@@ -561,11 +562,10 @@ Insight can play a video file as an RTSP "camera" for the DevKit to read.
 
 1. Open Insight at **`https://<sdk-host-ip>:9900/`**. It's HTTPS, so accept the certificate
    warning.
-2. Go to the **Media Sources** tab and select a video from the **catalog** to load it.
-3. Go to the **Streaming** tab, select the loaded video and press **Play**. This creates the
-   RTSP stream.
+2. Go to **Media Library** → **Import Media** → **Catalog** and import a 720p30 H.264 variant.
+3. Go to **RTSP Source**, assign the video to `src1` and start it. This creates the RTSP stream.
 
-The Streaming tab shows the stream's source number. From the DevKit, the stream is
+The RTSP Source tab shows the stream's source number. From the DevKit, the stream is
 **`rtsp://<sdk-host-ip>:8554/srcN`**, where N is that number. This tutorial uses **`src1`**;
 replace it with yours.
 
@@ -614,7 +614,7 @@ Options (both versions):
 |---|---|---|
 | `--url` | required | RTSP H.264 URL |
 | `--insight-host` | `127.0.0.1` | Where Insight runs |
-| `--channel` | `0` | Insight viewer channel. Video goes to UDP `9000 + channel`. Must be a channel the SDK publishes (see `neat --json` → `videoUDP`, usually 0–15). |
+| `--channel` | `0` | Insight viewer channel. Video goes to UDP `9000 + channel`. Must be a channel the SDK publishes (see `neat --json` → `videoUDP`, e.g. 0–23). |
 | `--mode` | `grayscale` | `none`, `grayscale` or `invert` |
 | `--border` / `--color` | `12` / `0x00FF00` | Border width and colour |
 | `--no-bar` | off | Hide the progress bar |
@@ -747,7 +747,7 @@ it prints every frame with its PTS.
 | `gst-inspect` says the plugin is blacklisted | An older broken build was cached | `rm -rf ~/.cache/gstreamer-1.0` and retry |
 | `wrong ELF class` / `cannot open shared object` | Built for x86 instead of aarch64, or run outside the SDK shell | Rebuild in the SDK shell; `file` must say `ARM aarch64` |
 | `not-negotiated` / caps error at `build()` | Upstream format isn't in your pad template (for example RGB into NV12-only) | Add the format to the template (and implement it), or insert `nodes::CapsRaw("NV12")` / a converter before it |
-| App runs at full fps but Insight shows nothing on the channel | The channel's UDP port isn't reachable. The SDK publishes only the channels in its port map (often 0–15, UDP 9000–9015 / 9100–9115), and some networks block UDP between the board and the SDK host | Use a channel inside `neat --json` → `videoUDP` range; check `curl -k https://127.0.0.1:9900/api/ingest/stats` for `packets_received` |
+| App runs at full fps but Insight shows nothing on the channel | The channel's UDP port isn't reachable. The SDK publishes only the channels in its port map (e.g. 0–23, UDP 9000–9023 / 9100–9123), and some networks block UDP between the board and the SDK host | Use a channel inside `neat --json` → `videoUDP` range; check `curl -k https://127.0.0.1:9900/api/ingest/stats` for `packets_received` |
 | Video in Insight but no change visible | `mode=none` and `border-width=0`, or you are watching another channel | Check the options and `--channel` |
 | Overlays drift or vanish after adding your element | Your element changed PTS or re-timestamped buffers | Don't touch `GST_BUFFER_PTS/DTS`; with `GstVideoFilter` in-place this is automatic |
 | Throughput drops | Per-frame CPU work too slow for the stream rate | Measure with `log-interval`; see the rules below |
@@ -787,7 +787,7 @@ it prints every frame with its PTS.
 | Option | How |
 |---|---|
 | Per-application (recommended) | Ship `libgstframemarker.so` next to your app and set `GST_PLUGIN_PATH_1_0` and `SIMA_GST_NEAT_ONLY=0` in its launcher script or systemd unit, the same way `scripts/env.sh` does |
-| System-wide on the DevKit | `sudo cp install/lib/gstreamer-1.0/libgstframemarker.so /usr/lib/aarch64-linux-gnu/gstreamer-1.0/`. The Neat runtime builds its plugin set from its own folder plus the `libgst*` files in this system folder, so no environment variables are needed. (Not verified on a board in this tutorial; use the per-application route if in doubt.) |
+| System-wide on the DevKit | `sudo cp install/lib/gstreamer-1.0/libgstframemarker.so /usr/lib/aarch64-linux-gnu/gstreamer-1.0/`. The Neat runtime builds its plugin set from its own folder plus the `libgst*` files in this system folder, so no environment variables are needed. If in doubt, use the per-application route. |
 | From your app's code | `setenv("GST_PLUGIN_PATH_1_0", "/opt/myapp/gst-plugins", 1); setenv("SIMA_GST_NEAT_ONLY", "0", 1);` at the top of `main()`, **before** building any Graph |
 
 Version your plugin with the 5th argument of `GST_PLUGIN_DEFINE` (`"1.0.0"`), and rebuild it

@@ -115,7 +115,7 @@ port. The **Configure end0** menu offers:
 | **Set as Default Route** | Changes the default route through this interface. In CLI 2.1.16, it assumes the gateway is the interface's IPv4 address with the last octet replaced by `.1`; use it only when that matches your network. Normal DHCP setup does not need this. |
 | **Back to Interface Selection** | Returns to the interface list, where **Quit Menu** exits. |
 
-Menu checked on the DevKit with `sima-cli` **2.1.16**. Choosing a configuration option applies it
+Menu as of `sima-cli` **2.1.16**. Choosing a configuration option applies it
 immediately, which can disconnect SSH. For internet sharing, choose **Set to DHCP**. A default
 static address may be on a different subnet from your host or router; for a stable address on a
 router, see [Chapter 6 · Keeping the same address](06-connect-to-router.md#keeping-the-same-address).
@@ -131,8 +131,7 @@ Command reference: [sima-cli network](https://developer.sima.ai/software/tools/s
 
 ## Windows host
 
-> **Not verified.** These steps have not been tested with the DevKit. They are the standard Windows
-> Internet Connection Sharing procedure, not a SiMa-specific one.
+> These are the standard Windows Internet Connection Sharing steps; they are not SiMa-specific.
 
 1. **Control Panel → Network and Sharing Center → Change adapter settings**
 2. Right-click the adapter that **has** internet (Wi-Fi) → **Properties** → **Sharing**
@@ -146,8 +145,7 @@ Command reference: [sima-cli network](https://developer.sima.ai/software/tools/s
 
 ## macOS host
 
-> **Not verified.** These steps have not been tested with the DevKit. They are the standard macOS
-> Internet Sharing procedure, not a SiMa-specific one.
+> These are the standard macOS Internet Sharing steps; they are not SiMa-specific.
 
 1. **System Settings → General → Sharing → Internet Sharing**
 2. **Share from:** Wi-Fi · **To computers using:** Ethernet

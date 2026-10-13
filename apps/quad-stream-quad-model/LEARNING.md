@@ -12,6 +12,9 @@ Everything below was measured on a Modalix DevKit against a live 1280×720 H.264
 Where a number appears, it came from a run, not from an estimate. Where something is still
 slow, it says so.
 
+> **The per-lesson numbers come from earlier builds of this app**, kept because they show *why*
+> each change was made. The current throughput figures are in [README.md](README.md).
+
 Every API is cited to <https://github.com/sima-neat/core>.
 
 ## Table of Contents
@@ -45,18 +48,19 @@ and **there is no `YoloV11`**. That is not an oversight. You do not pick the fam
 reading the model's version number; you pick it by looking at the shape of the tensors its
 detection head actually emits.
 
-The same YOLO11 weights ship in two different head shapes here:
+The heads that matter here:
 
 | archive | bbox head | what it means | family |
 | --- | --- | --- | --- |
-| model-zoo `yolo_11s` | 3 × **64**-channel | raw DFL distributions (4 sides × 16 bins) | `YoloV8` |
-| self-compiled `yolo11s` | 3 × **4**-channel | DFL already folded into the graph → l/t/r/b distances | `YoloV26` |
+| model-zoo `yolo_11s` | 3 × **64**-channel | raw DFL distributions (4 sides × 16 bins), class probabilities | `YoloV8` |
+| self-compiled `yolo11s` | 3 × **64**-channel | the same raw DFL distributions, but class **logits** | `YoloV8` + `GroupedByRoleLogit` |
+| self-compiled `yolo26s-pose` | 3 × **4**-channel | one-to-one head, l/t/r/b distances (+ keypoints) | `YoloV26Pose` |
 
-Both are "YOLO11". They need *different* decoders. The zoo build keeps the DFL as raw
-distributions, so it decodes with the YOLOv8 contract; our graph surgery
-(`model-compilation/compile/_surgery_ultralytics.py`) rebuilds the DFL as
-`Split → Softmax → Conv(arange) → Concat` inside the model, so it emits 4 distance channels
-and decodes with the YOLO26 contract.
+Both YOLO11 archives keep the DFL as raw distributions, so both decode with the YOLOv8
+contract. Our graph surgery (`model-compilation/compile/_surgery_ultralytics.py`) exposes the
+class heads as logits, so the self-compiled one also needs
+`BoxDecodeTypeOption.GroupedByRoleLogit`. A YOLO26 head is already 4 distance channels and
+one-to-one, so it decodes with the YOLO26 contract. Version number alone tells you none of this.
 
 Pick the wrong one and **the app still runs, still draws boxes, and reports healthy FPS** —
 the boxes are just decoded from the wrong channels. There is no error. That is why this is
@@ -437,12 +441,11 @@ Kept deliberately, because the wrong turns cost more time than the fixes.
 
 Be honest about the remaining ceiling — it is the most instructive part.
 
-**1. In C++, the host is no longer the bottleneck — the shared MLA is.** `infer` is
-16 – 23 ms per model and the four contend for one accelerator. `model fps` (44 – 64) and
-`delivered fps` (30 – 48) are now close, which is exactly what "host-limited" stops looking
-like. Do not predict multi-model capacity by adding service times: the preprocess / MLA /
-dequantize stages of *different* streams overlap, so the aggregate beats `1 / Σ(service)`.
-Measure it.
+**1. In C++, nothing in the pipeline is the bottleneck — the cameras are.** All four streams
+deliver at the source rate, ~240 fps aggregate against a 239.8 fps ceiling (see the
+[README's Time Profile](README.md#time-profile)). Do not predict multi-model capacity by adding
+service times: the preprocess / MLA / dequantize stages of *different* streams overlap, so the
+aggregate beats `1 / Σ(service)`. Measure it.
 
 **2. In Python, the overlay round-trip still dominates** — but by less than it did. Burning
 boxes/masks/skeletons into the video means pulling the full NV12 frame to the A65 and drawing

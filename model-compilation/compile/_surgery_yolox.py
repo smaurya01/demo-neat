@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""T5 phase 1: compile_ready surgery for YOLOX-s (Megvii, non-Ultralytics).
+"""compile_ready surgery for YOLOX-s (Megvii, non-Ultralytics).
 
 YOLOX has a decoupled, anchor-free head that is structurally different from the
 Ultralytics YOLO family, so it needs its own surgery rather than the shared
-14_t5_compile_ready_surgery.py path. Key differences documented for teaching:
+Ultralytics surgery (_surgery_ultralytics.py). Key differences:
 
   * No transformer attention block -> no MatMul->Einsum rewrite needed.
   * Decoupled head per scale: a reg branch (4 = cx,cy,w,h, raw), an obj branch
@@ -21,12 +21,12 @@ WHY THE HEADS ARE EXPOSED SPLIT, NOT PACKED
 Neat's on-device decoder (`BoxDecodeType::YoloX`) does not accept a packed
 [1,85,H,W] head. Its contract is three SEPARATE tensors per scale, interleaved
 scale-major -- (bbox, obj, cls) x 3 -- with depths (4, 1, 80). See
-`infer_yolox_interleaved_class_depth` in core/src/pipeline/internal/sima/
-stagesemantics/BoxDecodeStageSemantics.cpp, which rejects the contract outright
-unless the tensor count is a multiple of 3 and the depths are exactly 4/1/N.
-An earlier version of this surgery exposed the packed Concat output, which meant
-YOLOX could not use the Neat decoder at all and had to be decoded in NumPy on
-the host -- the single biggest cost in the quad-stream app.
+`infer_yolox_interleaved_class_depth` in
+https://github.com/sima-neat/core/blob/main/src/pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.cpp,
+which rejects the contract outright unless the tensor count is a multiple of 3
+and the depths are exactly 4/1/N.
+Exposing the packed Concat output instead would force a NumPy decode on the
+host, which is far slower.
 
 We expose the PRE-Sigmoid obj/cls logits, not the exported Sigmoid outputs,
 because Neat forces `score_activation = Sigmoid` for the YoloX family

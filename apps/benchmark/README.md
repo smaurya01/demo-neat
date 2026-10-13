@@ -63,17 +63,17 @@ cd /path/to/demo-neat/apps/benchmark
 
 ## Model Download Commands
 
-These benchmark commands need compiled model packages in `./assets`. Download the Model Zoo
+These benchmark commands need compiled model packages in `./assets/models`. Download the Model Zoo
 packages once from the SDK shell:
 
 ```bash
 cd /path/to/demo-neat/apps/benchmark
-mkdir -p ./assets
-cd ./assets
+mkdir -p ./assets/models
+cd ./assets/models
 sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
 sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8m
 sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n_seg
-cd ..
+cd ../..
 ```
 
 If the shell prints `getcwd: cannot access parent directories`, the terminal is still in a folder
@@ -87,7 +87,7 @@ Expected model files:
 ./assets/models/yolo_v8n_seg_mpk.tar.gz
 ```
 
-If your DevKit uses a different platform version, replace `2.1.2` with that release version.
+If your DevKit uses a different platform version, replace `2.1.3` with that release version.
 
 ## Model Assets
 
@@ -105,19 +105,21 @@ The benchmark command accepts any compiled model package:
 
 ## Configure
 
-`./config/default.yaml` supplies the defaults when you omit the CLI flags:
+`./config/default.conf` (`key=value`, paths relative to this app folder) supplies the defaults when
+you omit the CLI flags:
 
-```yaml
-model:
-  path: ./assets/models/yolo_v8n_mpk.tar.gz
-benchmark:
-  frames: 1000
-output:
-  report_json: ./output/yolo_v8n_benchmark.json
+```text
+model_path=./assets/models/yolo_v8n_mpk.tar.gz
+frames=1000
+output_json=./output/yolo_v8n_benchmark.json
 ```
 
-Every value is overridable on the command line (`--model`, `--frames`, `--output-json`), and the
-"How To Run" commands below do exactly that.
+- `model_path`: compiled model package to benchmark.
+- `frames`: number of synthetic frames to measure. More frames give a steadier number.
+- `output_json`: where the JSON report is written.
+
+Every value is overridable on the command line (`--model`, `--frames`, `--output-json`; `--config`
+picks another config file), and the "How To Run" commands below do exactly that.
 
 Reports are written to `./output/` (git-ignored).
 
@@ -177,8 +179,10 @@ metrics.avg_power_watts
 metrics.energy_joules
 ```
 
+## Notes And Caveats
+
 <details>
-<summary><h2>Notes And Caveats</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

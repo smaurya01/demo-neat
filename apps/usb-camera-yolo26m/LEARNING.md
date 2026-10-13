@@ -5,6 +5,8 @@ numbers said, what worked, and what didn't. Written so someone can rebuild it fr
 scratch — or, more usefully, so the next person doesn't burn a day on the same three
 dead ends.
 
+> **Historical log; the app now runs on Neat 0.5.0 — see [README.md](README.md).**
+
 Environment: Modalix DevKit, Neat runtime **0.2.2** (`libsima_neat.so.2.1.2`),
 SDK 2.1.2, Logitech Brio 100 USB camera.
 
@@ -132,9 +134,9 @@ But Neat clearly supports it: `core/include/pipeline/BoxDecodeType.h` has
 YoloV26 = 17,     ///< YOLO26 detection (raw l/t/r/b distance heads).
 ```
 
-The resolution is in the reference app's README (`apps/examples/object-detection/
-single-stream-object-detector`): yolo26 is published as a **direct download, outside the
-zoo index**:
+The resolution is in the reference app's README
+([`single-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/single-stream-object-detector)):
+yolo26 is published as a **direct download, outside the zoo index**:
 
 ```bash
 sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
@@ -278,7 +280,7 @@ $ strings /usr/lib/libsima_neat.so.2.1.2 | grep -c latest_by_stream
 ```
 
 `latest_by_stream` is registered in the *same block* of `GstInit.cpp` and is present;
-`neatcamerabridge` is not. **The `/workspace/core` source checkout is newer than the
+`neatcamerabridge` is not. **The Neat core source tree is newer than the
 installed runtime.** The camera bridge was added after the 0.2.2 release.
 
 **Lesson: the source tree is not the runtime.** When a private element is missing, check
@@ -326,10 +328,12 @@ scene just bad?
 
 Guessing here is expensive. **Test against known ground truth instead.** I added a
 `source_override` config key that swaps the camera for any NV12-producing fragment, and
-looped a COCO validation image with a known answer through the *exact same graph*:
+looped a COCO validation image with a known answer through the *exact same graph* (the repo ships
+it as `model-compilation/assets/calibration/000000000139.jpg`; the path below is relative to the
+app folder):
 
 ```ini
-source_override=multifilesrc location=/tmp/coco139.jpg loop=true caps=image/jpeg,framerate=30/1 ! jpegparse ! jpegdec ! videoscale ! videoconvert ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! queue
+source_override=multifilesrc location=../../model-compilation/assets/calibration/000000000139.jpg loop=true caps=image/jpeg,framerate=30/1 ! jpegparse ! jpegdec ! videoscale ! videoconvert ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! queue
 ```
 
 COCO `000000000139` is a living room — person, chairs, TV, potted plants:
@@ -425,8 +429,6 @@ also get a faster camera. That is a good place to end up: the accelerator is not
 constraint.
 
 Python measures 31.5 fps and returns identical boxes, so the language choice is free.
-
----
 
 ---
 

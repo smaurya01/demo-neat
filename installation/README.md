@@ -28,7 +28,8 @@ Install the NEAT SDK on your host, pair it with a Modalix DevKit, and attach VS 
 - **Host OS:** Ubuntu 22.04 / 24.04 (recommended), Windows 11 via WSL (x86_64), or macOS 15.5+
   Apple Silicon (aarch64).
 - **Tools:** `sudo` access, Git, `curl` / `wget`, and a container runtime (Docker or Colima).
-- **Disk:** ~10 GB free (add ~10 GB more if you install the Model Compiler).
+- **Host resources:** 4 CPU cores, 16 GB RAM and 100 GB free disk minimum (the Model Compiler
+  adds about 10 GB).
 - **Network:** the host and the Modalix DevKit must reach each other — confirm you can `ping` the
   DevKit IP from the host.
 
@@ -83,7 +84,7 @@ Setup is a series of prompts. Everything you have to decide is in this table —
 | 1 | **Pair this SDK with a DevKit now?** `[y/N]` | `y`, then enter the DevKit IP | e.g. `192.168.XXX.XXX`. Press `N` if you don't have the IP yet — the workspace is still created and you can pair later with `sima-cli sdk setup --devkit <devkit-ip>`. |
 | 2 | **Some system checks failed — continue anyway?** `[y/N]` | `y` — *if* the only failure is a `Firewall` `WARNING` | Any other failure is worth reading before you continue. |
 | 3 | **SDK Docker image** | `Enter` | The image you just downloaded is pre-selected. |
-| 4 | **Host workspace path** | `Enter` for the default | Or type a custom path. This folder is shared with the DevKit, so you never copy files by hand. |
+| 4 | **Host workspace path** | `Enter` for the default `~/workspace` | Keep `~/workspace`; the guides assume it. This folder is shared with the DevKit, so you never copy files by hand. |
 | 5 | **SDK extension** | `Enter` | |
 | 6 | **Create a new SDK container?** | **First install:** follow the prompt to create it. **Every later run:** press `n`. | ⚠️ The one prompt that actually matters. Pressing `y` on a repeat run creates a second container and reinstalls from scratch. |
 | 7 | **Install the Model Compiler extension?** | `n`, unless you need to compile ONNX/GenAI models | Optional. ~15 minutes and ~10 GB. You can [add it later](#optional-model-compiler). |
@@ -114,12 +115,13 @@ sima-cli sdk setup --devkit <devkit-ip>
 3. Open the Command Palette (`Ctrl+Shift+P`) → **Dev Containers: Attach to Running Container…** →
    pick the `sima-neat/sdk` container.
 
-4. In the attached window, open `/workspace` (or wherever you cloned this repo).
+4. In the attached window, open `/workspace`.
 
-5. Optionally install the **Claude** or **Codex** extension for agentic development, and confirm it
-   picks up `sima-skill`.
+5. Optionally install the **Codex** or **Claude Code** extension with **Install in Container**, and
+   confirm "List available skills" shows the SiMa skills (for example `neat-application-builder`) —
+   see [Chapter 19](../devkit-quick-start/chapters/19-agentic-development.md).
 
-Screenshots for each of these steps are in the [detailed walkthrough](#walkthrough) below.
+Screenshots for each of these steps are in the [detailed walkthrough](#detailed-walkthrough-with-screenshots) below.
 
 ---
 
@@ -136,7 +138,7 @@ print("PyNeat import successful")
 
 ```bash
 dk hello_neat.py            # a PyNeat script
-#dk build/<binary-name>      # a compiled C++ binary
+dk build/<binary-name>       # a compiled C++ binary (Chapter 18 builds one)
 ```
 
 If that prints, the runtime is live on the DevKit. Next: the
@@ -153,15 +155,16 @@ If that prints, the runtime is live on the DevKit. Next: the
 | Setup reinstalls everything | You pressed `y` at prompt 6. Press `n` to reuse the existing container. |
 | Copying files by hand | Don't — use the shared `/workspace` set up by pairing. |
 
-**NEAT Insight** runs at `https://localhost:9900` from inside the SDK — use it to inspect streams,
+**NEAT Insight** is bundled with the SDK; run `neat` in the SDK for its URL (usually
+`https://localhost:9900`) — use it to inspect streams,
 files, and runtime logs. See [neat_insight.md](neat_insight.md).
 
 ---
 
-<a id="walkthrough"></a>
+### Detailed walkthrough with screenshots
 
 <details>
-<summary><h3>Detailed walkthrough with screenshots</h3></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -230,16 +233,18 @@ Install the `Claude` or `Codex` extension for agentic development.
 
 <img src="images/VS-4.png" alt="VS Code extensions pane showing the Claude and Codex extensions" width="600">
 
-Confirm `sima-skill` is picked up.
+Confirm the SiMa skills are picked up ("List available skills").
 
-<img src="images/VS-5.png" alt="Agent extension showing sima-skill loaded" width="600">
+<img src="images/VS-5.png" alt="Agent extension listing the SiMa skills" width="600">
 
 </details>
 
 ---
 
+### Older SDKs: two-step install
+
 <details>
-<summary><h3>Older SDKs: two-step install</h3></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -269,10 +274,10 @@ From here, setup continues with the same prompts — 2–8 in the table above.
 
 ---
 
-<a id="optional-model-compiler"></a>
+### Optional: Model Compiler
 
 <details>
-<summary><h3>Optional: Model Compiler</h3></summary>
+<summary>Click to expand</summary>
 
 <br>
 

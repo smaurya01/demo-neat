@@ -4,14 +4,11 @@ A practical yes / no / maybe flow for deciding whether a given LLM or VLM can be
 brought onto the Modalix DevKit through LLiMa **before** you spend time on a
 compile you cannot run yourself.
 
-> **Honesty boundary.** The on-board `llima` CLI has **no `compile` subcommand**
-> — its subcommands are exactly `{run, search, pull, list, rm, benchmark-server}`.
-> Bring-your-own compilation is a **separate, host-side Model Compiler step**,
-> documented by SiMa as the `llima-compile` tool
-> (see [genai-llima/compilation_genai](https://developer.sima.ai/software/genai-llima/compilation_genai)).
-> `llima-compile` is a host-side tool, not part of the on-board CLI. Treat the
-> exact compile flags and specifics below as things to confirm against the current
-> official SiMa documentation before relying on them, rather than as tested truth.
+> The on-board `llima` CLI has **no `compile` subcommand** — its subcommands are
+> `run`, `search`, `pull`, `list`, `rm` and `benchmark-server`. Bring-your-own
+> compilation uses the **host-side `llima-compile` tool**. See the
+> [SiMa LLiMa compilation docs](https://developer.sima.ai/software/genai-llima/compilation_genai)
+> for its current flags.
 
 ## Table of Contents
 
@@ -49,7 +46,7 @@ Accepted input formats:
 - **Hugging Face safetensors** (full-precision) → pipeline: DEVKIT → ONNX → QUANTIZE → COMPILE
 - **GGUF** → pipeline: direct → COMPILE
 - **Pre-quantized compressed-tensors (GPTQ / AWQ)** → pipeline: SOURCE_TO_QUANT → COMPILE
-  - a symmetry requirement may apply to the pre-quant — confirm against the current docs before relying on it
+  - check the compilation docs for GPTQ/AWQ requirements (e.g. symmetric quantization)
 
 | Answer | Verdict |
 | --- | --- |

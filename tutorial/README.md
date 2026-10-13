@@ -34,7 +34,7 @@ source $HOME/pyneat/bin/activate
 
 python -m pip install notebook   # only once, if Jupyter is missing
 
-cd /workspace/demo-neat
+cd /workspace/demo-neat   # your clone of this repo under /workspace
 jupyter notebook --no-browser --ip=0.0.0.0 --port=8888
 ```
 
@@ -57,7 +57,7 @@ The core objects. Nothing here needs a camera.
 | 2 | [`02_node_and_graph.ipynb`](I-easy/02_node_and_graph.ipynb) | `Node` and `Graph` — how a pipeline is assembled |
 | 3 | [`03_interpret_model_output_samples.ipynb`](I-easy/03_interpret_model_output_samples.ipynb) | `Sample` — reading what a model actually returned |
 | 4 | [`04_image_classification_resnet.ipynb`](I-easy/04_image_classification_resnet.ipynb) | A first end-to-end model: ResNet-50 classification |
-| 5 | [`05_yolo_cpu_decode.ipynb`](I-easy/05_yolo_cpu_decode.ipynb) | Decoding raw YOLO heads on the CPU — what box decode does for you |
+| 5 | [`05_yolo_cpu_decode.ipynb`](I-easy/05_yolo_cpu_decode.ipynb) | Parsing Neat's decoded BBOX payload on the CPU (count + 24-byte records) |
 | 6 | [`06_yolov8_image_detection_pipeline.ipynb`](I-easy/06_yolov8_image_detection_pipeline.ipynb) | A full image detection pipeline with Neat box decode |
 
 ## II — Medium

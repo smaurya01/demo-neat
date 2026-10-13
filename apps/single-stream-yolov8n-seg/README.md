@@ -52,6 +52,7 @@ Run this in the SDK shell:
 mkdir -p ./assets/models
 cd ./assets/models
 sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n_seg
+cd ../..
 ```
 
 Expected model path:
@@ -77,8 +78,10 @@ udp_port_base=9000
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

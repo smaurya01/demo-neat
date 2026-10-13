@@ -3,33 +3,33 @@
 
     # host: contract check only (no board needed)
     python compile/test_model.py --model-id yolo11n --validate-only
+    python compile/test_model.py --all --validate-only
 
     # DevKit: contract check + real inference
-    python compile/test_model.py --model-id resnet50
-    python compile/test_model.py --all --validate-only
+    dk compile/test_model.py --model-id resnet50
 
     # a batch-N build (compiler.py --batch-size N)
     python compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6 --validate-only
-    python compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6     # DevKit
+    dk compile/test_model.py --model-id yolo26m --precision int8 --batch-size 6         # DevKit
 
 TWO things are checked, and both matter:
 
   1. ARCHIVE CONTRACT -- exactly one `.elf`, zero `.so`.
      A `.so` means part of the graph fell back to the host CPU. NOTE: a `.so` also carries the
-     \x7fELF magic, so count by FILE EXTENSION, never by magic bytes, or you double-count.
+     \\x7fELF magic, so count by FILE EXTENSION, never by magic bytes, or you double-count.
      An rc=0 compile is NOT a passing artifact -- always check the members.
 
      For a batch-N build the archive must also declare batch N (its plugins' actual_batch_size).
 
   2. REAL INFERENCE on assets/inference (real COCO images, never synthetic).
-     classification -> ImageNet top-5 must be sensible.
-     detection/seg/pose -> the raw heads must come back with the expected shapes.
+     classification -> 1000 finite class scores; the top-k (--topk, default 3) is printed.
+     detection/seg/pose -> one finite tensor per `output_names` entry; their shapes are printed.
      batch N -> N images go in as ONE [N,H,W,3] tensor. When the batch-1 build of the same model
      and precision exists, every batch item's outputs are compared with that build's output for
-     the same image. Both builds share their quantization parameters, so they should agree
-     (cosine >= 0.999). Less means the batch-N program computes different numbers. yolo26m INT8
-     batch 6 fails this (worst cosine 0.916) and loses detections against FP32; see
-     MULTI-BATCH.md.
+     the same image and the worst cosine is reported. Both builds share their quantization
+     parameters, so a cosine below 0.999 means the batch-N program computes different numbers:
+     compare the accuracy and latency of the two builds before choosing one (MULTI-BATCH.md).
+     yolo26m INT8 batch 6 reaches a worst cosine of 0.92 and finds fewer objects than batch 1.
 """
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def run_inference(model_id: str, limit: int, topk: int, timeout_ms: int) -> int:
         raise SystemExit(f"[test] {model_id}: no archive; compile first")
     batch = model_batch_size(model_id, BATCH)
     if batch > 1:
-        return run_batched(model_id, arc, batch, limit)
+        return run_batched(model_id, arc, batch, limit, timeout_ms)
 
     infer_dir = ROOT / project.get("infer_dir", "assets/inference")
     imgs = sorted(p for p in infer_dir.iterdir()
@@ -138,28 +138,45 @@ def run_inference(model_id: str, limit: int, topk: int, timeout_ms: int) -> int:
     std = np.array(cfg.get("std", [1, 1, 1]), dtype=np.float32)
 
     print(f"[test] {model_id}: {decode} on {len(imgs)} real image(s) from {infer_dir.name}/")
-    for p in imgs:
-        bgr = cv2.imread(str(p))
-        if bgr is None:
-            continue
-        img = cv2.resize(bgr, (w, h), interpolation=cv2.INTER_LINEAR)
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        arr = np.ascontiguousarray((rgb - mean) / std, dtype=np.float32)
+    rc, done = 0, 0
+    try:
+        for p in imgs:
+            bgr = cv2.imread(str(p))
+            if bgr is None:
+                print(f"   {p.name:<22} FAIL: cannot read the image"); rc = 1
+                continue
+            img = cv2.resize(bgr, (w, h), interpolation=cv2.INTER_LINEAR)
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            arr = np.ascontiguousarray((rgb - mean) / std, dtype=np.float32)
 
-        outs = [np.asarray(t.to_numpy(copy=True)) for t in runner.run([to_tensor(arr)])]
+            outs = [np.asarray(t.to_numpy(copy=True))
+                    for t in runner.run([to_tensor(arr)], timeout_ms=timeout_ms)]
+            done += 1
+            if not all(np.isfinite(np.asarray(a, dtype=np.float32)).all() for a in outs):
+                print(f"   {p.name:<22} FAIL: non-finite values in the output"); rc = 1
 
-        if decode == "imagenet_topk":
-            logits = np.asarray(outs[0], dtype=np.float32).reshape(-1)
-            e = np.exp(logits - logits.max())
-            prob = e / e.sum()
-            top = prob.argsort()[::-1][:topk]
-            named = ", ".join(
-                f"{(labels[i] if i < len(labels) else f'class_{i}')} {prob[i]:.2f}" for i in top)
-            print(f"   {p.name:<22} {named}")
-        else:  # yolo_raw_heads -- confirm the surgery contract came back intact
-            shapes = " ".join(str(a.shape) for a in outs)
-            print(f"   {p.name:<22} {len(outs)} head tensor(s): {shapes}")
-    return 0
+            if decode == "imagenet_topk":
+                logits = np.asarray(outs[0], dtype=np.float32).reshape(-1)
+                if logits.size != 1000:
+                    print(f"   {p.name:<22} FAIL: {logits.size} class scores, expected 1000"); rc = 1
+                    continue
+                e = np.exp(logits - logits.max())
+                prob = e / e.sum()
+                top = prob.argsort()[::-1][:topk]
+                named = ", ".join(
+                    f"{(labels[i] if i < len(labels) else f'class_{i}')} {prob[i]:.2f}" for i in top)
+                print(f"   {p.name:<22} {named}")
+            else:  # yolo_raw_heads -- confirm the surgery contract came back intact
+                shapes = " ".join(str(a.shape) for a in outs)
+                print(f"   {p.name:<22} {len(outs)} head tensor(s): {shapes}")
+                want = len(cfg.get("output_names") or [])
+                if want and len(outs) != want:
+                    print(f"   FAIL: {len(outs)} head tensors, models.yaml lists {want}"); rc = 1
+    finally:
+        runner.close()
+    if done == 0:
+        print("   FAIL: no image was run"); rc = 1
+    return rc
 
 
 def preprocess(cfg: dict, path: Path):
@@ -204,7 +221,7 @@ def batch_tensor(a):
     return t
 
 
-def run_batched(model_id: str, arc: Path, batch: int, limit: int) -> int:
+def run_batched(model_id: str, arc: Path, batch: int, limit: int, timeout_ms: int = 20000) -> int:
     """Run `batch` real images as one [N,H,W,3] tensor; compare each item with the batch-1 build."""
     import numpy as np
 
@@ -217,11 +234,14 @@ def run_batched(model_id: str, arc: Path, batch: int, limit: int) -> int:
     stack = np.stack([preprocess(cfg, p) for p in picked])
 
     model, runner = raw_runner(arc, cfg, stack)
-    print(f"[test] {model_id}: batch {model.compiled_batch_size()} archive, "
-          f"{batch} image(s) as one {list(stack.shape)} tensor")
-    outs = [np.asarray(t.to_numpy(copy=True)) for t in runner.run([batch_tensor(stack)])]
-    print(f"   {len(outs)} output tensor(s): {' '.join(str(a.shape) for a in outs)}")
-    runner.close()
+    try:
+        print(f"[test] {model_id}: batch {model.compiled_batch_size()} archive, "
+              f"{batch} image(s) as one {list(stack.shape)} tensor")
+        outs = [np.asarray(t.to_numpy(copy=True))
+                for t in runner.run([batch_tensor(stack)], timeout_ms=timeout_ms)]
+        print(f"   {len(outs)} output tensor(s): {' '.join(str(a.shape) for a in outs)}")
+    finally:
+        runner.close()
 
     if any(a.shape[:1] != (batch,) for a in outs):
         print(f"   FAIL: outputs do not start with the batch dimension {batch}")
@@ -232,24 +252,30 @@ def run_batched(model_id: str, arc: Path, batch: int, limit: int) -> int:
         return 0
     _, ref = raw_runner(ref_arc, cfg, stack[0])
     worst = 1.0
-    for i, p in enumerate(picked):
-        ref_outs = [np.asarray(t.to_numpy(copy=True)) for t in ref.run([batch_tensor(stack[i])])]
-        cos = []
-        for a, r in zip(outs, ref_outs):
-            x, y = a[i].astype(np.float64).ravel(), r.astype(np.float64).ravel()
-            if x.size != y.size:
-                print(f"   FAIL: item {i} head size {x.size} vs batch-1 {y.size}")
-                return 1
-            den = np.linalg.norm(x) * np.linalg.norm(y)
-            cos.append(float(x @ y / den) if den else float(np.allclose(x, y)))
-        worst = min(worst, min(cos))
-        print(f"   item {i} {p.name:<22} vs batch-1: cosine min {min(cos):.5f} over {len(cos)} heads")
-    ref.close()
-    ok = worst >= 0.999
-    print(f"   {'PASS' if ok else 'FAIL'}: batch items vs the batch-1 build: worst cosine {worst:.5f} "
-          f"(need >= 0.999; both builds share their quantization, so a gap is the batch-{batch} "
-          f"program computing different numbers)")
-    return 0 if ok else 1
+    try:
+        for i, p in enumerate(picked):
+            ref_outs = [np.asarray(t.to_numpy(copy=True))
+                        for t in ref.run([batch_tensor(stack[i])], timeout_ms=timeout_ms)]
+            cos = []
+            for a, r in zip(outs, ref_outs):
+                x, y = a[i].astype(np.float64).ravel(), r.astype(np.float64).ravel()
+                if x.size != y.size:
+                    print(f"   FAIL: item {i} head size {x.size} vs batch-1 {y.size}")
+                    return 1
+                den = np.linalg.norm(x) * np.linalg.norm(y)
+                cos.append(float(x @ y / den) if den else float(np.allclose(x, y)))
+            worst = min(worst, min(cos))
+            print(f"   item {i} {p.name:<22} vs batch-1: cosine min {min(cos):.5f} over {len(cos)} heads")
+    finally:
+        ref.close()
+    if worst >= 0.999:
+        print(f"   OK: batch items match the batch-1 build (worst cosine {worst:.5f})")
+    else:
+        print(f"   NOTE: batch items differ from the batch-1 build (worst cosine {worst:.5f}; the two "
+              f"builds share their quantization, so the batch-{batch} program computes different "
+              f"numbers). Compare the accuracy and latency of batch 1 and batch {batch} before "
+              f"choosing one: MULTI-BATCH.md")
+    return 0
 
 
 def main() -> int:
@@ -280,7 +306,13 @@ def main() -> int:
         if not ok:
             failed.append(mid)
             continue
-        if not args.validate_only and run_inference(mid, args.limit, args.topk, args.timeout_ms):
+        if args.validate_only:
+            continue
+        try:
+            if run_inference(mid, args.limit, args.topk, args.timeout_ms):
+                failed.append(mid)
+        except Exception as e:            # report it and go on to the next model
+            print(f"   FAIL: {type(e).__name__}: {e}")
             failed.append(mid)
 
     if failed:

@@ -23,9 +23,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COCO_LABELS = Path(
-    "/workspace/apps/examples/object-detection/yolo26-object-detector/src/common/coco_label.txt"
-)
+COCO_LABELS = ROOT / "assets" / "labels" / "coco80.txt"
 
 
 def load_classes(path: Path) -> list[str]:

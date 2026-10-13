@@ -3,7 +3,7 @@
 Why a public model does not just "compile" for the MLA, what has to change, and the traps that cost
 us the most time.
 
-For the commands, see **[`README.md`](README.md)**.
+For the commands, see **[`COMPILE-COMMANDS.md`](COMPILE-COMMANDS.md)**.
 
 ## Table of Contents
 
@@ -71,8 +71,8 @@ Neat then box-decodes itself (`BoxDecodeType`), or the app decodes the raw heads
 | `surgery:` | what `graph_surgery.py` does |
 | --- | --- |
 | `none` | CNNs — nothing to do; they already compile to a single ELF. |
-| `yolo_ultralytics` | attention `MatMul`→`Einsum`; expose `cv2.*`=bbox / `cv3.*`=class (YOLO26 uses `one2one_cv*`) **in each family's own layout**: YOLOv8/YOLO11 keep their raw 64-channel DFL bbox heads and class logits (decoded on the board by `YoloV8`, option `GroupedByRoleLogit`); YOLO26 heads are already 4-channel and one-to-one (`YoloV26`). Seg adds mask-coeff + proto; pose adds 51-ch keypoint heads. |
-| `yolox` | decoupled anchor-free head, numeric node names, no DFL/attention. Trace back from the output to the three `[1,85,H,W]` heads and cut the flatten/transpose tail. |
+| `yolo_ultralytics` | attention `MatMul`→`Einsum`; expose `cv2.*`=bbox / `cv3.*`=class (YOLO26 uses `one2one_cv*`) **in each family's own layout**: YOLOv8/YOLO11 keep their raw 64-channel DFL bbox heads and class logits (decoded on the board by `YoloV8` / `YoloV8Seg`, option `GroupedByRoleLogit`); YOLO26 heads are already 4-channel and one-to-one (`YoloV26` / `YoloV26Pose`). Seg adds mask-coeff + proto; pose adds keypoint heads (51 ch, zero-padded to 64). |
+| `yolox` | decoupled anchor-free head, numeric node names, no DFL/attention. Expose each scale's three branches separately, before the sigmoid — bbox (4 ch), objectness logit (1 ch), class logit (80 ch) — as 9 outputs for `YoloX` / `Split3Interleaved`, and cut the per-scale Concat and the flatten/transpose tail. |
 | `world` | YOLO-World. Vocabulary is baked at **export** time (`compile/_export_world.py`), then surgery folds the now-constant contrastive head into a 1×1 Conv and exposes the same 6 raw heads as YOLOv8, DFL kept raw (`compile/_surgery_world.py`). |
 
 ---
@@ -85,9 +85,7 @@ from the target domain**.
 > Calibrating on synthetic/gradient images produces an archive that looks perfect — `rc=0`, one
 > `.elf`, no `.so` — and is **quietly wrong**, because the learned ranges are meaningless.
 
-This folder was guilty of exactly that. The CNNs have been recompiled on real COCO images and the
-synthetic data is deleted. To stop it recurring, `compiler.py` **refuses to run** on a calibration
-set that looks synthetic:
+To prevent it, `compiler.py` **refuses to run** on a calibration set that looks synthetic:
 
 ```
 [compile] REFUSING: calibration set looks SYNTHETIC (synthetic_calib_1.jpg, ...).
@@ -96,7 +94,10 @@ set that looks synthetic:
 ```
 
 Calibration set = `assets/calibration/` (20 real COCO images). Smoke test = `assets/inference/`
-(5 real COCO images). Both are **tracked in git** — they are an *input*, not an artifact.
+(5 real COCO images). Both are **tracked in git** — they are an *input*, not an artifact. The five
+smoke-test images are also in the calibration set, so the smoke test shows the archive runs, not how
+well it generalises; for that, use [`accuracy/`](accuracy/README.md), which leaves the calibration
+images out.
 
 ---
 
@@ -157,8 +158,8 @@ An earlier surgery rebuilt the YOLOv8/YOLO11 DFL in-graph as `Split(64→16×4)�
 so every detector exposed 4-channel l/t/r/b heads and decoded as `YoloV26`. It compiled cleanly and
 decoded correctly on Neat 0.4.0. On **Neat 0.5.0** the `YoloV26` decoder skips NMS (YOLO26 heads are
 one-to-one by design), and a YOLO11 head is one-to-many: `yolo11n` returned 67 / 38 / 100 boxes on three
-COCO images where 9 / 5 / 16 are correct, mostly stacks of near-identical copies. The old
-`test_box_decode.py` still printed PASS, because it only counted boxes. The fix is to keep the
+COCO images where 9 / 5 / 16 are correct, mostly stacks of near-identical copies. A check
+that only counts boxes still reports PASS. The fix is to keep the
 family's own head: raw DFL + `YoloV8`, which runs NMS on the board (now 10 / 5 / 15, against 13 / 4 / 16
 for FP32 Ultralytics). The checker now fails on duplicate boxes.
 
@@ -194,11 +195,6 @@ text-similarity score maps as intermediate INT8 tensors (saturation warnings on 
 `proj_conv` bias), which the original fused einsum never did. bf16 has no quantization step, passes
 at `rc=0`, and is the format the official yolo26 archives ship in. So `yolov8s-worldv2` is compiled
 in bf16 (`precision: bf16` in `models.yaml`).
-
-**A trap this used to leave behind:** `models.yaml` recorded `precision: bf16`, but `compiler.py`
-did not read that field, so `compiler.py --all` silently tried INT8. `compiler.py` now reads
-`precision:` (and takes `--precision int8|bf16`), and builds each precision into its own
-`work/<id>/compile_<precision>/` folder.
 
 ### ❌ A green compile that was numerically garbage
 
@@ -238,14 +234,22 @@ model-compilation/
   README.md              # download the archives, or set up to compile
   COMPILE-COMMANDS.md    # the copy-paste compile commands
   MODEL-COMPILATION.md   # you are here
+  BOX-DECODE.md          # the Neat box decoder per model
+  ACCURACY.md            # FP32 vs bf16 vs INT8 on COCO
+  MULTI-BATCH.md         # batch-N compile and profiling
+  YOLO26X-STUDY.md       # yolo26x INT8 compile and runtime study
   models.yaml            # the single registry driving all four steps
-  compile/               # the 4-step flow (+ common.py, _surgery_*.py)
+  compile_all.sh         # the eleven Models-v1 INT8 models, one at a time
+  compile/               # the 4-step flow + test_box_decode.py, profile_model.py
+                         #   (+ common.py, _surgery_*.py, _export_world.py)
+  accuracy/              # the accuracy-study scripts
   assets/
     calibration/         # 20 REAL COCO images  -> quantization   (TRACKED: an input, not an artifact)
     inference/           #  5 REAL COCO images  -> smoke test     (TRACKED)
     labels/
     models/              # where the prebuilt bundle unpacks       (git-ignored)
-  work/<id>/             # GENERATED build dir: onnx/ surgery/ compile_int8/ reports/  (git-ignored)
+  work/<id>/             # GENERATED build dir: onnx/ surgery/ compile_int8/ compile_bf16/
+                         #   compile_<prec>_b<N>/ reports/  (git-ignored)
 ```
 
 **Git policy: the repo holds only what you cannot regenerate.**
@@ -256,7 +260,7 @@ TRACKED                                    IGNORED
   COMPILE-COMMANDS.md  the commands          *.pt *.onnx     <- weights & graphs (downloaded/exported)
   MODEL-COMPILATION.md the reasoning         *.tar.gz *.elf  <- compiled artifacts
   models.yaml          the registry          __pycache__/
-  compile/             the 4 scripts
+  compile/             the scripts
   assets/calibration/  REAL images
   assets/inference/    REAL images
 ```
@@ -267,10 +271,3 @@ run the flow, get identical archives.
 **`assets/calibration/` is the exception, and it must be tracked**: those images are an *input*, not
 an artifact. They cannot be re-derived, and swapping them silently changes every quantized model. A
 compile is not reproducible without them.
-
-Verify before committing — this must print nothing:
-
-```bash
-git add -A model-compilation/
-git diff --cached --name-only | grep -E '\.tar\.gz$|\.elf$|\.so$|\.pt$|\.onnx$|\.sima$'
-```

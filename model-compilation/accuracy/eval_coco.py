@@ -33,7 +33,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT_DIR = HERE.parent                   # model-compilation/
 sys.path.insert(0, str(ROOT_DIR / "compile"))
-from common import archive_path, compile_input_onnx, model_precision  # noqa: E402
+from common import archive_path, compile_input_onnx, model_cfg, model_precision  # noqa: E402
 
 DATA = HERE / "data"
 RESULTS = HERE / "results"
@@ -139,6 +139,9 @@ class NeatBackend:
     def __call__(self, rgb: np.ndarray) -> list[np.ndarray]:
         return [np.asarray(t.to_numpy(copy=True)) for t in self.runner.run([self._tensor(rgb)])]
 
+    def close(self) -> None:
+        self.runner.close()
+
 
 # ----------------------------------------------------------------------------- commands
 def result_path(model_id: str, precision: str, limit: int) -> Path:
@@ -157,6 +160,10 @@ def artifact_name(path: Path) -> str:
 def cmd_detect(args) -> int:
     import cv2
 
+    cfg, _ = model_cfg(args.model_id)
+    if cfg.get("box_decode") != "YoloV26":
+        raise SystemExit(f"{args.model_id}: eval_coco.py decodes YOLO26 one-to-one detection heads only "
+                         f"(this model's box_decode is {cfg.get('box_decode')})")
     coco = json.loads(ANN.read_text())
     cat_ids = [c["id"] for c in sorted(coco["categories"], key=lambda c: c["id"])]  # 80 -> COCO id
     images = coco["images"][: args.limit] if args.limit else coco["images"]
@@ -190,6 +197,8 @@ def cmd_detect(args) -> int:
         if i % 100 == 0 or i == len(images):
             print(f"   {i}/{len(images)}  median inference {np.median(infer_ms):.1f} ms", flush=True)
 
+    if hasattr(backend, "close"):
+        backend.close()
     RESULTS.mkdir(parents=True, exist_ok=True)
     out = result_path(args.model_id, precision, args.limit)
     out.write_text(json.dumps({"model": args.model_id, "precision": precision,
@@ -231,15 +240,16 @@ def cmd_score(args) -> int:
             else:
                 m = m50 = 0.0                  # no detections at all: nothing to evaluate
         if r["precision"] == "fp32":
-            base[r["model"]] = m
+            base[(r["model"], r["images"])] = m      # a --limit run has its own baseline
         rows.append((r["model"], r["precision"], m, m50, r["images"], r["median_infer_ms"]))
 
     print("\nvs FP32 = difference from the fp32 row (compile-ready ONNX, same decoder as bf16/int8)")
     print(f"\n{'model':<10}{'precision':<11}{'mAP50-95':>9}{'mAP50':>8}{'vs FP32':>9}"
           f"{'images':>8}   median inference")
     for model, prec, m, m50, n, ms in rows:
-        delta = f"{m - base[model]:+.2f}" if model in base and prec != "fp32" else "-"
-        where = {"pytorch": "host CPU, Ultralytics", "fp32": "host CPU"}.get(prec, "DevKit MLA")
+        delta = f"{m - base[(model, n)]:+.2f}" if (model, n) in base and prec != "fp32" else "-"
+        where = {"pytorch": "host CPU, whole Ultralytics predict()",
+                 "fp32": "host CPU"}.get(prec, "DevKit MLA")
         print(f"{model:<10}{prec:<11}{m:9.2f}{m50:8.2f}{delta:>9}{n:8d}   {ms:.1f} ms ({where})")
     return 0
 

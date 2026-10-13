@@ -23,6 +23,9 @@ source /sdk-extensions/model-compiler/bin/activate
 cd model-compilation
 ```
 
+`score` needs `pycocotools`, and `--backend onnx` (step 3) needs `onnxruntime`, on the SDK host;
+install them with `pip install pycocotools onnxruntime` if they are missing.
+
 ### 1. Download the model and build the archives (SDK host)
 
 ```bash
@@ -52,22 +55,25 @@ python accuracy/eval_coco.py detect --model-id yolo26s --backend onnx      # ≈
 python accuracy/eval_ultralytics.py --model-id yolo26s                     # ≈15 min on CPU
 ```
 
-### 4. Copy the images to the DevKit (once)
+### 4. Copy the images to the DevKit (optional, once)
 
-The DevKit runs read the images locally instead of over the shared workspace: the same results,
-about a third faster. On the DevKit:
+This step is optional: without `--image-dir`, `eval_coco.py` reads the images from
+`accuracy/data/val2017_subset` over the shared workspace. If you skip it, drop `--image-dir` from
+steps 5 and 6. A local copy gives the same results, about a third faster. On the DevKit
+(`/workspace/demo-neat` is your clone under /workspace; the DevKit sees the same path):
 
 ```bash
 mkdir -p /media/nvme/coco
-cp -r /path/to/demo-neat/model-compilation/accuracy/data/val2017_subset /media/nvme/coco/
+cp -r /workspace/demo-neat/model-compilation/accuracy/data/val2017_subset /media/nvme/coco/
 ```
 
 ### 5. bf16 (DevKit)
 
-On the DevKit, from the `model-compilation` folder:
+On the DevKit, from the `model-compilation` folder (`/workspace/demo-neat` is your clone under
+/workspace; the DevKit sees the same path):
 
 ```bash
-cd /path/to/demo-neat/model-compilation
+cd /workspace/demo-neat/model-compilation
 /home/sima/pyneat/bin/python accuracy/eval_coco.py detect --model-id yolo26s --backend neat \
     --precision bf16 --image-dir /media/nvme/coco/val2017_subset
 ```
@@ -85,7 +91,7 @@ About 8 minutes. It runs the bf16 archive from `work/yolo26s/compile_bf16/` and 
 On the DevKit, from the `model-compilation` folder:
 
 ```bash
-cd /path/to/demo-neat/model-compilation
+cd /workspace/demo-neat/model-compilation
 /home/sima/pyneat/bin/python accuracy/eval_coco.py detect --model-id yolo26s --backend neat \
     --precision int8 --image-dir /media/nvme/coco/val2017_subset
 ```
@@ -109,20 +115,24 @@ python accuracy/eval_coco.py score                  # ≈4 min
 
 ```text
 model     precision   mAP50-95   mAP50  vs FP32  images   median inference
-yolo26s   pytorch        47.41   63.85    -0.30    4980   171.9 ms (host CPU, Ultralytics)
+yolo26s   pytorch        47.41   63.85    -0.30    4980   171.9 ms (host CPU, whole Ultralytics predict())
 yolo26s   fp32           47.71   64.31        -    4980   231.6 ms (host CPU)
 yolo26s   bf16           47.64   64.26    -0.07    4980   18.4 ms (DevKit MLA)
 yolo26s   int8           45.05   61.82    -2.67    4980   11.1 ms (DevKit MLA)
 ```
 
-`score` reads every file in `results/`, or only the files you name. What these numbers mean:
+These are the numbers measured on Neat 0.4.0 (see [`../ACCURACY.md`](../ACCURACY.md#what-was-compared)).
+`score` reads every file in `results/`, or only the files you name; a `--limit` run is compared
+with the FP32 run of the same size. What these numbers mean:
 [`../ACCURACY.md`](../ACCURACY.md#results).
 
 ---
 
 ## Another model
 
-Any YOLO26 detection model works. Add it to [`models.yaml`](../models.yaml) as `yolo26s` is, and
+Any YOLO26 detection model works (`eval_coco.py` refuses other decoders; `yolo26l`/`yolo26x`
+need a spec listing all three attention blocks, see
+[`../YOLO26X-STUDY.md`](../YOLO26X-STUDY.md#1-model-and-compile)). Add it to [`models.yaml`](../models.yaml) as `yolo26s` is, and
 give it the YOLO26 surgery spec in [`compile/_surgery_ultralytics.py`](../compile/_surgery_ultralytics.py)
 (next to the `yolo26s` line: `YOLO_SPECS["<id>"] = copy.deepcopy(YOLO_SPECS["yolo26n"])`). Then
 compile it and pass its id to `eval_coco.py` and `eval_ultralytics.py`. The decoder expects YOLO26's

@@ -110,8 +110,10 @@ host and set `video_port_base` / `metadata_port_base` if they differ.
 
 For a bounded smoke test, set `frames=30`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -233,7 +235,7 @@ see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadat
 - `messages_received` flat at `0` — the datagrams never arrive: wrong `insight_host`,
   wrong `metadata_port_base`, or a firewall.
 - `messages_received` climbing but `messages_forwarded` flat at `0` — the messages carry a
-  `"timestamp"` that matches no video frame, so vf holds them until they expire; see
+  `"timestamp"` that matches no video frame, so Insight's viewer holds them until they expire; see
   [Metadata Wire Format](#appendix-metadata-wire-format).
 - `messages_forwarded` climbing but still no boxes — video and metadata are on mismatched
   channels, or every detection is below `score_threshold`.
@@ -242,8 +244,10 @@ see video but no boxes, check `GET /api/ingest/stats` for the channel's `metadat
 
 # Appendix
 
+## Appendix: Metadata Wire Format
+
 <details>
-<summary><h2>Appendix: Metadata Wire Format</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
@@ -270,23 +274,24 @@ frame. Insight renders the types `object-detection`, `classification`, `pose-est
 `segmentation` and `tracking`; other types are delivered but not drawn.
 
 **Why this app sends no `timestamp`.** Insight draws a metadata message on the video frame whose RTP
-timestamp matches the message's integer-millisecond `"timestamp"` within one millisecond. This app
-pushes every frame into a separate video-sender graph, which stamps it with the time it was pushed,
-so neither the camera's timestamp nor wall-clock time can match a frame: vf holds such messages
-until they expire, `messages_received` climbs, `messages_forwarded` stays at `0`, and no boxes are
-drawn. Passing `-1` makes `MetadataSender` omit the field, and the viewer pairs each message with
+timestamp matches the message's integer-millisecond `"timestamp"` within one millisecond. In this
+app the branch's video leg (the `video_sender` group, encoding from raw NV12) re-stamps each frame
+as it enters the encoder, so neither the camera's timestamp nor wall-clock time can match a frame:
+Insight's viewer holds such messages until they expire, `messages_received` climbs,
+`messages_forwarded` stays at `0`, and no boxes are drawn. Passing `-1` makes `MetadataSender` omit the field, and the viewer pairs each message with
 the newest frame instead (boxes trail fast-moving objects by the pipeline latency).
 
-An app whose video and detections leave **one** graph (decoder → branch → encoder and model) keeps
-the source timestamp on both, and should send it: `sample.pts_ns / 1'000'000`. The custom-plugin
-`detect_to_insight` example and quick-start chapter 18 do; their boxes stay frame-locked on a
-30 fps source. (With Insight 0.0.8, the browser fails to match a 60 fps stream this way; see the
+An app whose encoded video keeps the source timestamp should send it: `sample.pts_ns / 1'000'000`.
+The custom-plugin `detect_to_insight` example and quick-start chapter 18 do; their boxes stay
+frame-locked on a 30 fps source. (With Insight 0.0.8, the browser fails to match a 60 fps stream this way; see the
 custom-plugin README.)
 
 </details>
 
+## Appendix: Decode Family
+
 <details>
-<summary><h2>Appendix: Decode Family</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 

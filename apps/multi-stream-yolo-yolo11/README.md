@@ -102,13 +102,15 @@ and 1.
 
 For a bounded smoke test, set `frames=30` in `./config/default.conf`.
 
+## Config Parameters
+
 <details>
-<summary><h2>Config Parameters</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
-`rtsp_url_0`, `rtsp_url_1`: The two RTSP H.264 input streams. Both default to the same source; set
-them to distinct cameras when you have them.
+`rtsp_url_0`, `rtsp_url_1`: The two RTSP H.264 input streams. Both ship as the `<rtsp-url>`
+placeholder; set both, to the same source or to two distinct cameras.
 
 `rtsp_transport`: RTSP transport mode. Use `tcp` for reliability or `udp` for lower latency.
 
@@ -161,7 +163,7 @@ model load and RTSP jitter-buffer fill all land on the first few frames.
 `print_backend`: Print generated backend pipelines when set to `true`.
 
 Every value is also overridable on the command line (`--rtsp0`, `--rtsp1`, `--udp-port-base`,
-`--frames`, ...). Run `python main.py --help`.
+`--frames`, ...). Run `dk ./main.py --help`.
 
 </details>
 
@@ -219,32 +221,30 @@ Make sure `udp_host` in `./config/default.conf` points at the machine running In
 where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
 read the range from `neat --json` (`exposedPorts`, `videoUDP`) rather than assuming.
 
-</details>
+## Appendix: Learnings
 
 <details>
-<summary><h2>Appendix: Learnings</h2></summary>
+<summary>Click to expand</summary>
 
 <br>
 
-**Do not "modernise" this into an in-graph `graphs.branch` / `combine` pipeline.** Tried and rejected
-on measurement. The official example `apps/examples/object-detection/multi-stream-object-detector` is
-fast **because it never pulls frames to the host** — it pulls only a small BBOX payload and sends
+**Do not turn this into an in-graph `graphs.branch` / `combine` pipeline.** The official example
+[`multi-stream-object-detector`](https://github.com/sima-neat/apps/tree/main/examples/object-detection/multi-stream-object-detector)
+is fast **because it never pulls frames to the host** — it pulls only a small BBOX payload and sends
 clean video in-graph, letting Insight draw the overlay from `MetadataSender` JSON. The moment you
 need the overlay **burned into the stream**, you must bring the frame back to the CPU. Adding a
-full-frame `Output` node to the branch (a 1.4 MB NV12 copy per frame) collapsed throughput to
-**1-3 fps**, measured four ways. Neat's proper answer for in-graph burned-in overlay is
-`nodes.sima_render()`, which is not wired here yet.
+full-frame `Output` node to the branch (a 1.4 MB NV12 copy per frame) collapses throughput to
+**1-3 fps**. Neat's answer for in-graph burned-in overlay is `nodes.sima_render()`, which this app
+does not use.
 
 **`RealtimeLatestByStream` breaks `combine(ByFrame)`.** It drops each combine leg *independently*, so
 the legs' frame IDs diverge and the join almost never matches. The official example never hits this —
 its `combine` is only on an occasional debug-save path, never the hot path.
 
 **Known defect:** the process can abort at **exit** with `malloc(): mismatching next->prev_size`,
-*after* the summary has printed. It is pre-existing — the original single-threaded version did it
-too — and it does not affect the reported numbers, but it is still open.
+*after* the summary has printed. It does not affect the reported numbers.
 
-References: a C++ 4-stream reference implementation (the thread topology this app copies),
-`apps/single-stream-yolo-yolo11` (app conventions),
-`core/tutorials/018_consume_rtsp_stream` (RTSP source fragment).
+See also [`single-stream-yolo-yolo11`](../single-stream-yolo-yolo11/README.md) for the conventions
+this app follows.
 
 </details>
