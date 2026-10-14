@@ -16,7 +16,7 @@ BATCH SIZE:
   for what Neat 0.5.0 can and cannot do with a batched archive at runtime.
 
 PRECISION:
-  int8 (default) quantizes weights and activations to 8 bits using the calibration images below.
+  int8 quantizes weights and activations to 8 bits using the calibration images below.
   bf16 keeps weights and activations in bfloat16 (`--bf16-weights --bf16-activations`): no
   calibration ranges to get wrong, usually closer to FP32 accuracy, but a larger and slower model.
   The precision comes from the model's `precision:` in models.yaml (every model states it), unless
@@ -103,6 +103,10 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
     onnx_path = compile_input_onnx(model_id)
     if not onnx_path.exists():
         raise SystemExit(f"[compile] {model_id}: no ONNX at {onnx_path} -- run steps 1/2 first")
+    if not QC.is_file():
+        raise SystemExit(f"[compile] {model_id}: the SDK's quantize_compile.py driver was not found at "
+                         f"{QC}.\n          Install the sima-model-quantize-compile skill, or point "
+                         f"SIMA_QUANTIZE_COMPILE at quantize_compile.py (see README > Setup).")
 
     calib = calib_dir or (ROOT / project.get("calib_dir", "assets/calibration"))
     imgs = assert_real_calibration(calib)

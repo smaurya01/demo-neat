@@ -11,24 +11,20 @@ Shape of the pipeline
                                         v
                               bounded background VLM worker --> natural-language caption
 
-The detector is cheap and always-on (~37 fps measured on the 2-stream YOLO11 app);
-the VLM is expensive (seconds per call). So the VLM is NOT run per frame. Selected
-detections are cropped, de-duplicated, rate-limited, and handed to a bounded
-background worker so the detection loop never blocks on VLM latency.
+The detector is cheap and always-on; the VLM is expensive (seconds per call). So the VLM
+is NOT run per frame. Selected detections are cropped, de-duplicated, rate-limited, and
+handed to a bounded background worker so the detection loop never blocks on VLM latency.
 
-Split validation (see README):
-  * The DETECTION leg is validated live on the DevKit (RTSP or --image in -> boxes out).
-  * The VLM leg is code-complete + API-checked but NOT executed here. Run with
-    ``--no-vlm`` (the default when no VLM model dir is configured) to log the crop and
-    the exact prompt that WOULD be sent, without touching the VLM. The owner runs the
-    real VLM manually.
+Dry run: pass ``--no-vlm`` (it is also the fallback when vlm_enabled=false or the VLM model
+dir is missing) to log the crop and the exact prompt that WOULD be sent, without loading or
+calling the VLM.
 
-APIs traceable to https://github.com/sima-neat/core and the sibling apps:
-  * Detector: adapted from apps/examples/genai/detection-to-vlm-assistant/src/python/main.py
-    and apps/multi-stream-yolo-yolo11/main.py.
-  * Box decode: ``pyneat.decode_bbox`` (core/python/src/module.cpp). The Model Zoo yolo_11n
-    decodes with BoxDecodeType.YoloV8 (NMS on the board).
+APIs used:
+  * Detector: pyneat.Model with model-managed box decode, read via ``pyneat.decode_bbox``.
+    The Model Zoo yolo_11n decodes with BoxDecodeType.YoloV8 (NMS on the board).
   * VLM: pyneat.genai.VisionLanguageModel (src/vlm_commenter.py).
+
+Run on the DevKit with ``dk ./main.py``; see README.md for the config and the output.
 """
 
 from __future__ import annotations
@@ -38,6 +34,7 @@ from dataclasses import dataclass, field
 import glob
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -106,7 +103,7 @@ class Config:
 
     # --- VLM trigger / commenter (src/vlm_commenter.py) ---
     vlm_enabled: bool = True
-    vlm_model_dir: str = "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+    vlm_model_dir: str = "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4"
     vlm_trigger_classes: tuple[str, ...] = ("person",)
     vlm_trigger_min_score: float = 0.55
     vlm_trigger_min_area_frac: float = 0.02   # crop must cover >= 2% of the frame
@@ -294,8 +291,7 @@ def parse_args(argv: list[str] | None) -> tuple[Config, bool]:
                         help="disable box overlay + UDP video output")
     parser.add_argument("--no-vlm", action="store_true",
                         help="dry-run: log the crop + the prompt that WOULD be sent, "
-                             "never load or call the VLM (this is how the detection leg "
-                             "is validated without touching the VLM)")
+                             "never load or call the VLM (runs the detection leg on its own)")
     args = parser.parse_args(argv)
 
     cfg = Config()
@@ -382,9 +378,8 @@ def build_detector_run(cfg: Config, width: int, height: int):
     graph = pyneat.Graph("detector")
     graph.add(pyneat.nodes.input(input_opt))
     graph.add(model.graph())
-    # Named output + push/pull (Agent A's live-validated pattern). The synchronous
-    # run([...]) helper does NOT surface this archive's model-managed box-decode
-    # output; push + pull("detections") does. Verified on the DevKit.
+    # Named output + push/pull. The synchronous run([...]) helper does NOT surface this
+    # archive's model-managed box-decode output; push + pull("detections") does.
     graph.add(pyneat.nodes.output("detections", pyneat.OutputOptions.every_frame(1)))
 
     seed = pyneat.Tensor.from_numpy(
@@ -438,8 +433,7 @@ def detect(cfg: Config, detector_run, frame_bgr) -> list[dict]:
     if not tensors:
         return []
     # decode_bbox turns the model's BBOX-format output into [N,6] float rows
-    # (x1, y1, x2, y2, score, class_id), clamped to the frame. Same call Agent A
-    # validated on this archive (core/python/src/module.cpp).
+    # (x1, y1, x2, y2, score, class_id), clamped to the frame (core/python/src/module.cpp).
     decoded = pyneat.decode_bbox(tensors, clamp_to=(width, height), top_k=cfg.top_k)
     boxes: list[dict] = []
     for tensor in decoded:
@@ -542,7 +536,8 @@ def decoded_tensor_to_bgr(tensor):
 
 
 def probe_stream(url: str, tcp: bool = True):
-    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+    """((width, height, fps), "") as the RTSP stream reports them, or (None, reason) if it cannot
+    be probed.
 
     Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
     a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
@@ -554,9 +549,16 @@ def probe_stream(url: str, tcp: bool = True):
         "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
         "-of", "default=nw=1", url]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "ffprobe not installed on the DevKit (sudo apt install ffmpeg)"
+    except subprocess.TimeoutExpired:
+        return None, "ffprobe timed out after 15 s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"ffprobe failed to run: {exc}"
+    out = proc.stdout
+    # The last lines of stderr say why (401, connection refused, no such stream, ...).
+    stderr_tail = " | ".join(proc.stderr.strip().splitlines()[-3:])
     vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
     def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
@@ -570,9 +572,20 @@ def probe_stream(url: str, tcp: bool = True):
     try:
         width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
     except ValueError:
-        return None
-    fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
-    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+        width = height = 0
+    if width <= 0 or height <= 0:
+        return None, stderr_tail or f"ffprobe exited with code {proc.returncode} and no video stream"
+    # r_frame_rate can be a timebase (90000/1) or a field rate, so only accept a sane frame rate.
+    fps = 0
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        candidate = rate(vals.get(key))
+        if 1 <= candidate <= 240:
+            fps = candidate
+            break
+    if fps == 0:
+        return None, (f"no usable frame rate (avg_frame_rate={vals.get('avg_frame_rate')}, "
+                      f"r_frame_rate={vals.get('r_frame_rate')})")
+    return (width, height, fps), ""
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int, bool]:
@@ -581,18 +594,18 @@ def probe_rtsp(cfg: Config) -> tuple[int, int, int, bool]:
     The last value says whether they came from the stream, so the source pins its frame rate only
     when it is known to match.
     """
-    probed = probe_stream(cfg.rtsp_url, cfg.rtsp_transport_tcp) if cfg.probe_source else None
+    probed, reason = (probe_stream(cfg.rtsp_url, cfg.rtsp_transport_tcp)
+                      if cfg.probe_source else (None, ""))
     if probed is None:
         if cfg.probe_source:
-            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe; using the config's "
-                  f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe ({reason}); using the "
+                  f"config's {cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
         return cfg.width, cfg.height, cfg.fps, False
     if probed != (cfg.width, cfg.height, cfg.fps):
         print(f"[source] stream is {probed[0]}x{probed[1]}@{probed[2]} (config says "
               f"{cfg.width}x{cfg.height}@{cfg.fps}); using the stream's values", flush=True)
     cfg.width, cfg.height, cfg.fps = probed
     return (*probed, True)
-
 
 
 def list_images(cfg: Config) -> list[str]:
@@ -819,7 +832,16 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                 print(f"duration reached after {frame_id} frames", flush=True)
                 break
 
-            tensors = source_run.pull_tensors(timeout_ms=cfg.source_timeout_ms)
+            if source_run is None:
+                # The last rebuild failed (e.g. the server is still down). Wait out the stall
+                # window, then retry within the same reconnect budget.
+                remaining = cfg.rtsp_stall_timeout_s - (time.perf_counter() - last_frame_at)
+                if remaining > 0:
+                    time.sleep(min(0.5, remaining))
+                    continue
+                tensors = None
+            else:
+                tensors = source_run.pull_tensors(timeout_ms=cfg.source_timeout_ms)
             if not tensors:
                 # An empty pull is Timeout OR Closed and pyneat cannot tell them apart. Do NOT treat one
                 # empty pull as end-of-stream; Run.last_error() is the only signal that means really dead.
@@ -827,7 +849,7 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                 # after frames resume. Gating the grace period on it meant one historical error
                 # turned every routine empty pull into an immediate forced reconnect, so the
                 # stall timer effectively never fired again. Only the timer decides now.
-                error = source_run.last_error()
+                error = source_run.last_error() if source_run is not None else None
                 stalled_for = time.perf_counter() - last_frame_at
                 if stalled_for < cfg.rtsp_stall_timeout_s:
                     if not stall_logged:
@@ -844,8 +866,17 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
                 print(f"[warn] RTSP stream dead ({reason}); "
                       f"reconnect {reconnects}/{cfg.rtsp_reconnect_attempts}",
                       file=sys.stderr, flush=True)
-                source_run.close()
-                src_graph, source_run = make_rtsp_source(cfg, width, height, source_fps)
+                if source_run is not None:
+                    try:
+                        source_run.close()
+                    except Exception:  # noqa: BLE001 - the stream is already dead
+                        pass
+                    source_run = None
+                try:
+                    src_graph, source_run = make_rtsp_source(cfg, width, height, source_fps)
+                except Exception as exc:  # noqa: BLE001 - counted against the reconnect budget
+                    print(f"[warn] reconnect {reconnects}/{cfg.rtsp_reconnect_attempts} "
+                          f"failed: {exc}", file=sys.stderr, flush=True)
                 last_frame_at = time.perf_counter()
                 stall_logged = False
                 continue
@@ -879,12 +910,28 @@ def run_rtsp_mode(cfg: Config, commenter) -> int:
         return 0 if frame_id > 0 else 3
     finally:
         detector_run.close()
-        source_run.close()
+        if source_run is not None:
+            source_run.close()
         if video_run is not None:
             video_run.close()
 
 
+def _is_placeholder(value: str) -> bool:
+    """True for an unedited config placeholder such as `<rtsp-url>` or `<host-ip>`."""
+    return re.search(r"<[^<>]*>", value) is not None
+
+
 def run(cfg: Config, force_no_vlm: bool) -> int:
+    if cfg.source == "rtsp":
+        if not cfg.rtsp_url or _is_placeholder(cfg.rtsp_url):
+            print(f"rtsp_url is not set ({cfg.rtsp_url!r}): set rtsp_url in the config "
+                  "or pass --rtsp <url>", file=sys.stderr)
+            return 2
+        if cfg.video_enabled and _is_placeholder(cfg.udp_host):
+            print(f"udp_host is not set ({cfg.udp_host!r}): set it to the Insight host in the "
+                  "config or pass --udp-host <ip>; leave it empty or pass --no-video for "
+                  "stdout only", file=sys.stderr)
+            return 2
     load_runtime_dependencies()
     os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
 

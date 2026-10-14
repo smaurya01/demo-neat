@@ -33,7 +33,9 @@ whether your code runs on every frame.
 12. [Step 8: Debugging](#step-8-debugging)
 13. [Rules for a well-behaved plugin](#rules-for-a-well-behaved-plugin)
 14. [Deploying beyond this folder](#deploying-beyond-this-folder)
-15. [Going further](#going-further)
+15. [FAQ](#faq)
+16. [Glossary](#glossary)
+17. [Going further](#going-further)
 
 ---
 
@@ -48,7 +50,7 @@ between them, and starts the pipeline.
 ```
  your app ──► Graph ──► Nodes ──► GStreamer launch fragments ──► GStreamer elements (plugins)
                │                                                        ▲
-               └── Neat prints the final launch string as "Pipeline:" ──┘
+               └── final launch string (SIMA_PIPELINE_STRING_DEBUG=1) ──┘
 ```
 
 So in Neat, a **plugin is a GStreamer element**, and it joins your application through a
@@ -65,7 +67,8 @@ So in Neat, a **plugin is a GStreamer element**, and it joins your application t
 A plugin is extra code to build, deploy and maintain, so check the cheaper options first.
 
 - **Working on detections, poses or masks?** Pull them with `run.pull("detections")` and handle
-  them in your app. That is level 0 and needs no plugin. The Apps examples all work this way.
+  them in your app. That is level 0 and needs no plugin. The
+  [SiMa Apps examples](https://github.com/sima-neat/apps) work this way.
 - **Drawing boxes for display?** Send detections to Insight with `MetadataSender`. The viewer
   draws them, so you don't have to change pixels.
 - **Resize, colour conversion or normalisation before a model?** `Model::Options.preprocess`
@@ -116,6 +119,7 @@ custom-plugin/
 | **Modalix DevKit** reachable over SSH | Running everything | `ssh sima@<devkit-ip> uname -m` prints `aarch64` |
 | **Neat Insight** (bundled in the SDK) | The RTSP test source and the video viewer | `insight-admin status`, `neat --json` |
 | **pyneat** on the DevKit (Python example only) | Python bindings | `source ~/pyneat/bin/activate && python3 -c "import pyneat"` |
+| **OpenCV for Python** (`cv2`) in the same environment (Python example only) | Probing the stream's size and frame rate; not needed if you pass `--width --height --fps` | `python3 -c "import cv2"` |
 | **sima-cli** on the DevKit (Example 2 only) | Downloading the YOLO26 model | `sima-cli --help` |
 
 Throughout this tutorial:
@@ -126,13 +130,14 @@ Throughout this tutorial:
 - **Build** commands run in the SDK. **Run** commands run on the DevKit.
 - **`/path/to/demo-neat`** is where you cloned the demo-neat repository. Clone it into your host
   workspace (`cd ~/workspace && git clone <repo-url> demo-neat`) so it is `/workspace/demo-neat` in the
-  SDK and on the DevKit. This tutorial lives in its `custom-plugin/` folder.
+  SDK. This tutorial lives in its `custom-plugin/` folder.
 - If your SDK shares its workspace with the DevKit (the SDK's DevKit sync sets this up over NFS),
-  the DevKit already sees the build output at the same path. If not, copy the folder over after
-  building:
+  the DevKit already sees the build output at the same path. If not, copy the folder into your
+  home folder on the board after every build, and use **`~/demo-neat`** wherever a DevKit
+  command says `/path/to/demo-neat`:
   ```bash
-  ssh sima@<devkit-ip> mkdir -p /path/to/demo-neat
-  rsync -a /path/to/demo-neat/custom-plugin/ sima@<devkit-ip>:/path/to/demo-neat/custom-plugin/
+  ssh sima@<devkit-ip> mkdir -p demo-neat
+  rsync -a /path/to/demo-neat/custom-plugin/ sima@<devkit-ip>:demo-neat/custom-plugin/
   ```
 
 ---
@@ -317,10 +322,17 @@ plugins.
 
 1. Copy `plugin/` to a new folder.
 2. Rename the file, the type macros and the three names from 2.7. For example, `privacymask` →
-   `libgstprivacymask.so`.
-3. Change the pad template formats to the ones you support.
-4. Replace the body of `transform_frame_ip` with your algorithm.
+   `libgstprivacymask.so`. The plugin name **must** match the file name, and don't start names
+   with `sima` or `neat`: those belong to SiMa.
+3. Change the pad template formats to the ones you support. Keep `{ NV12, I420 }` unless you
+   really handle others.
+4. Replace the body of `transform_frame_ip` with your algorithm, stepping rows by the planes'
+   **strides**, as the sample does.
 5. Replace the properties with your own.
+6. Test in this order: `gst-inspect-1.0`, a `gst-launch-1.0` test like `scripts/test_plugin.sh`,
+   then inside a Neat app with `nodes::Custom("privacymask ...")`.
+7. Measure: give the element a `log-interval`-style counter and check the app still holds the
+   source frame rate.
 
 ---
 
@@ -363,11 +375,13 @@ install(TARGETS gstframemarker LIBRARY DESTINATION lib/gstreamer-1.0)
 > board, provided the GStreamer development headers are installed there. The SDK route is
 > faster and doesn't need anything installed on the board.
 
-If you would rather not use CMake, this one line in the SDK does the same thing:
+If you would rather not use CMake, these lines in the SDK do the same thing, including the
+install into `install/lib/gstreamer-1.0/` where `scripts/env.sh` looks:
 
 ```bash
+mkdir -p install/lib/gstreamer-1.0
 $CC $CFLAGS -shared -fPIC plugin/gstframemarker.c -DPACKAGE='"framemarker"' \
-    -o libgstframemarker.so $LDFLAGS \
+    -o install/lib/gstreamer-1.0/libgstframemarker.so $LDFLAGS \
     $(pkg-config --cflags --libs gstreamer-1.0 gstreamer-base-1.0 gstreamer-video-1.0)
 ```
 
@@ -405,7 +419,8 @@ source scripts/env.sh
 gst-inspect-1.0 framemarker
 ```
 
-You should see the element details, pad templates (`NV12`, `I420`) and the five properties. If
+You should see the element details, pad templates (`NV12`, `I420`) and the five framemarker
+properties, plus the standard `name`, `parent` and `qos` every filter has. If
 you see `No such element or plugin 'framemarker'`, check the following:
 
 ```bash
@@ -413,6 +428,7 @@ echo $GST_PLUGIN_PATH_1_0 $SIMA_GST_NEAT_ONLY       # install/lib/gstreamer-1.0 
 ls -l install/lib/gstreamer-1.0/                    # file present? (NFS/rsync done?)
 GST_DEBUG=GST_PLUGIN_LOADING:4 gst-inspect-1.0 framemarker 2>&1 | grep -i framemarker
 rm -rf ~/.cache/gstreamer-1.0                       # clear a stale plugin registry cache
+rm -f /tmp/sima_gst_registry_*                      # ...and the one Neat apps use
 ```
 
 Next, run the element with plain GStreamer, with no Neat involved. This separates plugin bugs
@@ -466,8 +482,8 @@ graph.connect(marker, next_stage)
   `run.push()`.
 - For a simple linear graph, `graph.custom("framemarker ...")` also works.
 - `RtspDecodedInputOptions::extra_fragment = "framemarker ..."` appends the element at the end
-  of the RTSP group, after the decoder and its output caps filter. The Apps examples use this
-  hook.
+  of the RTSP group, after the decoder and its output caps filter. Some
+  [SiMa Apps examples](https://github.com/sima-neat/apps) (the trackers) use this hook.
 
 ### 5.2 A typed `Node` subclass: reusable, with typed options
 
@@ -615,22 +631,31 @@ Options (both versions):
 | `--url` | required | RTSP H.264 URL |
 | `--insight-host` | `127.0.0.1` | Where Insight runs |
 | `--channel` | `0` | Insight viewer channel. Video goes to UDP `9000 + channel`. Must be a channel the SDK publishes (see `neat --json` → `videoUDP`, e.g. 0–23). |
+| `--video-port-base` | `9000` | First port of the `videoUDP` range |
 | `--mode` | `grayscale` | `none`, `grayscale` or `invert` |
-| `--border` / `--color` | `12` / `0x00FF00` | Border width and colour |
+| `--border` / `--color` | `12` / `0x00FF00` | Border width (0–256 px) and colour |
 | `--no-bar` | off | Hide the progress bar |
+| `--log-interval N` | `0` (off) | The plugin prints `[framemarker ...] frames=... fps=...` every N frames |
 | `--custom` | off | (C++) use `nodes::Custom` instead of the typed Node |
 | `--frames N` | `0` (forever) | Stop after N frames |
 | `--print-graph` | off | Print `Graph::describe()` (the node list) and `Graph::describe_backend()` (the backend plan) |
 | `--width/--height/--fps` | probed | Skip the OpenCV probe of the stream |
+
+`--help` lists every option.
 
 Expected console output (numbers vary):
 
 ```
 source=rtsp://<sdk-host-ip>:8554/src1 1280x720@30 mode=grayscale insight=<sdk-host-ip>:9000 channel=0
 Press Ctrl-C to stop.
-frames=250 pulled_fps=30.0 last_frame_id=249
+frames=86 pulled_fps=17.2 last_frame_id=85
+frames=241 pulled_fps=30.1 last_frame_id=240
+frames=392 pulled_fps=30.0 last_frame_id=391
 ...
 ```
+
+A progress line follows every 5 seconds; the first one is lower because it includes startup. On
+Ctrl-C the app closes the pipeline and prints `stopped after N frames`.
 
 ### 6.4 Watch it
 
@@ -688,14 +713,20 @@ source scripts/env.sh
     --border 12 --color 0xFF0000
 ```
 
-Extra options: `--min-score 0.35` (detection threshold) and `--metadata-port-base 9100`. All
-options from Example 1 also apply here, except that `--mode` defaults to `none` in this example.
+Extra options: `--min-score 0.35` (detection threshold), `--metadata-port-base 9100`,
+`--no-frame-timestamps` (see the README's note on 60 fps sources) and `--labels` (defaults to
+`coco_labels.txt` in the app's own folder, `apps/build/`). The options from Example 1 apply too,
+with these differences: there is no `--custom`, `--mode` defaults to `none` and `--color` to
+`0xFF0000`.
 
 Expected console output (numbers vary):
 
 ```
 source=rtsp://<sdk-host-ip>:8554/src1 1280x720@30 model=models/yolo26m-det-bf16-mla_tess-b1.tar.gz insight=<sdk-host-ip> video=9000 metadata=9100 channel=0
-frames=231 fps=30.07 avg_boxes=10.4
+Press Ctrl-C to stop.
+frames=82 fps=16.4 avg_boxes=10.5
+frames=233 fps=30.1 avg_boxes=11.2
+frames=383 fps=30.0 avg_boxes=9.5
 ```
 
 In the Insight video viewer, channel 0 shows the video with a **red border and progress bar
@@ -712,7 +743,8 @@ sits on the video branch only (see 5.4).
 ### 8.1 See the real pipeline
 
 ```bash
-./apps/build/stream_to_insight --url ... --insight-host ... --print-graph --frames 1
+SIMA_PIPELINE_STRING_DEBUG=1 ./apps/build/stream_to_insight --url ... --insight-host ... \
+    --print-graph --frames 1
 ```
 
 It prints three things:
@@ -723,9 +755,11 @@ It prints three things:
   it's an `ExecutionGraphPlan` listing each pipeline segment, for example
   `segment 0 nodes=[..., SimaDecode, CapsRaw, FrameMarker]`. For a simple linear graph it's the
   launch string itself.
-- `Pipeline:`, printed by Neat when each segment starts: the **exact** GStreamer launch string.
-  Look for `framemarker name=n7_framemarker_<N> ...` in it. You can paste the relevant part
-  into `gst-launch-1.0` to reproduce a problem outside Neat.
+- lines starting with `[PIPELINE:`, printed by Neat while the graph builds because of
+  `SIMA_PIPELINE_STRING_DEBUG=1`: the **exact** GStreamer launch string. Look for
+  `framemarker name=n7_framemarker_<N> ...` in it. You can paste the relevant part into
+  `gst-launch-1.0` to reproduce a problem outside Neat. Without the variable, Neat shows the
+  launch string only in some error reports (as `Pipeline:`).
 
 ### 8.2 GStreamer logs for your element
 
@@ -744,13 +778,13 @@ it prints every frame with its PTS.
 |---|---|---|
 | `build.plugin_missing`, `Missing component: framemarker` in a Neat app, although `gst-inspect-1.0 framemarker` works | The Neat runtime replaced the plugin path (`SIMA_GST_NEAT_ONLY=1` default) | `source scripts/env.sh`: it sets `GST_PLUGIN_PATH_1_0` and `SIMA_GST_NEAT_ONLY=0` |
 | `no element "framemarker"` in `gst-inspect-1.0` too | Plugin path not set in *this* shell, or file not copied to the board | `source scripts/env.sh`, check `ls install/lib/gstreamer-1.0/` |
-| `gst-inspect` says the plugin is blacklisted | An older broken build was cached | `rm -rf ~/.cache/gstreamer-1.0` and retry |
+| `gst-inspect` says the plugin is blacklisted | An older broken build was cached | `rm -rf ~/.cache/gstreamer-1.0; rm -f /tmp/sima_gst_registry_*` (the second is the Neat apps' registry) and retry |
 | `wrong ELF class` / `cannot open shared object` | Built for x86 instead of aarch64, or run outside the SDK shell | Rebuild in the SDK shell; `file` must say `ARM aarch64` |
 | `not-negotiated` / caps error at `build()` | Upstream format isn't in your pad template (for example RGB into NV12-only) | Add the format to the template (and implement it), or insert `nodes::CapsRaw("NV12")` / a converter before it |
 | App runs at full fps but Insight shows nothing on the channel | The channel's UDP port isn't reachable. The SDK publishes only the channels in its port map (e.g. 0–23, UDP 9000–9023 / 9100–9123), and some networks block UDP between the board and the SDK host | Use a channel inside `neat --json` → `videoUDP` range; check `curl -k https://127.0.0.1:9900/api/ingest/stats` for `packets_received` |
 | Video in Insight but no change visible | `mode=none` and `border-width=0`, or you are watching another channel | Check the options and `--channel` |
 | Overlays drift or vanish after adding your element | Your element changed PTS or re-timestamped buffers | Don't touch `GST_BUFFER_PTS/DTS`; with `GstVideoFilter` in-place this is automatic |
-| Throughput drops | Per-frame CPU work too slow for the stream rate | Measure with `log-interval`; see the rules below |
+| Throughput drops | Per-frame CPU work too slow for the stream rate | Measure with `--log-interval 150` (the plugin's own fps); see the rules below |
 | App hangs on exit | Your element blocks in `transform` (waiting on a lock or I/O) | Never block the streaming thread; use timeouts |
 
 ---
@@ -759,8 +793,9 @@ it prints every frame with its PTS.
 
 1. **Keep per-frame work cheap and bounded.** `transform_frame_ip` runs on a streaming thread,
    and anything slow there stalls the whole pipeline. At 30 fps you have about 33 ms per frame
-   **for the entire pipeline**, not just your element. Measure with `log-interval`, or with
-   `SIMA_GST_ELEMENT_TIMINGS=1`, which the Apps examples enable in profile mode.
+   **for the entire pipeline**, not just your element. Measure with `--log-interval N` (the
+   element's `log-interval` property), or with `SIMA_GST_ELEMENT_TIMINGS=1`, which some
+   [SiMa Apps examples](https://github.com/sima-neat/apps) enable in profile mode.
 2. **Touch as few bytes as possible.** Changing only chroma (grayscale) or only a border is much
    cheaper than a full-frame pass. Whole-frame operations on 1080p NV12 touch about 3 MB per
    frame.
@@ -777,8 +812,9 @@ it prints every frame with its PTS.
 8. **Report fatal errors with `GST_ELEMENT_ERROR` and return `GST_FLOW_ERROR`.** Neat turns
    that into a structured runtime error on `Run`. For recoverable issues, log a warning and
    continue.
-9. **Free everything in `stop` / `finalize`.** Applications build and close runs repeatedly, for
-   example to probe the stream first as these examples do.
+9. **Free everything in `stop` / `finalize`.** An application may build and close runs many
+   times in one process, for example to reconnect after a camera drops, so a leak grows with
+   every run.
 
 ---
 
@@ -792,6 +828,64 @@ it prints every frame with its PTS.
 
 Version your plugin with the 5th argument of `GST_PLUGIN_DEFINE` (`"1.0.0"`), and rebuild it
 whenever the DevKit's GStreamer version changes. `gst-inspect-1.0 --version` shows the version.
+
+---
+
+## FAQ
+
+**Is `framemarker` a SiMa product plugin?**
+No. It's a teaching sample written for this folder. SiMa's own plugins are named `neat*`, for
+example `neatdecoder` and `neatprocessmla`.
+
+**Is a Neat `Model` a plugin too?**
+Sort of. A `Model` expands into *several* SiMa elements: `neatprocesscvu` (preprocess, CVU),
+`neatprocessmla` (inference, MLA) and `neatobjectdecode` (boxes). Neat configures them from the
+model archive. Your plugin is one element that you configure yourself.
+
+**Can my plugin run on the MLA or CVU accelerators?**
+Not through this route. A GStreamer plugin like this one runs on the ARM CPU. Model-side work
+belongs in `Model::Options` and the model compiler tools.
+
+**Can I use the plugin without Neat?**
+Yes. It's a normal GStreamer element: `gst-launch-1.0 ... ! framemarker ! ...` works, as
+`scripts/test_plugin.sh` shows.
+
+**Can I use it from Python?**
+Yes, with `pyneat.nodes.custom("framemarker ...")`; see
+[apps/stream_to_insight/main.py](apps/stream_to_insight/main.py). Python can't subclass a Neat
+Node, so the typed wrapper is C++ only.
+
+**Where should the plugin go in my pipeline?**
+Before the branch if the model should see your change (for example a privacy mask for
+analytics too). On the video branch only if it's just for viewers (for example a watermark).
+[Section 5.4](#54-where-to-put-it-in-the-graph) has a diagram.
+
+**How do I install it permanently?**
+Ship the `.so` with your app and set `GST_PLUGIN_PATH_1_0` and `SIMA_GST_NEAT_ONLY=0` in its
+launcher, the same way `env.sh` does. See
+[Deploying beyond this folder](#deploying-beyond-this-folder).
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **Element** | One step in the chain, for example a decoder, a filter or a sender. `framemarker` is an element. |
+| **Plugin** | The `.so` file that contains one or more elements. Ours is `libgstframemarker.so`. |
+| **Pad** | An element's input (*sink* pad) or output (*src* pad). |
+| **Caps** | "Capabilities": the format flowing through a pad, such as `video/x-raw, format=NV12, width=1280, height=720`. Neighbouring elements must agree on caps. |
+| **Buffer** | One chunk of data, here one video frame, with a **timestamp** (PTS). |
+| **Property** | A setting of an element, written as `name=value`, for example `framemarker mode=grayscale`. |
+| **Neat** | SiMa's application library: Graph, Node, Model, Run |
+| **Neat SDK** | The Docker-based development environment where you build (cross-compile) for the DevKit |
+| **DevKit / Modalix** | The SiMa board that runs the apps |
+| **Insight** | SiMa's browser tool: serves test videos as RTSP streams and shows output video with overlays |
+| **RTSP** | The protocol for streaming video from a camera or server |
+| **CVU / MLA** | SiMa accelerators: CVU for image pre/post-processing, MLA for neural-network inference |
+| **Cross-compile** | Build on a PC (x86) for a different CPU (the DevKit's ARM64) |
+| **`.so`** | A Linux shared library; a GStreamer plugin is one of these |
+| **PTS** | Presentation timestamp: when a frame should be shown; used to match boxes to frames |
 
 ---
 

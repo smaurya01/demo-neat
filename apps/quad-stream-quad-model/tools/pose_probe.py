@@ -1,59 +1,57 @@
 #!/usr/bin/env python3
-"""Standalone probe for ONE compiled model — built to debug `yolo26s-pose`.
+"""Standalone probe for ONE compiled model of the quad app (built to debug `yolo26s-pose`).
 
 Why this exists
 ---------------
-In the full quad pipeline, `yolo26s-pose` costs ~1.8 s per frame inside the model
-graph (push -> pull), ~200x its peers, even with host decode and overlay switched
-off. That is far too slow to explain by its MLA cost (1.21x yolo11s by compiler
-cycle count). This script strips everything else away so the model can be studied
-on its own:
+The quad pipeline runs four models on one shared MLA across a dozen threads, which is the worst
+place to work out why one model is slow or wrong. This script strips everything else away so the
+model can be studied on its own:
 
-  * ONE model graph: input(NV12) -> model -> output. No source graph fan-out, no
-    UDP encoder, no threads, no overlay.
+  * ONE model graph: input(NV12) -> model -> output, built with main.py's own helpers and
+    config/default.conf, so the model, input and run options are the app's. No UDP encoder,
+    no threads, no overlay.
   * Lock-step push/pull, so the reported `infer` is the TRUE per-frame model cost
     (with frames in flight, push->pull would measure graph latency instead).
-  * Prints every raw output tensor's shape/dtype, so the head layout is visible.
-  * Runs the host decoder and sanity-checks the decoded boxes/keypoints, so we can
+  * Prints every output tensor's shape/dtype.
+  * Reads the on-device decode result and sanity-checks the boxes/keypoints, so we can
     tell "slow but correct" from "slow and wrong".
   * `--sweep` tries the runtime knobs that could plausibly move the number, so a
     fix (or the absence of one) is demonstrated rather than assumed.
 
 Usage
 -----
-    # reproduce the pose cost against the live stream, 20 frames
-    python tools/pose_probe.py --iters 20
+    # the pose model against a live stream, 20 frames
+    dk ./tools/pose_probe.py --rtsp <rtsp-url> --iters 20
 
-    # control: the same probe on a model that is known-fast
-    python tools/pose_probe.py --task segmentation --iters 20
+    # control: the same probe on another model, no camera needed
+    dk ./tools/pose_probe.py --task segmentation --synthetic --iters 20
 
     # is any runtime option able to move it?
-    python tools/pose_probe.py --sweep
+    dk ./tools/pose_probe.py --rtsp <rtsp-url> --sweep
 
     # verify correctness on a still image and eyeball the result
-    python tools/pose_probe.py --image /path/frame.jpg --save-out /tmp/pose.jpg
+    dk ./tools/pose_probe.py --image /path/frame.jpg --save-out /tmp/pose.jpg
+
+Without --rtsp, --image or --synthetic the probe reads the RTSP URL from the config.
 """
 from __future__ import annotations
 
 import argparse
-import glob
 import os
 from pathlib import Path
 import statistics
 import sys
 import time
-
-# Required: without it, pushing a CPU-backed NV12 Tensor into the EV74 route is refused.
-# With it Neat does a slow compatibility copy in push() -- a real per-push cost for ALL
-# models; building the Tensor with TensorMemory.EV74 would avoid it.
-os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
+from types import SimpleNamespace
 
 APP_DIR = Path(__file__).resolve().parent.parent
 
-# Read the archive map from the app so the probe can never measure a DIFFERENT model than
-# the pipeline deploys. (It did once, silently benchmarking the old pose archive.)
+# Build everything with the app's own helpers, so the probe can never measure a DIFFERENT model,
+# or the same model built differently, than the pipeline deploys.
 sys.path.insert(0, str(APP_DIR))
-from main import DEFAULT_ARCHIVES as ARCHIVES  # noqa: E402
+import main as app  # noqa: E402
+
+ARCHIVES = app.DEFAULT_ARCHIVES
 
 cv2 = None
 np = None
@@ -61,113 +59,13 @@ pyneat = None
 ov = None
 
 
-
-def nv12_packed(tensor, width: int, height: int):
-    """Contiguous (height * 3 / 2, width) NV12 from a decoded tensor, honouring its plane layout.
-
-    The decoder may pad the Y plane (1280x720 comes back with 768 Y rows on Neat 0.5.0), so the
-    UV plane does not necessarily start at width * height. Read each plane at its own byte
-    offset and row stride; slicing the first width * height * 3 / 2 bytes would read the
-    padding as chroma (a green band, and every colour shifted).
-    """
-    payload = np.frombuffer(tensor.copy_payload_bytes(), dtype=np.uint8)
-    y_off, y_stride, uv_off, uv_stride = 0, width, width * height, width
-    for plane in tensor.planes:
-        if plane.role == pyneat.PlaneRole.Y:
-            y_off, y_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
-        elif plane.role == pyneat.PlaneRole.UV:
-            uv_off, uv_stride = int(plane.byte_offset), int(plane.strides_bytes[0])
-    if payload.size < uv_off + (height // 2) * uv_stride or payload.size < y_off + height * y_stride:
-        raise RuntimeError(f"NV12 payload too small: {payload.size} bytes for {width}x{height}")
-    out = np.empty((height * 3 // 2, width), dtype=np.uint8)
-    out[:height] = payload[y_off:y_off + height * y_stride].reshape(height, y_stride)[:, :width]
-    out[height:] = payload[uv_off:uv_off + (height // 2) * uv_stride].reshape(height // 2, uv_stride)[:, :width]
-    return out
-
 def load_deps() -> None:
-    global cv2, np, pyneat, dec, ov
-    for path in glob.glob("/usr/lib/python3*/dist-packages"):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-    import cv2 as _cv2
-    import numpy as _np
-    import pyneat as _pyneat
-    cv2, np, pyneat = _cv2, _np, _pyneat
-    if str(APP_DIR) not in sys.path:
-        sys.path.insert(0, str(APP_DIR))
-    from src import overlay as _ov
-    ov = _ov
-
-
-# Decode families, kept in lockstep with main.py (the whole point of this probe is
-# that its numbers transfer to the app, so the model must be built identically).
-DECODE_FAMILY = {
-    "detection": "YoloV8",       # zoo yolo_11s
-    "segmentation": "YoloV8Seg",  # zoo yolo_11s_seg
-    "pose": "YoloV26Pose",        # yolo26s-pose
-    "yolox": "YoloX",             # yolox_s
-}
-NUM_CLASSES = {"detection": 80, "segmentation": 80, "yolox": 80, "pose": 1}
-
-
-def decode_on_device(task: str, tensors, w: int, h: int):
-    """Read the BBOX payload the model graph's on-device BoxDecode stage produced.
-    This is a payload READ, not a decode — the MLA/EV74 already did the work."""
-    result = ov.DecodeResult([])
-    if task == "pose":
-        for r in pyneat.decode_pose(tensors, clamp_to=(w, h), top_k=100):
-            boxes = np.asarray(r.boxes.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-            kpts = np.asarray(r.keypoints.to_numpy(copy=True), dtype=np.float32).reshape((-1, 17, 3))
-            for i, (x1, y1, x2, y2, sc, cid) in enumerate(boxes):
-                if sc < 0.25:
-                    continue
-                d = ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid))
-                if i < kpts.shape[0]:
-                    d.keypoints = kpts[i]
-                result.detections.append(d)
-        return result
-    if task == "segmentation":
-        for r in pyneat.decode_segmentation(tensors, clamp_to=(w, h), top_k=100):
-            boxes = np.asarray(r.boxes.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-            for x1, y1, x2, y2, sc, cid in boxes:
-                if sc >= 0.25:
-                    result.detections.append(
-                        ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid)))
-        return result
-    for t in pyneat.decode_bbox(tensors, clamp_to=(w, h), top_k=100):
-        arr = np.asarray(t.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-        for x1, y1, x2, y2, sc, cid in arr:
-            if sc >= 0.25:
-                result.detections.append(
-                    ov.Detection(float(x1), float(y1), float(x2), float(y2), float(sc), int(cid)))
-    return result
-
-
-# ── NV12 plumbing (identical contract to the app, so results transfer) ────────
-def make_nv12_tensor(nv12, w: int, h: int):
-    t = pyneat.Tensor.from_numpy(np.ascontiguousarray(nv12), copy=True,
-                                 layout=pyneat.TensorLayout.HW,
-                                 memory=pyneat.TensorMemory.CPU)
-    t.shape = [h, w]
-    t.strides_bytes = [w, 1]
-    t.byte_offset = 0
-    img = pyneat.ImageSpec()
-    img.format = pyneat.PixelFormat.NV12
-    sem = t.semantic
-    sem.image = img
-    t.semantic = sem
-    y = pyneat.Plane()
-    y.role = pyneat.PlaneRole.Y
-    y.shape = [h, w]
-    y.strides_bytes = [w, 1]
-    y.byte_offset = 0
-    uv = pyneat.Plane()
-    uv.role = pyneat.PlaneRole.UV
-    uv.shape = [h // 2, w]
-    uv.strides_bytes = [w, 1]
-    uv.byte_offset = w * h
-    t.planes = [y, uv]
-    return t
+    global cv2, np, pyneat, ov
+    # As in main.py: the pushed NV12 tensor is CPU memory and the preprocess route is on the
+    # EV74, so allow the runtime's compatibility copy in push().
+    os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
+    app.load_runtime_dependencies()
+    cv2, np, pyneat, ov = app.cv2, app.np, app.pyneat, app.ov
 
 
 def bgr_to_nv12(bgr):
@@ -186,119 +84,53 @@ def bgr_to_nv12(bgr):
     return np.ascontiguousarray(np.vstack([y, uv.reshape(h // 2, w)])), w, h
 
 
-def tensor_nv12_from_decoded(t):
-    w = int(t.width() if callable(t.width) else t.width)
-    h = int(t.height() if callable(t.height) else t.height)
-    return nv12_packed(t, w, h), w, h
+# ── graphs (the app's own builders) ──────────────────────────────────────────
+def load_app_config(args):
+    """config/default.conf, as main.py reads it, with this probe's overrides."""
+    cfg = app.Config()
+    app.load_config_file(cfg, Path(args.config))
+    if args.pre_target:
+        cfg.cvu_pre_target = args.pre_target
+    if args.post_target:
+        cfg.cvu_post_target = args.post_target
+    return cfg
 
 
-def extract_tensors(sample) -> list:
-    if sample is None or not hasattr(sample, "kind"):
-        return []
-    if sample.kind == pyneat.SampleKind.Tensor and sample.tensor is not None:
-        return [sample.tensor]
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        return list(sample.tensors)
-    out = []
-    for f in getattr(sample, "fields", []):
-        out.extend(extract_tensors(f))
-    return out
+def slot_for(cfg, task: str):
+    """The config slot that runs `task`, so the probe picks up that slot's archive and URL."""
+    for i in range(cfg.num_streams):
+        if cfg._tasks.get(i, app.DEFAULT_TASKS[i % len(app.DEFAULT_TASKS)]) == task:
+            return i
+    return None
 
 
-# ── graphs ────────────────────────────────────────────────────────────────────
-def make_model(archive: str, task: str, args, w: int, h: int):
-    opt = pyneat.ModelOptions()
-    opt.preprocess.kind = pyneat.InputKind.Image
-    opt.preprocess.enable = pyneat.AutoFlag.On
-    opt.preprocess.input_max_width = w
-    opt.preprocess.input_max_height = h
-    opt.preprocess.input_max_depth = 1
-    opt.preprocess.resize.enable = pyneat.AutoFlag.On
-    opt.preprocess.resize.width = 640
-    opt.preprocess.resize.height = 640
-    opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
-    opt.preprocess.resize.pad_value = 114
-    opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.NV12
-    opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
-    opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
-    opt.processcvu.pre_run_target = args.pre_target
-    opt.processcvu.post_run_target = args.post_target
+def make_model(cfg, spec, args):
+    opt = app.model_options(cfg, spec)
     if args.mla_pool_buffers:
         opt.processmla.output_pool_buffers = args.mla_pool_buffers
     if args.async_queue_depth:
         opt.async_queue_depth = args.async_queue_depth
-    # Every task decodes on-device, same contract as the app (see main.DECODE_FAMILY).
-    opt.decode_type = getattr(pyneat.BoxDecodeType, DECODE_FAMILY[task])
-    opt.score_threshold = 0.25
-    opt.nms_iou_threshold = 0.5
-    opt.top_k = 100
-    opt.num_classes = NUM_CLASSES[task]
     if args.planner:
         opt.verbose.planner = True
         opt.verbose.level = pyneat.VerbosityLevel.Verbose
-    return pyneat.Model(archive, opt)
+    return pyneat.Model(spec.model_path, opt)
 
 
-def nv12_input_options(w: int, h: int, fps: int):
-    o = pyneat.InputOptions()
-    o.payload_type = pyneat.PayloadType.Image
-    o.format = pyneat.Format.NV12
-    o.width = w; o.height = h; o.depth = 1
-    o.max_width = w; o.max_height = h; o.max_depth = 1
-    o.fps_n = max(1, fps); o.fps_d = 1
-    o.caps_override = (f"video/x-raw,format=NV12,width={w},height={h},"
-                       f"framerate={max(1, fps)}/1")
-    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
-    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
-    o.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
-    return o
-
-
-def run_options():
-    ro = pyneat.RunOptions()
-    ro.preset = pyneat.RunPreset.Realtime
-    ro.queue_depth = 3
-    ro.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-    ro.output_memory = pyneat.OutputMemory.ZeroCopy
-    return ro
-
-
-def build_model_run(archive: str, task: str, args, w: int, h: int, fps: int):
-    endpoint = "detections" if task == "detection" else "heads"
-    g = pyneat.Graph(f"probe_{task}")
-    g.add(pyneat.nodes.input(nv12_input_options(w, h, fps)))
-    g.add(make_model(archive, task, args, w, h))
-    g.add(pyneat.nodes.output(endpoint, pyneat.OutputOptions.every_frame(1)))
+def build_model_run(cfg, spec, args, w: int, h: int, fps: int):
+    """Same graph as main.build_model_graph(), plus the probe's runtime knobs."""
+    g = pyneat.Graph(f"probe_{spec.task}")
+    g.add(pyneat.nodes.input(app.make_nv12_input_options(w, h, fps)))
+    g.add(make_model(cfg, spec, args))
+    g.add(pyneat.nodes.output(app.MODEL_ENDPOINT,
+                              pyneat.OutputOptions.every_frame(max(1, cfg.queue_depth))))
     t0 = time.perf_counter()
-    run = g.build(run_options())
-    return run, endpoint, (time.perf_counter() - t0) * 1000.0
+    run = g.build(app.build_run_options(cfg, model=True))
+    return run, app.MODEL_ENDPOINT, (time.perf_counter() - t0) * 1000.0
 
 
-def build_rtsp_run(url: str, w: int, h: int, fps: int):
-    opt = pyneat.RtspDecodedInputOptions()
-    opt.url = url
-    opt.latency_ms = 200
-    opt.tcp = True
-    opt.payload_type = 96
-    opt.insert_queue = True
-    opt.decoder_name = "decoder"
-    opt.decoder_raw_output = True
-    opt.auto_caps_from_stream = True
-    opt.fallback_h264_width = w
-    opt.fallback_h264_height = h
-    opt.fallback_h264_fps = fps
-    opt.output_caps.enable = True
-    opt.output_caps.format = pyneat.Format.NV12
-    opt.output_caps.width = w
-    opt.output_caps.height = h
-    opt.output_caps.fps = fps
-    opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
-    g = pyneat.Graph("probe_source")
-    g.add(pyneat.groups.rtsp_decoded_input(opt))
-    g.add(pyneat.nodes.output(pyneat.OutputOptions.every_frame(1)))
-    ro = run_options()
-    ro.output_memory = pyneat.OutputMemory.Owned
-    return g.build(ro)
+def build_rtsp_run(cfg, spec):
+    """main.py's source graph for one stream: RTSP -> explicit decoder -> dropping sink."""
+    return app.make_combined_source_graph(cfg, [spec]).build(app.build_run_options(cfg))
 
 
 # ── frame sources ─────────────────────────────────────────────────────────────
@@ -375,11 +207,22 @@ def annotate(bgr, result, task: str):
 
 # ── main probe ────────────────────────────────────────────────────────────────
 def probe(args, task: str, quiet: bool = False):
-    archive = args.model or ARCHIVES[task]
+    cfg = load_app_config(args)
+    slot = slot_for(cfg, task)
+    archive = args.model or (cfg._models.get(slot) if slot is not None else None) or ARCHIVES[task]
     if not Path(archive).exists():
         raise FileNotFoundError(f"archive not found: {archive}")
 
     # ---- get frames -----------------------------------------------------------
+    rtsp_url = ""
+    if not args.image and not args.synthetic:
+        rtsp_url = args.rtsp or (cfg._rtsp.get(slot, cfg.rtsp_default) if slot is not None
+                                 else cfg.rtsp_default)
+        if rtsp_url.startswith("<"):
+            raise ValueError("no frame source: pass --rtsp <url>, --image <file> or --synthetic "
+                             "(or set the RTSP URL in the config)")
+    spec = app.StreamSpec(0, task, rtsp_url, str(archive), 0)
+
     src_run = None
     bgr_ref = None
     if args.image:
@@ -390,34 +233,44 @@ def probe(args, task: str, quiet: bool = False):
         bgr_ref = bgr.copy()
         frames = [(nv12, w, h)]
     elif args.synthetic:
-        nv12, w, h = synthetic_nv12(1280, 720)
+        nv12, w, h = synthetic_nv12(cfg.width - cfg.width % 2, cfg.height - cfg.height % 2)
         frames = [(nv12, w, h)]
     else:
-        w, h, fps = 1280, 720, -1   # -1: the decoder keeps the camera's own frame rate
-        src_run = build_rtsp_run(args.rtsp, w, h, fps)
+        # Size and rate come from the stream itself, as in main.py; the config is the fallback.
+        geometry, reason = (app.probe_stream(rtsp_url, cfg.tcp) if cfg.probe_source
+                            else (None, ""))
+        if geometry is not None:
+            cfg.width, cfg.height, cfg.fps = geometry
+        elif cfg.probe_source:
+            print(f"[warn] could not probe {rtsp_url} with ffprobe: {reason}; using the "
+                  f"config's {cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr)
+        w, h = cfg.width, cfg.height
         frames = []
 
-    # ---- build the model graph ------------------------------------------------
-    run, endpoint, build_ms = build_model_run(archive, task, args, w, h, 60)
+    # ---- build the model graph, then the source (as main.py does) ---------------
+    run, endpoint, build_ms = build_model_run(cfg, spec, args, w, h, cfg.fps)
+    if rtsp_url:
+        src_run = build_rtsp_run(cfg, spec)
     if not quiet:
         print(f"\n=== {task}  {Path(archive).name}")
         print(f"    graph build: {build_ms:.0f} ms   endpoint='{endpoint}'   "
-              f"pre={args.pre_target} post={args.post_target}")
+              f"pre={cfg.cvu_pre_target} post={cfg.cvu_post_target}")
 
     infer_ms, decode_ms = [], []
-    last_tensors, last_result, last_nv12 = None, None, None
+    last_result, last_nv12 = None, None
+    decode_ctx = SimpleNamespace(spec=spec)
     try:
         for i in range(args.iters):
             if src_run is not None:
-                ts = src_run.pull_tensors(timeout_ms=20000)
+                ts = src_run.pull_tensors(app.source_endpoint(spec.stream_id), 20000)
                 if not ts:
                     print("[warn] RTSP frame timeout", file=sys.stderr)
                     continue
-                nv12, w, h = tensor_nv12_from_decoded(ts[0])
+                nv12, w, h = app.tensor_nv12_from_decoded(ts[0])
             else:
                 nv12, w, h = frames[0]
 
-            tensor = make_nv12_tensor(nv12, w, h)
+            tensor = app.make_nv12_tensor(nv12, w, h)
             t0 = time.perf_counter()
             if not run.push([tensor]):
                 print("[warn] push failed", file=sys.stderr)
@@ -429,11 +282,11 @@ def probe(args, task: str, quiet: bool = False):
                 continue
             infer_ms.append(dt)
 
-            tensors = extract_tensors(sample)
+            tensors = app.extract_tensors(sample)
             t0 = time.perf_counter()
-            result = decode_on_device(task, tensors, w, h)
+            result = app.decode_sample(cfg, decode_ctx, tensors, w, h)
             decode_ms.append((time.perf_counter() - t0) * 1000.0)
-            last_tensors, last_result, last_nv12 = tensors, result, nv12
+            last_result, last_nv12 = result, nv12
             if not quiet and i == 0:
                 describe_outputs(tensors)
     finally:
@@ -515,16 +368,20 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--task", choices=list(ARCHIVES), default="pose")
-    ap.add_argument("--model", help="archive path (defaults to the task's compiled archive)")
+    ap.add_argument("--config", default=str(APP_DIR / "config" / "default.conf"),
+                    help="the app's config file (model options, thresholds, fallback geometry)")
+    ap.add_argument("--model", help="archive path (defaults to the config's archive for the task)")
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=3,
                     help="iterations excluded from the timing means (graph/model warmup)")
-    ap.add_argument("--rtsp", default="rtsp://<rtsp-server-ip>:8555/stream")
+    ap.add_argument("--rtsp", help="RTSP URL (defaults to the config's URL for the task)")
     ap.add_argument("--image", help="decode a still image instead of RTSP")
     ap.add_argument("--synthetic", action="store_true", help="use a synthetic frame (no source)")
     ap.add_argument("--save-out", help="write an annotated JPEG of the last frame")
-    ap.add_argument("--pre-target", default="AUTO", choices=["AUTO", "EV74", "A65"])
-    ap.add_argument("--post-target", default="AUTO", choices=["AUTO", "EV74", "A65"])
+    ap.add_argument("--pre-target", choices=["AUTO", "EV74", "A65"],
+                    help="override the config's cvu_pre_target")
+    ap.add_argument("--post-target", choices=["AUTO", "EV74", "A65"],
+                    help="override the config's cvu_post_target")
     ap.add_argument("--mla-pool-buffers", type=int, default=0)
     ap.add_argument("--async-queue-depth", type=int, default=0)
     ap.add_argument("--planner", action="store_true",

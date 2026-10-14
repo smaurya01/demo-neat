@@ -101,6 +101,8 @@ insight_host=<host-ip>
 channel=0
 ```
 
+The app stops with a message if `rtsp_url` or `insight_host` still holds its `<...>` placeholder.
+
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
 > Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
@@ -179,13 +181,17 @@ command-line flags.
 dk ./build/single_stream_yolo_insight
 ```
 
-Both variants print per-window stats:
+Both variants print the start-up latency once, per-window stats every 30 frames, and a summary
+at exit:
 
 ```text
+frame=1 detections=<decoded> published=<sent as metadata> startup_ms=<first result>
 frame=<n> detections=<decoded> published=<sent as metadata> fps=<output fps> avg_ms(pull=..., metadata_send=...)
+...
+processed=<frames> timeouts=<n> startup_ms=<first result> avg_fps=<fps> video=<host-ip>:9000 metadata=<host-ip>:9100
 ```
 
-`pull` is the wait for the next detection sample (dominated by the source frame period on a
+`startup_ms` covers the RTSP connect, decoder start and model load. `pull` is the wait for the next detection sample (dominated by the source frame period on a
 healthy pipeline); `metadata_send` should be well under a millisecond — it is one UDP datagram.
 
 ## How To Run With Python
@@ -204,7 +210,7 @@ dk ./main.py --config ./config/default.conf --frames 30
 
 ## How To See The Output
 
-Open the Insight UI, **`https://<sdk-host-ip>:9900`** (`neat --json` shows it as
+Open the Insight UI, **`https://<host-ip>:9900`** (`neat --json` shows it as
 `insight.webUiUrl`), in a browser → **Video Viewer** tab → select the channel configured as
 `channel` (default 0). *It is **HTTPS**, not HTTP; the SDK uses a local mkcert certificate, so
 accept the browser warning the first time.*
@@ -216,7 +222,7 @@ Unlike the other apps, this one sends **two** streams per channel, and both must
 | video (H.264/RTP) | `9000 + channel` | `video_port_base` (default `9000`) |
 | metadata (JSON) | `9100 + channel` | `metadata_port_base` (default `9100`) |
 
-So for the default `channel=0`, set the viewer's **Port** to **9000**. The viewer decodes the video
+So for the default `channel=0`, select channel 0 (UDP 9000) in the viewer. The viewer decodes the video
 and draws the boxes from the `object-detection` metadata arriving on the paired metadata port —
 the frames themselves are clean by design. `insight_host` must point at the machine running
 Insight. The number of video channels is set by the SDK's port map; read the range from `neat --json`
@@ -224,7 +230,7 @@ Insight. The number of video channels is set by the SDK's port map; read the ran
 
 Verify delivery in order (both are UDP — fire-and-forget):
 
-1. `https://<insight-host>:9900` → Stats, or `GET /api/ingest/stats` — packets arriving on the
+1. `https://<host-ip>:9900` → Stats, or `GET /api/ingest/stats` — packets arriving on the
    video port (`packets_received`, `seen_sps`)?
 2. `GET /api/egress/stats` — `frames_decoded` climbing?
 3. Video Viewer tile for the channel — boxes appear over the live video.
@@ -262,13 +268,13 @@ viewer. `data_json` looks like:
       "id": "obj_1",
       "label": "PERSON",
       "confidence": 0.91,
-      "bbox": [412.0, 187.0, 164.0, 339.0]
+      "bbox": [412, 187, 164, 339]
     }
   ]
 }
 ```
 
-`bbox` is `[x, y, width, height]`, top-left origin, in encoded-frame pixels — note that Neat's
+`bbox` is `[x, y, width, height]`, top-left origin, in whole encoded-frame pixels — note that Neat's
 `decode_bbox` returns **corner** coordinates (`x1, y1, x2, y2`), so the app converts on every
 frame. Insight renders the types `object-detection`, `classification`, `pose-estimation`,
 `segmentation` and `tracking`; other types are delivered but not drawn.

@@ -3,7 +3,8 @@
 Why a public model does not just "compile" for the MLA, what has to change, and the traps that cost
 us the most time.
 
-For the commands, see **[`COMPILE-COMMANDS.md`](COMPILE-COMMANDS.md)**.
+You do not need this page to compile a model: for that, start at the [README](README.md). INT8 vs
+bf16 has its own page, [`PRECISION.md`](PRECISION.md).
 
 ## Table of Contents
 
@@ -15,6 +16,7 @@ For the commands, see **[`COMPILE-COMMANDS.md`](COMPILE-COMMANDS.md)**.
   - [✅ The 209× pose fix: padding 51 → 64 channels](#-the-209-pose-fix-padding-51--64-channels)
   - [✅ Ultralytics head names are scale-invariant](#-ultralytics-head-names-are-scale-invariant)
   - [✅ Each family keeps its own head, and its own decoder](#-each-family-keeps-its-own-head-and-its-own-decoder)
+  - [✅ YOLOv8: head at `model.22`, no attention](#-yolov8-head-at-model22-no-attention)
   - [✅ YOLO-World: bake the vocabulary, then flatten the 5-D attention](#-yolo-world-bake-the-vocabulary-then-flatten-the-5-d-attention)
   - [❌ Folding the DFL into 4 channels (decode as `YoloV26`)](#-folding-the-dfl-into-4-channels-decode-as-yolov26)
   - [❌ INT8 for YOLO-World — passes placement, fails the sim check](#-int8-for-yolo-world--passes-placement-fails-the-sim-check)
@@ -152,6 +154,22 @@ already 4-channel distances. The surgery exposes both **as they are**, so each a
 family's own Neat decoder: `YoloV8` / `YoloV8Seg` (with `GroupedByRoleLogit`, because the class heads are
 cut before Ultralytics' sigmoid) or `YoloV26` / `YoloV26Pose`. Same surgery kind, no head rebuilt.
 
+### ✅ YOLOv8: head at `model.22`, no attention
+
+YOLOv8 uses the same surgery as YOLO11, with two differences that `compile/_surgery_ultralytics.py`
+handles:
+
+- **The Detect head is at `model.22`, not `model.23`.** YOLO11 inserts a C2PSA block, which shifts
+  every head node name by one. Copying the YOLO11 head names fails with
+  `ValueError: missing head tensors`.
+- **YOLOv8 has no attention block.** The export contains no `MatMul` nodes, so the
+  `MatMul → Einsum` rewrite has nothing to do and `reports/` shows an empty `attention_rewrites`.
+  That is expected, not a misconfiguration.
+
+The bbox heads are 64-channel DFL heads, as in YOLO11, decoded by `YoloV8`. On-device detections
+land within 0.01–0.06 of the float ONNX (`000000000139`: tv 0.93 vs 0.921, chair 0.83 vs 0.849),
+so the INT8 calibration is sound.
+
 ### ❌ Folding the DFL into 4 channels (decode as `YoloV26`)
 
 An earlier surgery rebuilt the YOLOv8/YOLO11 DFL in-graph as `Split(64→16×4)→Softmax→Conv(arange)→Concat`,
@@ -220,7 +238,7 @@ or artifact**. The compile is green, the archive is well-formed, and the model i
 
 Every archive in the [prebuilt bundle](README.md#download-the-prebuilt-archives) was built from its
 **upstream original weights** — PyTorch / Ultralytics / Megvii — through this repo's own export →
-graph-surgery → INT8 → compile chain.
+graph-surgery → INT8 or bf16 → compile chain.
 
 **Nothing is downloaded pre-compiled from the SiMa model zoo.** (Some *apps* do use zoo models —
 each app's own README says so — but those are not part of this flow.)
@@ -231,15 +249,15 @@ each app's own README says so — but those are not part of this flow.)
 
 ```
 model-compilation/
-  README.md              # download the archives, or set up to compile
-  COMPILE-COMMANDS.md    # the copy-paste compile commands
-  MODEL-COMPILATION.md   # you are here
+  README.md              # start here: set up, pick a model, run the steps
+  COMPILE-COMMANDS.md    # the commands and expected output per model
+  MODEL-COMPILATION.md   # you are here: how compilation works
+  PRECISION.md           # INT8 vs bf16
   BOX-DECODE.md          # the Neat box decoder per model
   ACCURACY.md            # FP32 vs bf16 vs INT8 on COCO
   MULTI-BATCH.md         # batch-N compile and profiling
   YOLO26X-STUDY.md       # yolo26x INT8 compile and runtime study
   models.yaml            # the single registry driving all four steps
-  compile_all.sh         # the eleven Models-v1 INT8 models, one at a time
   compile/               # the 4-step flow + test_box_decode.py, profile_model.py
                          #   (+ common.py, _surgery_*.py, _export_world.py)
   accuracy/              # the accuracy-study scripts
@@ -256,11 +274,10 @@ model-compilation/
 
 ```
 TRACKED                                    IGNORED
-  README.md            get the models        work/           <- the entire build directory
-  COMPILE-COMMANDS.md  the commands          *.pt *.onnx     <- weights & graphs (downloaded/exported)
-  MODEL-COMPILATION.md the reasoning         *.tar.gz *.elf  <- compiled artifacts
-  models.yaml          the registry          __pycache__/
-  compile/             the scripts
+  *.md                 the docs              work/           <- the entire build directory
+  models.yaml          the registry          *.pt *.onnx     <- weights & graphs (downloaded/exported)
+  compile/             the scripts           *.tar.gz *.elf  <- compiled artifacts
+  accuracy/            the accuracy study    __pycache__/
   assets/calibration/  REAL images
   assets/inference/    REAL images
 ```

@@ -9,8 +9,8 @@ Layout produced per model:
     work/<id>/
       onnx/<id>.onnx                     # step 1: convert_to_onnx.py
       surgery/<id>.compile_ready.onnx    # step 2: graph_surgery.py  (only if surgery != none)
-      compile_int8/<...>_mpk.tar.gz      # step 3: compiler.py (precision int8, the default)
-      compile_bf16/<...>_mpk.tar.gz      # step 3: compiler.py --precision bf16
+      compile_int8/<...>_mpk.tar.gz      # step 3: compiler.py, INT8 build
+      compile_bf16/<...>_mpk.tar.gz      # step 3: compiler.py, bf16 build
       compile_<prec>_b<N>/<...>_mpk.tar.gz  # step 3: compiler.py --batch-size N (N > 1)
       reports/                           # logs, audit, validation, surgery notes
 """

@@ -24,14 +24,14 @@ NEAT Insight is the browser-based inspection and test console for NEAT vision ap
 
 The typical Insight development loop:
 
-upload media → convert to RTSP sources (e.g. `rtsp://127.0.0.1:8554/src1`) → run your application against those sources → view output through the WebRTC Video Viewer → analyze runtime metrics and logs.
+import media → convert to RTSP sources (e.g. `rtsp://<host-ip>:8554/src1`, where `<host-ip>` is the host IP the DevKit uses — never `127.0.0.1`) → run your application against those sources → view output through the WebRTC Video Viewer → analyze runtime metrics and logs.
 
 ![NEAT Insight development loop](images/insight/insight-development-loop.jpg)
 
 Core functions:
 
 - **Workspace inspection** — visualize generated model, package, and profiling artifacts.
-- **Test media service** — upload media and convert it into streaming sources.
+- **Test media service** — import media and convert it into streaming sources.
 - **RTSP source generation** — turn media files into live streams.
 - **WebRTC video rendering** — view application output with metadata overlays.
 - **Runtime diagnostics and logging** — compare application behavior against runtime state.
@@ -44,12 +44,14 @@ Reference: https://developer.sima.ai/software/tools/insight/concepts
 
 Open the Insight UI in a browser. Run `neat` in the SDK for the exact URLs; 9900 is the default port:
 
-- **https://localhost:9900** — when browsing from the same machine where the SDK is running.
-- **https://\<host-ip>\:9900** — when browsing from another machine on the network.
+- **The Insight (local) URL from `neat`, usually https://127.0.0.1:9900** — when browsing from the same machine where the SDK is running.
+- **The Insight (remote) URL from `neat`, e.g. https://\<host-ip>\:9900** — when browsing from another machine on the network.
+
+The DevKit reaches Insight (and its RTSP sources) at the IP on the **Insight (remote)** line, or the address `curl -sk https://127.0.0.1:9900/api/server-ip` prints in the SDK. Never give the DevKit `127.0.0.1`: on the board, that is the board itself.
 
 Before you start:
 
-- Ensure the **NFS mount** is correctly present on the workspace.
+- Ensure the **NFS mount** is correctly present on the workspace: run `dk status` in the SDK and check its `NFS mount path` line.
 - The paired **devkit-ip** is visible in the **top-right corner** of the UI.
 
 Check that the service is running:
@@ -120,8 +122,8 @@ Reference: https://developer.sima.ai/software/tools/insight/install-upgrade
 The Insight interface is organized into five tabs:
 
 - **Workspace:** Browse project files, search sources, inspect artifacts, and preview text/code/images, MLA stats, and pipeline sequences.
-- **Media Sources:** Upload, preview, inspect, and delete test media. Supports `mp4`, `mov`, `avi`, `mkv`, and `webm`.
-- **Streaming:** Convert uploaded media into live streams mapped to numbered RTSP paths (`src1`, `src2`, and so on, on port `8554`).
+- **Media Sources:** Bring in test media with **Import Media** — **Local** upload, the built-in **Catalog**, or a **YouTube** URL — then preview, inspect, and delete it. Local uploads support `mp4`, `mov`, `avi`, `mkv`, and `webm`.
+- **Streaming:** Convert imported media into live streams mapped to numbered RTSP paths (`src1`, `src2`, and so on, on port `8554`).
 - **Video Viewer:** Display WebRTC output (one channel per `videoUDP` port that `neat` reports) with metadata overlays for detection, classification, pose estimation, segmentation, and tracking.
 - **Stats:** System and application metrics.
 
@@ -131,13 +133,13 @@ The Insight interface is organized into five tabs:
 
 ## 5. Create an RTSP stream using NEAT Insight
 
-1. Open **https://localhost:9900** (or **https://\<host-ip>\:9900**) in the host machine browser.
+1. Open the **Insight (local)** URL from `neat`, usually **https://127.0.0.1:9900**, in the host machine browser (or the **Insight (remote)** URL from another machine).
 
-2. Navigate to **Media Sources** and upload the media video. The view provides file selection, preview, metadata inspection, upload, and delete actions in one place.
+2. Navigate to **Media Sources** → **Import Media** and bring in a video from one of its tabs: **Local** (upload your own file), **Catalog** (built-in scenes in several resolutions, frame rates and codecs), or **YouTube** (paste a URL). The view also provides preview, metadata inspection, and delete actions.
 
     ![NEAT Insight — Media Sources](images/insight/insight-media-library.png)
 
-3. Navigate to **Streaming**. Assign media files to source slots (`src1`, `src2`, …) manually, or use **auto-assign** to distribute unique files across slots. Start an individual source, or bulk-start all streams.
+3. Navigate to **Streaming**. Assign media files to source slots (`src1`, `src2`, …) manually, or use **Auto Assign** to distribute unique files across slots. Start an individual source, or use **Bulk Start** to start all streams. The tab shows the RTSP base URL; a source's URL is that base URL plus `/src1`, `/src2`, …
 
     ![NEAT Insight — Streaming](images/insight/insight-rtsp-source.png)
 
@@ -155,7 +157,7 @@ Reference: https://developer.sima.ai/software/tools/insight/user-interface
 
 - Always browse to Insight over **HTTPS**, on the port `neat` reports (9900 by default); accept the self-signed certificate warning if prompted.
 - If the page does not load, confirm Insight is up with `insight-admin status` and re-check the port from `neat --json`.
-- Confirm the **NFS mount** is present on the workspace and that the **devkit-ip** shows in the top-right corner before starting a stream.
+- Confirm the **NFS mount** is present on the workspace (`dk status` → `NFS mount path`) and that the **devkit-ip** shows in the top-right corner before starting a stream.
 - Refer to the official documentation for further details.
 
 ---

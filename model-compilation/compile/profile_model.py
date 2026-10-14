@@ -215,7 +215,7 @@ def profile_route(route, arc, batch, cfg, frames, names, args, out_dir):
         opt.decode_type_option = getattr(pyneat.BoxDecodeTypeOption,
                                          cfg.get("box_decode_option", "Auto"))
         opt.score_threshold, opt.nms_iou_threshold = args.conf, args.iou
-        opt.top_k, opt.num_classes = args.top_k, cfg.get("num_classes", 80)
+        opt.top_k, opt.num_classes = args.top_k, int(cfg.get("num_classes", args.num_classes))
     else:
         opt.preprocess.kind = pyneat.InputKind.Tensor
         opt.preprocess.input_max_width, opt.preprocess.input_max_height = mw, mh
@@ -401,6 +401,9 @@ def main() -> int:
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--iou", type=float, default=0.50)
     ap.add_argument("--top-k", type=int, default=100)
+    ap.add_argument("--num-classes", type=int, default=80,
+                    help="class count when models.yaml gives none (COCO-80); set it after changing "
+                         "the vocabulary of yolov8s-worldv2")
     ap.add_argument("--out", type=Path, default=None, help="write the first --save annotated frames here")
     ap.add_argument("--save", type=int, default=6)
     ap.add_argument("--json", type=Path, default=None, help="write all numbers here")

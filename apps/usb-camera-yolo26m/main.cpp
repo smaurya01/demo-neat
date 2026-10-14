@@ -40,7 +40,7 @@ void handle_signal(int) { g_stop.store(true); }
 
 struct Config {
   // Camera
-  std::string camera_device = "/dev/video16";
+  std::string camera_device = "/dev/video96";
   int width = 1920;
   int height = 1080;
   int fps = 30;
@@ -56,7 +56,7 @@ struct Config {
 
   // Output
   std::string udp_host;
-  int udp_port = 5205;
+  int udp_port = 9000;
   int bitrate_kbps = 4000;
   std::string metadata_host;
   int metadata_port = 9100;
@@ -70,7 +70,7 @@ struct Config {
   int queue_depth = 3;
   bool print_backend = false;
   bool verbose_planner = false;        // dump the MPK contract + route/fusion decisions
-  bool camera_bridge = false;          // append neatcamerabridge (absent in runtime 0.2.2)
+  bool camera_bridge = false;          // append neatcamerabridge (only if the runtime ships it)
 
   // Diagnostic: replace the camera with a looping still image, so the model and the
   // preprocessor can be validated against a picture with a known answer. The fragment
@@ -199,6 +199,20 @@ std::string trim(std::string v) {
 
 bool to_bool(const std::string& v) { return v == "true" || v == "1" || v == "yes"; }
 
+// A '#' starts a comment only at the start of a line or after whitespace, so a value that
+// contains '#' is kept intact.
+void strip_comment(std::string& line) {
+  for (std::size_t i = 0; i < line.size(); ++i) {
+    if (line[i] == '#' && (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t')) {
+      line.erase(i);
+      return;
+    }
+  }
+}
+
+// True for an unedited placeholder such as "<host-ip>".
+bool is_placeholder(const std::string& v) { return !v.empty() && v.front() == '<'; }
+
 void set_config_value(Config& cfg, const std::string& k, const std::string& v) {
   if (k == "camera_device")        cfg.camera_device = v;
   else if (k == "width")           cfg.width = std::stoi(v);
@@ -236,8 +250,7 @@ Config read_config(const std::string& path) {
 
   std::string line;
   while (std::getline(file, line)) {
-    const auto hash = line.find('#');
-    if (hash != std::string::npos) line.erase(hash);
+    strip_comment(line);
     line = trim(line);
     if (line.empty()) continue;
     const auto eq = line.find('=');
@@ -245,6 +258,14 @@ Config read_config(const std::string& path) {
     set_config_value(cfg, trim(line.substr(0, eq)), trim(line.substr(eq + 1)));
   }
   if (cfg.udp_host.empty()) throw std::runtime_error("config missing: udp_host");
+  if (is_placeholder(cfg.udp_host))
+    throw std::runtime_error("set udp_host in " + path +
+                             " to the IP of the machine that receives the video (it is still \"" +
+                             cfg.udp_host + "\")");
+  if (is_placeholder(cfg.metadata_host))
+    throw std::runtime_error("set metadata_host in " + path +
+                             " to the Neat Insight host, or leave it empty (it is still \"" +
+                             cfg.metadata_host + "\")");
   if (cfg.pipeline_mode != "push" && cfg.pipeline_mode != "graph")
     throw std::runtime_error("pipeline_mode must be push or graph");
   // camera_device and flip are interpolated into a gst_parse_launch string, so an unconstrained
@@ -441,16 +462,6 @@ bool init_nv12_meta(neat::Tensor& out, int w, int h, std::string& err) {
   return true;
 }
 
-neat::Tensor blank_nv12(int w, int h) {
-  const std::size_t bytes = static_cast<std::size_t>(w) * h * 3U / 2U;
-  neat::Tensor t;
-  t.storage = neat::make_cpu_owned_storage(bytes);
-  std::memset(t.storage->data, 0, bytes);
-  std::string err;
-  if (!init_nv12_meta(t, w, h, err)) throw std::runtime_error(err);
-  return t;
-}
-
 neat::Tensor copy_nv12_to_cpu(const neat::Tensor& in) {
   int w = 0, h = 0;
   if (!in.is_nv12()) throw std::runtime_error("expected NV12 tensor");
@@ -616,22 +627,39 @@ std::vector<neat::Box> decode_boxes(const neat::Sample& sample, const Config& cf
       .boxes;
 }
 
-std::string boxes_to_json(const std::vector<neat::Box>& boxes, const Config& cfg) {
+// Neat Insight `object-detection` payload: bbox is [x, y, w, h], top-left origin, in frame
+// pixels (decode_bbox_tensor returns corners, so convert here). Same format as
+// single-stream-yolo-insight.
+std::string objects_to_json(const std::vector<neat::Box>& boxes, const Config& cfg) {
   std::ostringstream ss;
-  ss << "{\"boxes\":[";
-  bool first = true;
+  ss << "{\"objects\":[";
+  int published = 0;
   for (const auto& b : boxes) {
     if (b.score < cfg.score_threshold) continue;
-    if (!first) ss << ",";
-    first = false;
-    ss << "{\"x1\":" << static_cast<int>(b.x1) << ",\"y1\":" << static_cast<int>(b.y1)
-       << ",\"x2\":" << static_cast<int>(b.x2) << ",\"y2\":" << static_cast<int>(b.y2)
-       << ",\"score\":" << std::fixed << std::setprecision(3) << b.score
-       << ",\"class_id\":" << b.class_id << ",\"label\":\"" << class_label(b.class_id)
-       << "\"}";
+    const int x = std::max(0, static_cast<int>(b.x1));
+    const int y = std::max(0, static_cast<int>(b.y1));
+    const int w = std::min(cfg.width - x, static_cast<int>(b.x2 - b.x1));
+    const int h = std::min(cfg.height - y, static_cast<int>(b.y2 - b.y1));
+    if (w <= 0 || h <= 0) continue;
+    if (published > 0) ss << ",";
+    ++published;
+    ss << "{\"id\":\"obj_" << published << "\",\"label\":\"" << class_label(b.class_id)
+       << "\",\"confidence\":" << std::fixed << std::setprecision(3) << b.score
+       << ",\"bbox\":[" << x << "," << y << "," << w << "," << h << "]}";
   }
   ss << "]}";
   return ss.str();
+}
+
+// timestamp -1 omits the field: Insight then pairs each message with the newest video frame.
+// The encoder re-stamps frames, so no capture or wall-clock timestamp can match one.
+void send_detections(neat::MetadataSender& metadata, const std::vector<neat::Box>& boxes,
+                     const Config& cfg, std::int64_t frame_id) {
+  std::string err;
+  if (!metadata.send_metadata("object-detection", objects_to_json(boxes, cfg), -1,
+                              std::to_string(frame_id), &err)) {
+    std::cerr << "[warn] metadata send failed: " << err << "\n";
+  }
 }
 
 std::string summarize(const std::vector<neat::Box>& boxes, float min_score) {
@@ -683,7 +711,7 @@ int run_push(const Config& cfg) {
 
   neat::Graph source_graph("usb_camera_source");
   source_graph.add(neat::nodes::Custom(camera_fragment(cfg), neat::InputRole::Source));
-  // EveryFrame(4), not Latest(): Latest() means max_buffers=1 since 0.3.0 (55.1 vs 60.8 fps).
+  // EveryFrame(4), not Latest(): Latest() keeps a single buffer, which costs throughput.
   // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
   auto frame_out = neat::OutputOptions::EveryFrame(4);
   frame_out.drop = true;
@@ -777,7 +805,17 @@ int run_push(const Config& cfg) {
     const auto t3 = Clock::now();
 
     if (status == neat::PullStatus::Timeout) {
-      std::cerr << "[warn] timed out waiting for detections\n";
+      // A timeout does not cancel the inference: this frame's result may still arrive and would
+      // then be paired with the NEXT frame, for the rest of the run. Drain the sink (0 ms =
+      // non-blocking) to resynchronise before continuing.
+      neat::Sample stale;
+      neat::PullError drain_error;
+      int drained = 0;
+      while (model_run.pull("detections", 0, stale, &drain_error) == neat::PullStatus::Ok) {
+        ++drained;
+      }
+      std::cerr << "[warn] timed out waiting for detections; drained " << drained
+                << " stale result(s)\n";
       continue;
     }
     if (status == neat::PullStatus::Closed) {
@@ -798,13 +836,7 @@ int run_push(const Config& cfg) {
       std::cerr << "[warn] failed to push frame to encoder\n";
     const auto t6 = Clock::now();
 
-    if (metadata) {
-      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
-                              .count();
-      metadata->send_metadata("detection", boxes_to_json(boxes, cfg), now_ms,
-                              std::to_string(det_sample.frame_id));
-    }
+    if (metadata) send_detections(*metadata, boxes, cfg, det_sample.frame_id);
 
     ++processed;
     if (processed == 1) {
@@ -897,7 +929,10 @@ int run_graph(const Config& cfg) {
     mopt.channel = 0;
     mopt.metadata_port_base = cfg.metadata_port;
     metadata = std::make_unique<neat::MetadataSender>(mopt);
-    if (!metadata->ok()) metadata.reset();
+    if (!metadata->ok()) {
+      std::cerr << "[warn] metadata sender failed to init; continuing without it\n";
+      metadata.reset();
+    }
   }
 
   print_banner(cfg, metadata.get());
@@ -932,13 +967,7 @@ int run_graph(const Config& cfg) {
     const auto boxes = decode_boxes(sample, cfg);
     const auto t2 = Clock::now();
 
-    if (metadata) {
-      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
-                              .count();
-      metadata->send_metadata("detection", boxes_to_json(boxes, cfg), now_ms,
-                              std::to_string(sample.frame_id));
-    }
+    if (metadata) send_detections(*metadata, boxes, cfg, sample.frame_id);
 
     ++processed;
     if (processed == 1) {

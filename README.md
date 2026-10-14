@@ -13,7 +13,7 @@ below.
 | [`devkit-quick-start/`](devkit-quick-start/README.md) | Box to working application in 20 chapters: hardware, network, board software, first inference, SDK, Insight, a C++ app, agentic development, and what is inside a model archive. **Start here.** |
 | [`tutorial/`](tutorial/README.md) | Core Neat concepts as runnable notebooks — Tensor, Node, Graph, model options, RTSP, senders, GenAI in a graph. |
 | [`apps/`](apps/README.md) | Complete, runnable applications, most of them RTSP in → inference → output to Neat Insight. |
-| [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 → a single-`.elf` archive, proven on real images. |
+| [`model-compilation/`](model-compilation/README.md) | `.pt` → ONNX → graph surgery → INT8 or bf16 → a single-`.elf` archive, proven on real images. |
 | [`llima/`](llima/README.md) | LLM / VLM / ASR: the `llima` CLI, the `pyneat.genai` API, and the GenAI server. |
 | [`custom-plugin/`](custom-plugin/README.md) | Write your own GStreamer plugin, build it with the SDK, and run it inside Neat pipelines, with and without AI detection. |
 | [`troubleshooting`](#7-insight-and-troubleshooting) | Neat Insight for RTSP test sources and viewing app output, DevKit recovery, a command reference, and a symptom-first troubleshooting guide. |
@@ -88,10 +88,9 @@ each one and how to run it.
 
 ## 4. Model compilation
 
-**[`model-compilation/README.md`](model-compilation/README.md)** — start here. Fifteen models: download
-the ten prebuilt archives, or set up to compile them yourself. Any model can be built as INT8 or bf16.
-
-Models with a compile recipe (each links to its commands):
+**[`model-compilation/README.md`](model-compilation/README.md)** — compile a public model into a
+single-`.elf` archive that runs on the MLA, in INT8 or bf16, and check it on real images. Or
+download the 14 prebuilt archives.
 
 | Task | | | | |
 | --- | --- | --- | --- | --- |
@@ -101,31 +100,11 @@ Models with a compile recipe (each links to its commands):
 | **Segment** | [yolo11s-seg](model-compilation/COMPILE-COMMANDS.md#9-yolo11s-seg--segmentation-surgery) |  |  |  |
 | **Pose** | [yolo26s-pose](model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix) |  |  |  |
 | **Open-vocab** | [yolov8s-worldv2](model-compilation/COMPILE-COMMANDS.md#12-yolov8s-worldv2--open-vocabulary-bf16-not-int8) |  |  |  |
-| **Multi-batch** | [yolo26m&nbsp;batch&nbsp;6&nbsp;(INT8)](model-compilation/COMPILE-COMMANDS.md#15-yolo26m-at-batch-6--multi-batch-int8) |  |  |  |
 
-**[`model-compilation/COMPILE-COMMANDS.md`](model-compilation/COMPILE-COMMANDS.md)** — the commands.
-`compile_all.sh` for eleven models (the ten in the prebuilt zip plus `yolov8s`), or a
-copy-paste block per model with its exact expected result.
+How compilation works, INT8 vs bf16, accuracy, box decoders, multi-batch and the `yolo26x` study are
+all linked from that README's [*Learn more*](model-compilation/README.md#learn-more) table.
 
-**[`model-compilation/ACCURACY.md`](model-compilation/ACCURACY.md)** — what INT8 and
-bf16 cost against FP32 for Ultralytics `yolo26s` on COCO val2017 (4,980 images): bf16 matches FP32
-(−0.07 mAP50-95), INT8 costs 2.67 mAP50-95 and runs 1.7× faster than bf16 on the MLA. To replicate
-the numbers step by step: [`model-compilation/accuracy/README.md`](model-compilation/accuracy/README.md).
-
-**[`model-compilation/BOX-DECODE.md`](model-compilation/BOX-DECODE.md)** — the Neat box decoder
-(`decode_type` / `decode_type_option`) each compiled model needs, and how it is checked on the
-DevKit.
-
-**[`model-compilation/MULTI-BATCH.md`](model-compilation/MULTI-BATCH.md)** — compiling a model to run
-N images per MLA call, which models can be batched, and profiling batch 1 against batch N on the
-DevKit. **[`model-compilation/YOLO26X-STUDY.md`](model-compilation/YOLO26X-STUDY.md)** — `yolo26x` INT8,
-the largest YOLO26: its compile, why it cannot be batched, and its time profile on the DevKit.
-
-**[`model-compilation/MODEL-COMPILATION.md`](model-compilation/MODEL-COMPILATION.md)** — the
-reasoning. Why graph surgery is needed, what a good archive looks like (**one `.elf`, zero `.so`**),
-the INT8 calibration trap, and what worked and what didn't.
-
-No weights, ONNX graphs or compiled archives are committed — you regenerate them from the recipe.
+No weights, ONNX graphs or compiled archives are committed. The scripts download the weights and rebuild the rest; the prebuilt zip holds only the archives.
 
 ---
 
@@ -177,12 +156,10 @@ From the Quick Start Guide:
 
 ## Tested on Neat 0.5.0
 
-Everything here was re-verified against **Neat Library 0.5.0 / SDK 2.1.3.1** (DevKit software
-2.1.3), on a Modalix DevKit. The C++ apps build with zero warnings, and the apps were run on real
-hardware, most against a 1280x720 H.264 60 fps RTSP source (the other sources are listed in
-[`apps/README.md`](apps/README.md#test-source)). All 14 tutorial notebooks and the LLiMa notebooks run
-on Neat 0.5.0. The one exception is the [accuracy study](model-compilation/ACCURACY.md), measured on
-Neat 0.4.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating-to-neat-050).
+The apps, the 14 tutorial notebooks and the LLiMa notebooks target **Neat Library 0.5.0 / SDK
+2.1.3.1** (DevKit software 2.1.3) on a Modalix DevKit. Most apps read a 1280x720 H.264 60 fps RTSP
+source (the other sources are listed in [`apps/README.md`](apps/README.md#test-source)). The
+[accuracy study](model-compilation/ACCURACY.md) figures were measured on Neat 0.4.0.
 
 | | Version |
 | --- | --- |
@@ -197,7 +174,5 @@ Neat 0.4.0. What changed from 0.4.0: [`apps/README.md`](apps/README.md#migrating
 
 This repository is co-developed with [Claude](https://www.anthropic.com/claude).
 
-Found an error? Please report it to [suraj.maurya@sima.ai](mailto:suraj.maurya@sima.ai).
-
-To request an application or feature, suggest a correction, or contribute, contact
+To report an error, request an application or feature, or contribute, contact
 [suraj.maurya@sima.ai](mailto:suraj.maurya@sima.ai).

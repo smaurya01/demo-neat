@@ -113,22 +113,25 @@ Uploading your own clip through **Local files** works equally well — as long a
 
 **3b. Assign it to a source slot.** Go to the **Streaming** tab. Insight has numbered slots —
 `src1`, `src2`, and so on — all served on port `8554`. Assign your file to **`src1`**, either by
-picking it in the slot's dropdown or with **auto-assign**.
+picking it in the slot's dropdown or with **Auto Assign**.
 
-**3c. Start the stream.** Press start on `src1`. The slot should switch to a running state and
-show its URL:
+**3c. Start the stream.** Press start on `src1`. The slot should switch to a running state. The
+Streaming tab shows the RTSP **base URL**; your source URL is that base URL plus `/src1`:
 
 ```text
 rtsp://<host-ip>:8554/src1
 ```
 
-Copy that URL exactly — it goes straight into the config. Leave the stream running.
+`<host-ip>` is the host IP the DevKit uses: the IP on the **Insight (remote)** line of `neat`, or
+the address `curl -sk https://127.0.0.1:9900/api/server-ip` prints in the SDK. Never use
+`127.0.0.1` here — on the board, that is the board itself. Use `8554`, or whatever port the base
+URL shows. Leave the stream running.
 
 <p align="center">
   <img src="../images/insight-rtsp.jpg" alt="Insight Streaming tab with media assigned to source slots" width="720">
 </p>
 
-> **Copy that URL.** It is `<rtsp-url>` in the config in Step 4.
+> **Note that URL.** It is `<rtsp-url>` in the config in Step 4.
 
 ---
 
@@ -303,7 +306,7 @@ model_path: /workspace/rtsp-detector/yolo26m-det-bf16-mla_tess-b1.tar.gz
 labels: /workspace/rtsp-detector/coco_labels.txt
 
 # Source
-rtsp_url: <rtsp-url>                        # the URL Insight shows for src1
+rtsp_url: <rtsp-url>                        # Streaming base URL + /src1
 stream_width: 1280
 stream_height: 720
 stream_fps: 30
@@ -324,15 +327,22 @@ Fill in the two placeholders:
 
 | Placeholder | Value |
 |---|---|
-| `<rtsp-url>` | The URL Insight showed for `src1` in Step 3, copied exactly |
-| `<host-ip>` | The machine running Insight — the IP on the **Insight (remote)** line of `neat` |
+| `<rtsp-url>` | The Streaming tab's base URL plus `/src1`, from Step 3 — e.g. `rtsp://<host-ip>:8554/src1` |
+| `<host-ip>` | The host IP the DevKit uses — the IP on the **Insight (remote)** line of `neat`, or the output of `curl -sk https://127.0.0.1:9900/api/server-ip`. Never `127.0.0.1` |
 
 Both must be reachable **from the board**, which is where the application runs.
 
+Set `video_port` and `metadata_port` to the **start** values of the `videoUDP` and `metadataUDP`
+rows you noted from `neat` in Step 2. They are `9000` and `9100` unless the SDK had to map
+different ports.
+
 > **Set `stream_width`, `stream_height` and `stream_fps` to your stream's values.** A frame rate that
-> differs stops the app at start. Check with
-> `ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0 <rtsp-url>`
-> (a `30000/1001` camera is `30`).
+> differs stops the app at start. Select the file in **Media Sources** to see its resolution and
+> frame rate, or, wherever `ffprobe` is installed and can reach the stream, run
+> `ffprobe -v error -rtsp_transport tcp -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0 <rtsp-url>`.
+> Use a source with an exact integer rate such as `30/1`. A `30000/1001` (29.97 fps) source can fail
+> caps negotiation (see the [appendix](../../appendix.md#13-confirm-the-source-before-blaming-the-app)),
+> so pick a 30 fps catalog variant instead.
 
 The `stream_*` values are already correct for the `720p30` variant from Step 3.
 

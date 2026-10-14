@@ -7,6 +7,8 @@
 
 #include <neat.h>
 
+#include <sys/wait.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -62,6 +64,50 @@ void run_guarded(const char* what, int stream_id, Fn&& fn) {
 // Without it a --frames run (which sets neither g_stop nor a deadline) would leave the
 // reporter spinning forever and hang on join().
 std::atomic<bool> g_done{false};
+
+// Source threads still working towards their own stop condition. All streams share ONE source
+// Run, so a stream that has finished (--frames N reached) keeps draining its endpoint until this
+// reaches zero: its sink does not drop, and an undrained branch can stall the shared pipeline.
+std::atomic<int> g_sources_active{0};
+
+// Consecutive seconds of pull errors, with no good pull in between, after which an endpoint is
+// treated as dead and the app stops. A persistent error is a real fault (e.g. a caps mismatch);
+// retrying it in a tight loop only burns a core and floods stderr.
+constexpr double kFatalPullErrorS = 10.0;
+
+// Backoff + give-up policy for PullStatus::Error, one per pulling loop.
+class PullErrorGuard {
+public:
+  // Call on PullStatus::Error. Returns false once the endpoint has failed for kFatalPullErrorS
+  // (g_stop is then set); otherwise backs off briefly and returns true.
+  bool on_error(int stream_id, const char* what, const std::string& message) {
+    const auto now = Clock::now();
+    if (!failing_) {
+      failing_ = true;
+      since_ = now;
+    }
+    ++count_;
+    if (count_ == 1 || count_ % 1000 == 0) {
+      std::cerr << "[warn] stream " << stream_id << ": " << what << ": " << message
+                << " (count=" << count_ << ")\n";
+    }
+    if (std::chrono::duration<double>(now - since_).count() > kFatalPullErrorS) {
+      std::cerr << "[error] stream " << stream_id << ": " << what << " has failed for "
+                << kFatalPullErrorS << " s without a result; stopping: " << message << "\n";
+      g_stop.store(true);
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return true;
+  }
+
+  void on_ok() { failing_ = false; }
+
+private:
+  bool failing_ = false;
+  Clock::time_point since_{};
+  long long count_ = 0;
+};
 
 void handle_signal(int) {
   g_stop.store(true);
@@ -124,20 +170,21 @@ struct StreamSpec {
 };
 
 struct Config {
-  std::string rtsp_default = "rtsp://<rtsp-server-ip>:8555/stream";
+  // Defaults match config/default.conf, so a key missing from the file behaves the same.
+  std::string rtsp_default = "<rtsp-url>";
   std::array<std::string, 4> stream_rtsp{};
   std::array<std::string, 4> stream_model{};
   std::array<std::string, 4> stream_task{};
   bool tcp = true;
   int num_streams = 4;
-  std::string udp_host = "127.0.0.1";
-  int udp_port_base = 5206;
-  int udp_port_stride = 2;
+  std::string udp_host = "<host-ip>";
+  int udp_port_base = 9000;
+  int udp_port_stride = 1;
   int model_width = 640;
   int model_height = 640;
   int width = 1280;
   int height = 720;
-  int fps = 30;
+  int fps = 60;
   bool probe_source = true;  // read width/height/fps from the streams (ffprobe)
   int latency_ms = 200;
   float score_threshold = 0.25f;
@@ -265,8 +312,19 @@ Config read_config(const std::string& path) {
   return cfg;
 }
 
+// The shipped config carries <...> placeholders. Refuse to start on one rather than wait on
+// ffprobe and then fail inside GStreamer (or stream to a host literally named "<host-ip>").
+bool is_placeholder(const std::string& v) {
+  return !v.empty() && v.front() == '<';
+}
+
 std::vector<StreamSpec> build_specs(const Config& cfg) {
   static const std::array<const char*, 4> kDefaultTask{"detection", "segmentation", "pose", "yolox"};
+  if (is_placeholder(cfg.udp_host)) {
+    throw std::runtime_error("udp_host is still the placeholder '" + cfg.udp_host +
+                             "': set udp_host in the config to the IP of the machine that "
+                             "receives the video");
+  }
   std::vector<StreamSpec> specs;
   const int n = std::clamp(cfg.num_streams, 1, 4);
   for (int i = 0; i < n; ++i) {
@@ -280,6 +338,12 @@ std::vector<StreamSpec> build_specs(const Config& cfg) {
     }
     s.task = *t;
     s.rtsp_url = cfg.stream_rtsp[i].empty() ? cfg.rtsp_default : cfg.stream_rtsp[i];
+    if (is_placeholder(s.rtsp_url)) {
+      const std::string key =
+          cfg.stream_rtsp[i].empty() ? "rtsp_default" : "stream" + std::to_string(i) + "_rtsp";
+      throw std::runtime_error(key + " is still the placeholder '" + s.rtsp_url + "': set " +
+                               key + " in the config to your RTSP URL");
+    }
     if (cfg.stream_model[i].empty()) {
       throw std::runtime_error("stream" + std::to_string(i) + "_model is not set in the config");
     }
@@ -316,7 +380,7 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   }
 
   // Pin the CVU stages. AUTO does not always pick the accelerator; measured ~12% slower
-  // aggregate, and historically it once put pose's post stage on the A65 at ~1.8 s/frame.
+  // aggregate, and AUTO can place a post stage on the much slower A65.
   opt.processcvu.pre_run_target = cfg.cvu_pre_target;
   opt.processcvu.post_run_target = cfg.cvu_post_target;
 
@@ -736,11 +800,20 @@ std::uint8_t blend_u8(std::uint8_t base, std::uint8_t over, float alpha) {
   return static_cast<std::uint8_t>(std::clamp(v, 0.0f, 255.0f));
 }
 
-void blend_mask_pixel(std::uint8_t* yp, std::uint8_t* uvp, int w, int h, int x, int y,
-                      const Nv12Color& c, float alpha) {
+// Luma and chroma are blended SEPARATELY. NV12 chroma is half resolution in both axes, so the
+// four pixels of a 2x2 luma block share one UV pair: blending it once per luma pixel applies
+// alpha up to four times (0.45 -> ~0.91) and the masks render near-opaque.
+void blend_mask_luma(std::uint8_t* yp, int w, int h, int x, int y, const Nv12Color& c,
+                     float alpha) {
   if (x < 0 || y < 0 || x >= w || y >= h) return;
   const std::size_t yo = static_cast<std::size_t>(y) * w + x;
   yp[yo] = blend_u8(yp[yo], c.y, alpha);
+}
+
+// Blend the one UV pair covering luma pixel (x, y). Call ONCE per 2x2 block, never per pixel.
+void blend_mask_chroma(std::uint8_t* uvp, int w, int h, int x, int y, const Nv12Color& c,
+                       float alpha) {
+  if (x < 0 || y < 0 || x >= w || y >= h) return;
   const int ux = x & ~1;
   const int uy = y / 2;
   if (ux + 1 < w && uy < h / 2) {
@@ -775,41 +848,94 @@ std::vector<neat::Box> boxes_from_tensor(const neat::Tensor& t) {
 }
 
 // ── per-stream runtime ──────────────────────────────────────────────────────
+// Bounded statistics for one timed stage. Memory stays constant however long the app runs:
+// running sums give the means (overall, and per live window by differencing), and a fixed ring
+// of the most recent samples gives the p95. Keeping every sample instead grew without bound
+// (~1.3 GB/day at 4 x 60 fps) and reallocated under prof_mu, stalling the source thread.
+class StageStat {
+public:
+  // p95 is taken over the most recent kRing post-warmup samples (~4.5 min at 60 fps).
+  static constexpr std::size_t kRing = 16384;
+
+  // `skip` leading samples (the warmup) are left out of mean() and p95().
+  void init(std::size_t skip, bool keep_ring) {
+    skip_ = skip;
+    if (keep_ring) ring_.reserve(kRing);
+    keep_ring_ = keep_ring;
+  }
+
+  void add(double v) {
+    ++count_;
+    sum_ += v;
+    if (count_ <= skip_) return;
+    ++steady_count_;
+    steady_sum_ += v;
+    if (!keep_ring_) return;
+    if (ring_.size() < kRing) {
+      ring_.push_back(v);
+    } else {
+      ring_[next_] = v;
+    }
+    next_ = (next_ + 1) % kRing;
+  }
+
+  std::size_t count() const { return count_; }
+  double sum() const { return sum_; }
+
+  // Mean of every post-warmup sample.
+  double mean() const {
+    return steady_count_ > 0 ? steady_sum_ / static_cast<double>(steady_count_) : 0.0;
+  }
+
+  double pct(double p) const {
+    if (ring_.empty()) return 0.0;
+    std::vector<double> w(ring_);
+    std::sort(w.begin(), w.end());
+    const auto idx = static_cast<std::size_t>(p / 100.0 * static_cast<double>(w.size() - 1));
+    return w[std::min(idx, w.size() - 1)];
+  }
+
+private:
+  std::size_t skip_ = 0;
+  bool keep_ring_ = false;
+  std::size_t count_ = 0;
+  double sum_ = 0.0;
+  std::size_t steady_count_ = 0;
+  double steady_sum_ = 0.0;
+  std::vector<double> ring_;
+  std::size_t next_ = 0;
+};
+
 // Stage timings, split across the source and worker threads. Two are pipelined and their
 // host-side timing is NOT the device cost: `dec_wait` is arrival-gated (the frame interval,
 // not the decode cost -- read `decode fps` instead), and `encode` only enqueues, so it reads
 // as encoder headroom rather than encoder latency.
 struct SourceProfile {
-  std::vector<double> wait;   // one sample per DECODED frame (including ones we then drop)
-  std::vector<double> copy;   // one sample per frame actually handed to the worker
+  StageStat wait;   // one sample per DECODED frame (including ones we then drop); mean only
+  StageStat copy;   // one sample per frame actually handed to the worker
   int decoded = 0;
   Clock::time_point steady_start{};
   double steady_seconds = 0.0;
-};
 
-struct StageProfile {
-  std::vector<double> qwait, infer, postproc, overlay, encode, latency;
-
-  void add(double q, double i, double p, double o, double e, double l) {
-    qwait.push_back(q); infer.push_back(i); postproc.push_back(p);
-    overlay.push_back(o); encode.push_back(e); latency.push_back(l);
+  void init(std::size_t skip) {
+    wait.init(skip, false);
+    copy.init(skip, true);
   }
 };
 
-double mean_of(const std::vector<double>& v, std::size_t skip) {
-  if (v.size() <= skip) return 0.0;
-  double s = 0.0;
-  for (std::size_t i = skip; i < v.size(); ++i) s += v[i];
-  return s / static_cast<double>(v.size() - skip);
-}
+struct StageProfile {
+  StageStat qwait, infer, postproc, overlay, encode, latency;
 
-double pct_of(std::vector<double> v, std::size_t skip, double p) {
-  if (v.size() <= skip) return 0.0;
-  std::vector<double> w(v.begin() + static_cast<long>(skip), v.end());
-  std::sort(w.begin(), w.end());
-  const auto idx = static_cast<std::size_t>(p / 100.0 * static_cast<double>(w.size() - 1));
-  return w[std::min(idx, w.size() - 1)];
-}
+  void init(std::size_t skip) {
+    qwait.init(skip, false);   // mean only
+    for (auto* s : {&infer, &postproc, &overlay, &encode, &latency}) s->init(skip, true);
+  }
+
+  void add(double q, double i, double p, double o, double e, double l) {
+    qwait.add(q); infer.add(i); postproc.add(p);
+    overlay.add(o); encode.add(e); latency.add(l);
+  }
+};
 
 // Single-slot drop-oldest mailbox between a stream's source thread and its worker.
 // This is what keeps the RTSP source DRAINED: without it the source graph's 256-frame edge
@@ -959,8 +1085,7 @@ struct StreamRuntime {
   std::atomic<int> in_flight{0};
 
   // Guards source_profile, profile, `processed` and `last_objs`: the reporter thread reads all
-  // four while the source and worker threads write them. Without it a reallocating push_back
-  // under the reporter is a use-after-free, not just a wrong number.
+  // four while the source and worker threads write them.
   std::mutex prof_mu;
   SourceProfile source_profile;   // written by the source thread
   StageProfile profile;           // written by the worker thread
@@ -972,7 +1097,6 @@ struct StreamRuntime {
   // pipelined mode it is the model's true throughput, which `1000/infer` no longer reports —
   // there, `infer` is a frame's in-graph LATENCY with several frames in flight, not its period.
   std::atomic<int> pulled{0};
-  int dropped = 0;
   int last_objs = 0;
   int pull_timeouts = 0;
   Clock::time_point steady_start{};
@@ -983,6 +1107,7 @@ struct StreamRuntime {
 // zero-copy pool, and park only the newest for the worker. Copying out and releasing the
 // Sample immediately is what lets the source recycle its buffers.
 void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
+  PullErrorGuard errors;
   while (!g_stop.load()) {
     if (cfg.duration_s > 0.0 && Clock::now() >= deadline) break;
     // --frames also stops the SOURCE. Only the pusher honoured cfg.frames, so with `--frames N`
@@ -999,9 +1124,10 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
     if (st == neat::PullStatus::Timeout) { ++rt.pull_timeouts; continue; }
     if (st == neat::PullStatus::Closed) break;
     if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": source pull: " << err.message << "\n";
+      if (!errors.on_error(rt.spec.id, "source pull", err.message)) break;
       continue;
     }
+    errors.on_ok();
 
     // A frame came off the decoder. Count it BEFORE the drop test below: the decoder did
     // the work whether or not the worker had room for it, and `decode fps` is a statement
@@ -1011,7 +1137,7 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
       std::lock_guard<std::mutex> lk(rt.prof_mu);
       ++sp.decoded;
       if (sp.decoded == cfg.warmup_frames + 1) sp.steady_start = Clock::now();
-      sp.wait.push_back(ms_since(wait_begin, wait_end));
+      sp.wait.add(ms_since(wait_begin, wait_end));
     }
 
     // The pull above already drained one frame from the source's edge queue, which is the
@@ -1030,7 +1156,7 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
     const auto copy_end = Clock::now();
     {
       std::lock_guard<std::mutex> lk(rt.prof_mu);
-      sp.copy.push_back(ms_since(copy_begin, copy_end));
+      sp.copy.add(ms_since(copy_begin, copy_end));
     }
 
     rt.mailbox.put(std::move(frame_cpu), w, h);
@@ -1040,6 +1166,21 @@ void run_source(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
         std::chrono::duration<double>(Clock::now() - rt.source_profile.steady_start).count();
   }
   rt.mailbox.close();
+
+  // This stream is finished, but the others share its Run: keep pulling (and discarding) its
+  // frames until every stream is finished, so this branch never backs up the shared pipeline.
+  // Only a --frames run gets here with others still running; otherwise this exits at once.
+  g_sources_active.fetch_sub(1);
+  while (!g_stop.load() && g_sources_active.load() > 0) {
+    if (cfg.duration_s > 0.0 && Clock::now() >= deadline) break;
+    neat::Sample discard;
+    neat::PullError err;
+    const auto st = rt.source_run->pull(rt.source_endpoint_name, 50, discard, &err);
+    if (st == neat::PullStatus::Closed) break;
+    if (st == neat::PullStatus::Error) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
 }
 
 // ── the per-stream worker ───────────────────────────────────────────────────
@@ -1130,15 +1271,23 @@ void draw_overlay(const StreamRuntime& rt, neat::Tensor& frame, int fw, int fh,
       const auto rect = mask_rect_for_frame_box(x1, y1, x2, y2, fw, fh, 160, 160, model_w, model_h);
       const int bw = x2 - x1;
       const int bh = y2 - y1;
-      for (int by = 0; by < bh; ++by) {
+      // One mask sample per 2x2 block, so each UV pair is blended exactly once. Mask values are
+      // sigmoid * 255 inside the box (0 outside), so "inside" is > 127, not != 0 -- the latter
+      // paints almost the whole box.
+      for (int by = 0; by < bh; by += 2) {
         const int my = rect.y + by * rect.height / std::max(1, bh);
         if (my < 0 || my >= 160) continue;
-        for (int bx = 0; bx < bw; ++bx) {
+        for (int bx = 0; bx < bw; bx += 2) {
           const int mx = rect.x + bx * rect.width / std::max(1, bw);
           if (mx < 0 || mx >= 160) continue;
-          if (in.mask[static_cast<std::size_t>(my) * 160 + mx] != 0) {
-            blend_mask_pixel(yp, uvp, fw, fh, x1 + bx, y1 + by, kMask, 0.45f);
-          }
+          if (in.mask[static_cast<std::size_t>(my) * 160 + mx] <= 127) continue;
+          const int px = x1 + bx;
+          const int py = y1 + by;
+          blend_mask_luma(yp, fw, fh, px, py, kMask, 0.45f);
+          if (bx + 1 < bw) blend_mask_luma(yp, fw, fh, px + 1, py, kMask, 0.45f);
+          if (by + 1 < bh) blend_mask_luma(yp, fw, fh, px, py + 1, kMask, 0.45f);
+          if (bx + 1 < bw && by + 1 < bh) blend_mask_luma(yp, fw, fh, px + 1, py + 1, kMask, 0.45f);
+          blend_mask_chroma(uvp, fw, fh, px, py, kMask, 0.45f);
         }
       }
     }
@@ -1272,7 +1421,6 @@ void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
       // the pending entry — the stale entry is harmless: the puller times out, sees push_done,
       // and drains.
       rt.in_flight.fetch_sub(1);
-      ++rt.dropped;
       break;
     }
   }
@@ -1283,6 +1431,7 @@ void run_pusher(const Config& cfg, StreamRuntime& rt, const Clock::time_point& d
 // ── puller: model graph -> output queue ──────────────────────────────────────
 void run_puller(StreamRuntime& rt) {
   neat::PullError err;
+  PullErrorGuard errors;
 
   while (true) {
     if (g_stop.load()) break;
@@ -1303,9 +1452,21 @@ void run_puller(StreamRuntime& rt) {
     }
     if (st == neat::PullStatus::Closed) break;
     if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
+      // The failed result stands in for the OLDEST pending frame (Block keeps results in push
+      // order). Retire that frame: left in `pending`, every later result would be paired with
+      // the wrong frame, and its slot would never free for the pusher.
+      {
+        std::lock_guard<std::mutex> lk(rt.pending_mu);
+        if (!rt.pending.empty()) {
+          rt.pending.pop_front();
+          rt.in_flight.fetch_sub(1);
+        }
+      }
+      rt.pending_cv.notify_one();
+      if (!errors.on_error(rt.spec.id, "model pull", err.message)) break;
       continue;
     }
+    errors.on_ok();
 
     // Block keeps push/pull FIFO-paired, so the oldest pending frame is this result's frame.
     PendingFrame pf;
@@ -1342,6 +1503,7 @@ void run_puller(StreamRuntime& rt) {
 void run_serial_worker(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
   const std::string banner = stream_banner(rt);
   neat::PullError err;
+  PullErrorGuard errors;
 
   while (!g_stop.load()) {
     if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
@@ -1370,9 +1532,10 @@ void run_serial_worker(const Config& cfg, StreamRuntime& rt, const Clock::time_p
       continue;
     }
     if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
+      if (!errors.on_error(rt.spec.id, "model pull", err.message)) break;
       continue;
     }
+    errors.on_ok();
 
     item.infer_ms = ms_since(push_begin, Clock::now());
     rt.pulled.fetch_add(1);
@@ -1389,6 +1552,7 @@ void run_serial_worker(const Config& cfg, StreamRuntime& rt, const Clock::time_p
 // sum, which is what the segmentation stream's overlay was costing the frame rate.
 void run_split_infer(const Config& cfg, StreamRuntime& rt, const Clock::time_point& deadline) {
   neat::PullError err;
+  PullErrorGuard errors;
 
   while (!g_stop.load()) {
     if (cfg.frames > 0 && rt.processed.load() >= cfg.frames) break;
@@ -1416,9 +1580,10 @@ void run_split_infer(const Config& cfg, StreamRuntime& rt, const Clock::time_poi
       continue;
     }
     if (st != neat::PullStatus::Ok) {
-      std::cerr << "[warn] stream " << rt.spec.id << ": model pull: " << err.message << "\n";
+      if (!errors.on_error(rt.spec.id, "model pull", err.message)) break;
       continue;
     }
+    errors.on_ok();
 
     item.infer_ms = ms_since(push_begin, Clock::now());
     rt.pulled.fetch_add(1);
@@ -1442,17 +1607,25 @@ void run_output_thread(const Config& cfg, StreamRuntime& rt) {
 // ── live time profile ───────────────────────────────────────────────────────
 // One reporter thread prints the whole table every profile_interval seconds. Every number is
 // the mean over THAT WINDOW -- a cumulative mean hides a stream that degrades mid-run.
-double mean_slice(const std::vector<double>& v, std::size_t from) {
-  if (v.size() <= from) return 0.0;
-  double s = 0.0;
-  for (std::size_t i = from; i < v.size(); ++i) s += v[i];
-  return s / static_cast<double>(v.size() - from);
+
+// Where one stat stood at the end of the previous window.
+struct StatCursor {
+  std::size_t n = 0;
+  double sum = 0.0;
+};
+
+// Mean of the samples added since `c`, then move `c` to now.
+double window_mean(const StageStat& s, StatCursor& c) {
+  const std::size_t n = s.count() - c.n;
+  const double mean = n > 0 ? (s.sum() - c.sum) / static_cast<double>(n) : 0.0;
+  c.n = s.count();
+  c.sum = s.sum();
+  return mean;
 }
 
 // Where the previous window ended, per stream.
 struct LiveCursor {
-  std::size_t copy_n = 0;
-  std::size_t work_n = 0;
+  StatCursor copy, infer, postproc, overlay, encode, latency;
   int decoded = 0;
   int processed = 0;
   int pulled = 0;
@@ -1485,14 +1658,12 @@ void print_live(std::vector<std::unique_ptr<StreamRuntime>>& rts, std::vector<Li
     int decoded, processed, pulled, objs, inflt;
     {
       std::lock_guard<std::mutex> lk(rt.prof_mu);
-      dec  = mean_slice(rt.source_profile.copy, c.copy_n);
-      inf  = mean_slice(rt.profile.infer,       c.work_n);
-      post = mean_slice(rt.profile.postproc,    c.work_n);
-      ovl  = mean_slice(rt.profile.overlay,     c.work_n);
-      enc  = mean_slice(rt.profile.encode,      c.work_n);
-      lat  = mean_slice(rt.profile.latency,     c.work_n);
-      c.copy_n  = rt.source_profile.copy.size();
-      c.work_n  = rt.profile.infer.size();
+      dec  = window_mean(rt.source_profile.copy, c.copy);
+      inf  = window_mean(rt.profile.infer,       c.infer);
+      post = window_mean(rt.profile.postproc,    c.postproc);
+      ovl  = window_mean(rt.profile.overlay,     c.overlay);
+      enc  = window_mean(rt.profile.encode,      c.encode);
+      lat  = window_mean(rt.profile.latency,     c.latency);
       decoded   = rt.source_profile.decoded;
       processed = rt.processed.load();
       pulled    = rt.pulled.load();
@@ -1553,11 +1724,9 @@ void run_reporter(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>
 
 void print_report(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>& rts,
                   double wall_s) {
-  const auto skip = static_cast<std::size_t>(std::max(0, cfg.warmup_frames));
-
-  auto cell = [&](const std::vector<double>& v) {
+  auto cell = [&](const StageStat& v) {
     std::ostringstream os;
-    os << std::fixed << std::setprecision(2) << mean_of(v, skip) << "|" << pct_of(v, skip, 95);
+    os << std::fixed << std::setprecision(2) << v.mean() << "|" << v.pct(95);
     return os.str();
   };
 
@@ -1621,8 +1790,8 @@ void print_report(const Config& cfg, std::vector<std::unique_ptr<StreamRuntime>>
               << std::setprecision(1) << std::setw(12) << decode_fps
               << std::setprecision(2) << std::setw(11) << pull_fps
               << std::setw(15) << delivered
-              << std::setw(12) << mean_of(sp.wait, skip)
-              << std::setw(10) << mean_of(rt->profile.qwait, skip)
+              << std::setw(12) << sp.wait.mean()
+              << std::setw(10) << rt->profile.qwait.mean()
               << std::setw(10) << rt->mailbox.dropped
               << std::setw(10) << rt->pull_timeouts << "\n";
   }
@@ -1649,10 +1818,12 @@ void print_usage() {
       << "  --duration <seconds>  measure over a wall-clock window (preferred on a shared MLA)\n"
       << "  --frames <n>          frames PER stream; 0 = until interrupted\n"
       << "  --num-streams <1..4>  how many stream slots to run\n"
+      << "  --warmup-frames <n>   frames per stream left out of the means (default 20)\n"
       << "  --no-overlay          skip the annotation (isolates the model rate)\n"
       << "  --profile-interval <s> how often to print the live time profile (0 = off, default 5)\n"
       << "  --model-queue-depth <n>  frames the model graph may hold in flight (default 4)\n"
       << "  --output-queue-depth <n> frames parked before the output thread (default 2)\n"
+      << "  --mode <m>            serial | split | pipelined (default pipelined)\n"
       << "  --pre-target <t>      AUTO | EV74 | A65\n"
       << "  --post-target <t>     AUTO | EV74 | A65\n"
       << "  --print-backend       dump the generated GStreamer backends\n";
@@ -1670,15 +1841,25 @@ struct StreamGeometry {
   int width = 0;
   int height = 0;
   int fps = 0;
+  std::string error;            // why the probe failed (empty on success)
+  bool no_ffprobe = false;      // ffprobe is not installed: no point probing the other streams
 };
 
+// A probed rate outside this range is not a camera frame rate (r_frame_rate can report a
+// timebase such as 90000/1, or a field rate), so it is treated as "could not probe".
+constexpr int kMinProbedFps = 1;
+constexpr int kMaxProbedFps = 240;
+
 // "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+// Anything outside kMinProbedFps..kMaxProbedFps -> 0.
 int fps_from_rate(const std::string& rate) {
   try {
     const auto slash = rate.find('/');
     const double num = std::stod(rate.substr(0, slash));
     const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
-    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+    if (num <= 0.0 || den <= 0.0) return 0;
+    const long fps = std::lround(num / den);
+    return (fps >= kMinProbedFps && fps <= kMaxProbedFps) ? static_cast<int>(fps) : 0;
   } catch (...) {
     return 0;
   }
@@ -1695,10 +1876,11 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
                               "-timeout 5000000 -select_streams v:0 "
                               "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
                               "-of default=nw=1 " +
-                              quoted + " 2>/dev/null";
+                              quoted + " 2>&1";
   StreamGeometry g;
   int avg_fps = 0;
   int r_fps = 0;
+  std::string last_message;   // last line that was not a key=value answer: ffprobe's stderr
   if (FILE* pipe = popen(command.c_str(), "r")) {
     char buffer[256];
     while (std::fgets(buffer, sizeof(buffer), pipe)) {
@@ -1707,11 +1889,8 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
         line.pop_back();
       }
       const auto eq = line.find('=');
-      if (eq == std::string::npos) {
-        continue;
-      }
-      const std::string key = line.substr(0, eq);
-      const std::string value = line.substr(eq + 1);
+      const std::string key = eq == std::string::npos ? std::string() : line.substr(0, eq);
+      const std::string value = eq == std::string::npos ? std::string() : line.substr(eq + 1);
       if (key == "width") {
         g.width = std::atoi(value.c_str());
       } else if (key == "height") {
@@ -1720,11 +1899,28 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
         avg_fps = fps_from_rate(value);
       } else if (key == "r_frame_rate") {
         r_fps = fps_from_rate(value);
+      } else if (!line.empty()) {
+        last_message = line;
       }
     }
-    pclose(pipe);
+    const int status = pclose(pipe);
+    // The shell exits 127 when it cannot find the command.
+    if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+      g.no_ffprobe = true;
+      g.error = "ffprobe is not installed on this machine (sudo apt install ffmpeg)";
+      return g;
+    }
+  } else {
+    g.error = "could not start ffprobe";
+    return g;
   }
   g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  if (g.width <= 0 || g.height <= 0) {
+    g.error = last_message.empty() ? "no video stream found" : last_message;
+  } else if (g.fps <= 0) {
+    g.error = "no usable frame rate (expected " + std::to_string(kMinProbedFps) + ".." +
+              std::to_string(kMaxProbedFps) + " fps)";
+  }
   return g;
 }
 
@@ -1737,9 +1933,14 @@ void apply_stream_geometry(Config& cfg, const std::vector<StreamSpec>& specs) {
   std::optional<StreamGeometry> found;
   for (const auto& spec : specs) {
     const StreamGeometry g = probe_stream(spec.rtsp_url, cfg.tcp);
-    if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+    if (g.no_ffprobe) {
+      std::cerr << "[warn] cannot read the streams' resolution and frame rate: " << g.error
+                << "\n";
+      break;
+    }
+    if (!g.error.empty()) {
       std::cerr << "[warn] could not probe stream " << spec.id << " (" << spec.rtsp_url
-                << ") with ffprobe\n";
+                << ") with ffprobe: " << g.error << "\n";
       continue;
     }
     if (found && (g.width != found->width || g.height != found->height || g.fps != found->fps)) {
@@ -1785,22 +1986,33 @@ int main(int argc, char** argv) {
   try {
     Config cfg = read_config(config_path);
 
-    // CLI overrides (applied after the file, so they win).
+    // CLI overrides (applied after the file, so they win). An unknown flag is an error, not
+    // silently ignored: `--task pose` (a main.py flag) would otherwise run all four models.
     for (std::size_t i = 0; i < args.size(); ++i) {
-      const auto& a = args[i];
-      auto next = [&]() -> std::string { return (i + 1 < args.size()) ? args[++i] : std::string(); };
-      if (a == "--duration") cfg.duration_s = std::stod(next());
-      else if (a == "--frames") cfg.frames = std::stoi(next());
-      else if (a == "--num-streams") cfg.num_streams = std::stoi(next());
-      else if (a == "--warmup-frames") cfg.warmup_frames = std::stoi(next());
-      else if (a == "--profile-interval") cfg.profile_interval_s = std::stod(next());
-      else if (a == "--model-queue-depth") cfg.model_queue_depth = std::stoi(next());
-      else if (a == "--output-queue-depth") cfg.output_queue_depth = std::stoi(next());
-      else if (a == "--no-overlay") cfg.no_overlay = true;
-      else if (a == "--print-backend") cfg.print_backend = true;
-      else if (a == "--mode") cfg.mode = next();
-      else if (a == "--pre-target") cfg.cvu_pre_target = next();
-      else if (a == "--post-target") cfg.cvu_post_target = next();
+      const std::string a = args[i];
+      auto next = [&]() -> std::string {
+        if (i + 1 >= args.size()) throw std::runtime_error(a + " needs a value");
+        return args[++i];
+      };
+      try {
+        if (a == "--config") next();   // already read above
+        else if (a == "--duration") cfg.duration_s = std::stod(next());
+        else if (a == "--frames") cfg.frames = std::stoi(next());
+        else if (a == "--num-streams") cfg.num_streams = std::stoi(next());
+        else if (a == "--warmup-frames") cfg.warmup_frames = std::stoi(next());
+        else if (a == "--profile-interval") cfg.profile_interval_s = std::stod(next());
+        else if (a == "--model-queue-depth") cfg.model_queue_depth = std::stoi(next());
+        else if (a == "--output-queue-depth") cfg.output_queue_depth = std::stoi(next());
+        else if (a == "--no-overlay") cfg.no_overlay = true;
+        else if (a == "--print-backend") cfg.print_backend = true;
+        else if (a == "--mode") cfg.mode = next();
+        else if (a == "--pre-target") cfg.cvu_pre_target = next();
+        else if (a == "--post-target") cfg.cvu_post_target = next();
+        else throw std::runtime_error("unknown option '" + a +
+                                      "' (see --help for this build's options)");
+      } catch (const std::logic_error&) {   // std::stoi/stod: not a number, or out of range
+        throw std::runtime_error("bad value for " + a + ": '" + args[i] + "'");
+      }
     }
 
     if (cfg.mode != "serial" && cfg.mode != "split" && cfg.mode != "pipelined") {
@@ -1835,6 +2047,9 @@ int main(int argc, char** argv) {
     for (const auto& spec : specs) {
       auto rt = std::make_unique<StreamRuntime>();
       rt->spec = spec;
+      const auto warmup = static_cast<std::size_t>(std::max(0, cfg.warmup_frames));
+      rt->source_profile.init(warmup);
+      rt->profile.init(warmup);
       rt->model = make_model(cfg, spec);
       rt->source_endpoint_name = source_endpoint(spec.id);
       rt->model_graph = make_model_graph(cfg, spec, *rt->model);
@@ -1887,6 +2102,7 @@ int main(int argc, char** argv) {
     // model_queue_depth), puller (-> output queue), output (postproc -> overlay -> encode).
     std::vector<std::thread> sources, pushers, pullers, outputs;
     for (auto* v : {&sources, &pushers, &pullers, &outputs}) v->reserve(rts.size());
+    g_sources_active.store(static_cast<int>(rts.size()));
 
     for (auto& rt : rts) {
       StreamRuntime* p = rt.get();

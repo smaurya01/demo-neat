@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
 """USB camera (UVC/MJPEG) -> YOLO26m object detection -> H.264 RTP/UDP.
 
-Python port of main.cpp. Two pipeline modes, selected by `pipeline_mode` in the config.
+Python version of main.cpp: same config file, same pipeline, same console output.
+Two pipeline modes, selected by `pipeline_mode` in the config.
 
-── pipeline_mode=push (default, works on runtime 0.2.2) ──────────────────────
+pipeline_mode=push (default):
 
     source graph:  custom(v4l2src ! jpegparse ! jpegdec ! videoconvert ! NV12) -> output("frame")
     model  graph:  input("image") -> Model(yolo26m) -> output("detections")
-    udp    graph:  input("video") -> video_sender (H264EncodeSima -> RTP -> UDP)
+    udp    graph:  input("video") -> video_sender (H.264 encode -> RTP -> UDP)
 
-    The app pulls each NV12 frame, pushes it into the model graph (appsrc), pulls the
-    boxes, draws them onto the frame, and pushes the annotated frame to the encoder.
-    Pushing through appsrc is what lands the frame in SiMa DMA memory, which the CVU
-    requires -- see SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY below.
+    The app pulls each NV12 frame, pushes it into the model graph, pulls the boxes, draws
+    them onto the frame (overlay=true) and pushes the frame to the encoder. Pushing into
+    the model graph is what moves the frame into SiMa memory, which the CVU requires --
+    see SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY below.
 
-── pipeline_mode=graph (zero-copy, needs a newer runtime) ────────────────────
+pipeline_mode=graph (zero-copy):
 
     custom(camera) -> branch -+-> video_sender
                               +-> Model -> output("detections")
 
-    Strictly better on paper: the frame never touches the CPU. But on runtime 0.2.2 the
-    CVU silently reads system-memory buffers as black frames and yields zero detections,
-    because the private `neatcamerabridge` element that lands OS buffers into SiMa DMA
-    memory does not exist in libsima_neat.so.2.1.2. Set camera_bridge=true once you are
-    on a runtime that ships it. See LEARNING.md.
+    Needs camera_bridge=true and a Neat runtime that ships the `neatcamerabridge`
+    element. Without it the CVU reads black frames and returns zero detections, so the
+    app refuses to start in graph mode unless camera_bridge=true.
 
-MJPEG is decoded on the CPU (jpegdec), NOT on the SiMa hardware decoder. That is
-deliberate and measured: neatdecoder in mjpeg mode runs at ~4 fps on this camera's
-JPEGs, while jpegdec sustains the camera's full 30 fps. See LEARNING.md.
+MJPEG is decoded on the CPU (jpegdec), not on the SiMa hardware decoder, which is much
+slower on this camera's JPEGs. See README.md.
 
-Run:
-    source ~/pyneat/bin/activate
-    python3 main.py [config/default.conf]
+Optional: set metadata_host to send the detections to Neat Insight as `object-detection`
+JSON, so Insight draws the boxes itself.
+
+Run on the DevKit (the config path is optional and positional, not --config):
+    dk ./main.py [./config/default.conf]
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -52,7 +53,8 @@ os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
 
 import pyneat  # noqa: E402
 
-DEFAULT_CONFIG = "./config/default.conf"
+APP_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG = APP_DIR / "config" / "default.conf"
 
 _stop = False
 
@@ -187,7 +189,7 @@ def print_profile_summary(prof: Profile, frames: int, elapsed_s: float) -> None:
 
 @dataclass
 class Config:
-    camera_device: str = "/dev/video16"
+    camera_device: str = "/dev/video96"
     width: int = 1920
     height: int = 1080
     fps: int = 30
@@ -201,7 +203,7 @@ class Config:
     num_classes: int = 80
 
     udp_host: str = ""
-    udp_port: int = 5205
+    udp_port: int = 9000
     bitrate_kbps: int = 4000
     metadata_host: str = ""
     metadata_port: int = 9100
@@ -226,10 +228,30 @@ _FLOAT_KEYS = {"score_threshold", "nms_iou", "profile_interval"}
 _BOOL_KEYS = {"print_backend", "verbose_planner", "camera_bridge", "overlay"}
 
 
-def read_config(path: str) -> Config:
+_FLIPS = ("none", "rotate-180", "horizontal-flip", "vertical-flip")
+
+
+def strip_comment(line: str) -> str:
+    """A '#' starts a comment only at the start of a line or after whitespace, so a value
+    that contains '#' is kept intact."""
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
+def resolve_app_path(value: str) -> str:
+    """Relative paths in the config are relative to this app folder, not the current dir."""
+    path = Path(value)
+    return str(path if path.is_absolute() else APP_DIR / path)
+
+
+def read_config(path) -> Config:
     cfg = Config()
+    if not Path(path).is_file():
+        raise FileNotFoundError(f"config file not found: {path}")
     for raw in Path(path).read_text().splitlines():
-        line = raw.split("#", 1)[0].strip()
+        line = strip_comment(raw).strip()
         if not line or "=" not in line:
             continue
         key, value = (part.strip() for part in line.split("=", 1))
@@ -243,10 +265,32 @@ def read_config(path: str) -> Config:
             setattr(cfg, key, value in ("true", "1", "yes"))
         else:
             setattr(cfg, key, value)
+    # Same checks as main.cpp.
     if not cfg.udp_host:
         raise ValueError("config missing: udp_host")
+    if cfg.udp_host.startswith("<"):
+        raise ValueError(f"set udp_host in {path} to the IP of the machine that receives the "
+                         f"video (it is still \"{cfg.udp_host}\")")
+    if cfg.metadata_host.startswith("<"):
+        raise ValueError(f"set metadata_host in {path} to the Neat Insight host, or leave it "
+                         f"empty (it is still \"{cfg.metadata_host}\")")
     if cfg.pipeline_mode not in ("push", "graph"):
         raise ValueError("pipeline_mode must be push or graph")
+    # camera_device and flip are interpolated into a GStreamer pipeline string, so keep them
+    # to the shapes the app supports.
+    if not cfg.source_override and not re.fullmatch(r"/dev/video[0-9]*", cfg.camera_device):
+        raise ValueError(f"camera_device must be /dev/videoN, got: {cfg.camera_device}")
+    if cfg.flip not in _FLIPS:
+        raise ValueError(f"flip must be {'|'.join(_FLIPS)}, got: {cfg.flip}")
+    if cfg.width <= 0 or cfg.height <= 0 or cfg.width % 2 or cfg.height % 2:
+        raise ValueError("width/height must be positive and even")
+    if cfg.fps <= 0:
+        raise ValueError("fps must be positive")
+    # graph mode silently yields ZERO detections without neatcamerabridge: fail loudly instead.
+    if cfg.pipeline_mode == "graph" and not cfg.camera_bridge:
+        raise ValueError(
+            "pipeline_mode=graph requires camera_bridge=true (without neatcamerabridge the CVU "
+            "reads black frames and yields zero detections)")
     return cfg
 
 
@@ -318,7 +362,7 @@ def make_model(cfg: Config) -> pyneat.Model:
     if cfg.verbose_planner:
         opt.verbose.level = pyneat.VerbosityLevel.Verbose
         opt.verbose.planner = True
-    return pyneat.Model(cfg.model_path, opt)
+    return pyneat.Model(resolve_app_path(cfg.model_path), opt)
 
 
 def make_nv12_input_options(cfg: Config) -> pyneat.InputOptions:
@@ -576,7 +620,65 @@ def nv12_tensor_from_numpy(buf: np.ndarray, width: int, height: int) -> pyneat.T
 
 
 def summarize(boxes: list[dict]) -> str:
-    return " ".join(f"{b['label']}({b['score']:.2f})" for b in boxes[:5])
+    text = " ".join(f"{b['label']}({b['score']:.2f})" for b in boxes[:5])
+    return text + " ..." if len(boxes) > 5 else text
+
+
+def objects_json(boxes: list[dict], cfg: Config) -> str:
+    """Neat Insight `object-detection` payload: bbox is [x, y, w, h], top-left origin, in
+    frame pixels. Same format as main.cpp and single-stream-yolo-insight."""
+    objects = []
+    for b in boxes:
+        x, y = max(0, b["x1"]), max(0, b["y1"])
+        w = min(cfg.width - x, b["x2"] - b["x1"])
+        h = min(cfg.height - y, b["y2"] - b["y1"])
+        if w <= 0 or h <= 0:
+            continue
+        objects.append({
+            "id": f"obj_{len(objects) + 1}",
+            "label": b["label"],
+            "confidence": b["score"],
+            "bbox": [x, y, w, h],
+        })
+    return json.dumps({"objects": objects}, separators=(",", ":"))
+
+
+def send_detections(metadata, boxes: list[dict], cfg: Config, frame_id) -> None:
+    """timestamp -1 omits the field: Insight then pairs each message with the newest video
+    frame. The encoder re-stamps frames, so no capture or wall-clock timestamp can match."""
+    try:
+        sent = metadata.send_metadata("object-detection", objects_json(boxes, cfg), -1,
+                                      str(frame_id))
+    except Exception as exc:  # e.g. network unreachable: warn, keep streaming
+        print(f"[warn] metadata send failed: {exc}", file=sys.stderr)
+        return
+    if sent is False:
+        print("[warn] metadata send failed", file=sys.stderr)
+
+
+def pull_sample(run, name: str, timeout_ms: int):
+    """run.pull() in short slices, so Ctrl-C is honoured within ~0.5 s instead of after the
+    whole timeout. None on timeout, on a closed pipeline, or once Ctrl-C was pressed."""
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while not _stop:
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            return None
+        started = time.monotonic()
+        sample = run.pull(name, min(500, remaining_ms))
+        if sample is not None:
+            return sample
+        if time.monotonic() - started < 0.05:  # returned at once: closed, not just slow
+            return None
+    return None
+
+
+def close_runs(runs: list) -> None:
+    for run in reversed(runs):
+        try:
+            run.close()
+        except Exception as exc:
+            print(f"[warn] closing a pipeline failed: {exc}", file=sys.stderr)
 
 
 def print_banner(cfg: Config, has_metadata: bool) -> None:
@@ -634,118 +736,126 @@ def run_push(cfg: Config) -> int:
         print("Model backend:\n" + model_graph.describe_backend())
         print("UDP backend:\n" + udp_graph.describe_backend())
 
-    run_opt = make_run_options(cfg)
-    source_run = source_graph.build(run_opt)
-    model_run = model_graph.build(run_opt)
+    runs = []
+    try:
+        run_opt = make_run_options(cfg)
+        source_run = source_graph.build(run_opt)
+        runs.append(source_run)
+        model_run = model_graph.build(run_opt)
+        runs.append(model_run)
 
-    # The encoder graph owns its buffers; seed it so appsrc caps are fixed at build time.
-    udp_opt = make_run_options(cfg)
-    udp_opt.output_memory = pyneat.OutputMemory.Owned
-    seed = np.zeros(cfg.width * cfg.height * 3 // 2, dtype=np.uint8)
-    udp_run = udp_graph.build(
-        [nv12_tensor_from_numpy(seed, cfg.width, cfg.height)], udp_opt
-    )
+        # The encoder graph owns its buffers; seed it so appsrc caps are fixed at build time.
+        udp_opt = make_run_options(cfg)
+        udp_opt.output_memory = pyneat.OutputMemory.Owned
+        seed = np.zeros(cfg.width * cfg.height * 3 // 2, dtype=np.uint8)
+        udp_run = udp_graph.build(
+            [nv12_tensor_from_numpy(seed, cfg.width, cfg.height)], udp_opt
+        )
+        runs.append(udp_run)
 
-    metadata = make_metadata_sender(cfg)
-    print_banner(cfg, metadata is not None)
+        metadata = make_metadata_sender(cfg)
+        print_banner(cfg, metadata is not None)
 
-    processed = 0
-    prof = Profile()
-    steady_start = time.monotonic()
-    last_log = steady_start
-    last_log_frames = 0
+        processed = 0
+        prof = Profile()
+        steady_start = time.monotonic()
+        last_log = steady_start
+        last_log_frames = 0
 
-    while not _stop and (cfg.frames == 0 or processed < cfg.frames):
-        # pyneat's pull() returns Optional[Sample]: None on timeout or closed stream.
-        t0 = time.perf_counter()
-        frame_sample = source_run.pull("frame", 20000)
-        t1 = time.perf_counter()
-        if frame_sample is None:
-            print("[warn] no camera frame (timeout or source closed)", file=sys.stderr)
-            continue
+        while not _stop and (cfg.frames == 0 or processed < cfg.frames):
+            # pyneat's pull() returns Optional[Sample]: None on timeout or closed stream.
+            t0 = time.perf_counter()
+            frame_sample = pull_sample(source_run, "frame", 20000)
+            t1 = time.perf_counter()
+            if frame_sample is None:
+                if not _stop:
+                    print("[warn] no camera frame (timeout or source closed)", file=sys.stderr)
+                continue
 
-        frame_tensors = extract_tensors(frame_sample)
-        if not frame_tensors:
-            print("[warn] camera sample has no tensors", file=sys.stderr)
-            continue
-        frame = frame_tensors[0]
+            frame_tensors = extract_tensors(frame_sample)
+            if not frame_tensors:
+                print("[warn] camera sample has no tensors", file=sys.stderr)
+                continue
+            frame = frame_tensors[0]
 
-        # Pushing through appsrc is what lands the frame in SiMa DMA memory for the CVU.
-        t2 = time.perf_counter()
-        if not model_run.push("image", [frame]):
-            print("[warn] failed to push frame to model", file=sys.stderr)
-            continue
+            # Pushing through appsrc is what lands the frame in SiMa DMA memory for the CVU.
+            t2 = time.perf_counter()
+            if not model_run.push("image", [frame]):
+                print("[warn] failed to push frame to model", file=sys.stderr)
+                continue
 
-        det_sample = model_run.pull("detections", 20000)
-        if det_sample is None:
-            print("[warn] no detections (timeout or pipeline closed)", file=sys.stderr)
-            continue
+            det_sample = pull_sample(model_run, "detections", 20000)
+            if det_sample is None:
+                if _stop:
+                    continue
+                # A timeout does not cancel the inference: this frame's result may still arrive
+                # and would then be paired with the NEXT frame, for the rest of the run. Drain
+                # the sink (0 ms = non-blocking) to resynchronise before continuing.
+                drained = 0
+                while model_run.pull("detections", 0) is not None:
+                    drained += 1
+                print(f"[warn] no detections (timeout or pipeline closed); drained {drained} "
+                      f"stale result(s)", file=sys.stderr)
+                continue
 
-        boxes = decode_boxes(det_sample, cfg)
-        t3 = time.perf_counter()
+            boxes = decode_boxes(det_sample, cfg)
+            t3 = time.perf_counter()
 
-        # to_numpy() rejects the camera's NV12 tensor ("__dlpack__ only supports dense
-        # tensors") because it is semi-planar. copy_payload_bytes() hands back the raw
-        # Y+UV bytes, which is what we want anyway.
-        t4 = time.perf_counter()
-        buf = np.frombuffer(frame.copy_payload_bytes(), dtype=np.uint8).copy()
-        expected = cfg.width * cfg.height * 3 // 2
-        if buf.size != expected:
-            print(
-                f"[warn] unexpected NV12 payload {buf.size} != {expected}", file=sys.stderr
-            )
-            continue
+            # to_numpy() rejects the camera's NV12 tensor ("__dlpack__ only supports dense
+            # tensors") because it is semi-planar. copy_payload_bytes() hands back the raw
+            # Y+UV bytes, which is what we want anyway.
+            t4 = time.perf_counter()
+            buf = np.frombuffer(frame.copy_payload_bytes(), dtype=np.uint8).copy()
+            expected = cfg.width * cfg.height * 3 // 2
+            if buf.size != expected:
+                print(
+                    f"[warn] unexpected NV12 payload {buf.size} != {expected}", file=sys.stderr
+                )
+                continue
 
-        if cfg.overlay:
-            draw_boxes_on_nv12(buf, cfg.width, cfg.height, boxes)
-        t5 = time.perf_counter()
+            if cfg.overlay:
+                draw_boxes_on_nv12(buf, cfg.width, cfg.height, boxes)
+            t5 = time.perf_counter()
 
-        udp_run.push("video", [nv12_tensor_from_numpy(buf, cfg.width, cfg.height)])
-        t6 = time.perf_counter()
+            udp_run.push("video", [nv12_tensor_from_numpy(buf, cfg.width, cfg.height)])
+            t6 = time.perf_counter()
 
-        if metadata:
-            metadata.send_metadata(
-                "detection",
-                json.dumps({"boxes": boxes}),
-                int(time.time() * 1000),
-                str(det_sample.frame_id),
-            )
+            if metadata:
+                send_detections(metadata, boxes, cfg, det_sample.frame_id)
 
-        processed += 1
-        if processed == 1:
-            steady_start = time.monotonic()
-            last_log = steady_start
-            last_log_frames = 1
+            processed += 1
+            if processed == 1:
+                steady_start = time.monotonic()
+                last_log = steady_start
+                last_log_frames = 1
 
-        prof.capture.add((t1 - t0) * 1000.0)
-        prof.infer.add((t3 - t2) * 1000.0)
-        prof.overlay.add((t5 - t4) * 1000.0)
-        prof.encode.add((t6 - t5) * 1000.0)
-        prof.total.add((t6 - t0) * 1000.0)
+            prof.capture.add((t1 - t0) * 1000.0)
+            prof.infer.add((t3 - t2) * 1000.0)
+            prof.overlay.add((t5 - t4) * 1000.0)
+            prof.encode.add((t6 - t5) * 1000.0)
+            prof.total.add((t6 - t0) * 1000.0)
 
-        now = time.monotonic()
-        since_log = now - last_log
-        if cfg.profile_interval > 0 and since_log >= cfg.profile_interval:
-            # fps over THIS window, not since start -- so a stall shows up immediately
-            # instead of being averaged away across thousands of earlier good frames.
-            win_fps = (processed - last_log_frames) / since_log if since_log > 0 else 0.0
-            print(
-                f"frame={processed} fps={win_fps:.1f} boxes={len(boxes)} "
-                f"ms(capture={prof.capture.window_mean():.1f} "
-                f"infer={prof.infer.window_mean():.1f} "
-                f"overlay={prof.overlay.window_mean():.1f} "
-                f"encode={prof.encode.window_mean():.1f} "
-                f"total={prof.total.window_mean():.1f}) {summarize(boxes)}"
-            )
-            prof.reset_windows()
-            last_log = now
-            last_log_frames = processed
+            now = time.monotonic()
+            since_log = now - last_log
+            if cfg.profile_interval > 0 and since_log >= cfg.profile_interval:
+                # fps over THIS window, not since start -- so a stall shows up immediately
+                # instead of being averaged away across thousands of earlier good frames.
+                win_fps = (processed - last_log_frames) / since_log if since_log > 0 else 0.0
+                print(
+                    f"frame={processed} fps={win_fps:.1f} boxes={len(boxes)} "
+                    f"ms(capture={prof.capture.window_mean():.1f} "
+                    f"infer={prof.infer.window_mean():.1f} "
+                    f"overlay={prof.overlay.window_mean():.1f} "
+                    f"encode={prof.encode.window_mean():.1f} "
+                    f"total={prof.total.window_mean():.1f}) {summarize(boxes)}"
+                )
+                prof.reset_windows()
+                last_log = now
+                last_log_frames = processed
 
-    print_profile_summary(prof, processed, time.monotonic() - steady_start)
-
-    udp_run.close()
-    model_run.close()
-    source_run.close()
+        print_profile_summary(prof, processed, time.monotonic() - steady_start)
+    finally:
+        close_runs(runs)
     return 130 if _stop else 0
 
 
@@ -782,73 +892,80 @@ def run_graph(cfg: Config) -> int:
     if cfg.print_backend:
         print("Backend:\n" + graph.describe_backend())
 
-    run = graph.build(make_run_options(cfg))
-    metadata = make_metadata_sender(cfg)
-    print_banner(cfg, metadata is not None)
+    runs = []
+    try:
+        run = graph.build(make_run_options(cfg))
+        runs.append(run)
+        metadata = make_metadata_sender(cfg)
+        print_banner(cfg, metadata is not None)
 
-    processed = 0
-    prof = Profile()
-    steady_start = time.monotonic()
-    last_log = steady_start
-    last_log_frames = 0
+        processed = 0
+        prof = Profile()
+        steady_start = time.monotonic()
+        last_log = steady_start
+        last_log_frames = 0
 
-    while not _stop and (cfg.frames == 0 or processed < cfg.frames):
-        # In graph mode this single pull IS the pipeline: `infer` is the wait for the next result
-        # and `overlay` is the CPU box decode.
-        t0 = time.perf_counter()
-        sample = run.pull("detections", 20000)
-        t1 = time.perf_counter()
-        if sample is None:
-            print("[warn] no detections (timeout or pipeline closed)", file=sys.stderr)
-            continue
+        while not _stop and (cfg.frames == 0 or processed < cfg.frames):
+            # In graph mode this single pull IS the pipeline: `infer` is the wait for the next result
+            # and `overlay` is the CPU box decode.
+            t0 = time.perf_counter()
+            sample = pull_sample(run, "detections", 20000)
+            t1 = time.perf_counter()
+            if sample is None:
+                if not _stop:
+                    print("[warn] no detections (timeout or pipeline closed)", file=sys.stderr)
+                continue
 
-        boxes = decode_boxes(sample, cfg)
-        t2 = time.perf_counter()
+            boxes = decode_boxes(sample, cfg)
+            t2 = time.perf_counter()
 
-        if metadata:
-            metadata.send_metadata(
-                "detection",
-                json.dumps({"boxes": boxes}),
-                int(time.time() * 1000),
-                str(sample.frame_id),
-            )
+            if metadata:
+                send_detections(metadata, boxes, cfg, sample.frame_id)
 
-        processed += 1
-        if processed == 1:
-            steady_start = time.monotonic()
-            last_log = steady_start
-            last_log_frames = 1
+            processed += 1
+            if processed == 1:
+                steady_start = time.monotonic()
+                last_log = steady_start
+                last_log_frames = 1
 
-        prof.infer.add((t1 - t0) * 1000.0)
-        prof.overlay.add((t2 - t1) * 1000.0)
-        prof.total.add((t2 - t0) * 1000.0)
+            prof.infer.add((t1 - t0) * 1000.0)
+            prof.overlay.add((t2 - t1) * 1000.0)
+            prof.total.add((t2 - t0) * 1000.0)
 
-        now = time.monotonic()
-        since_log = now - last_log
-        if cfg.profile_interval > 0 and since_log >= cfg.profile_interval:
-            win_fps = (processed - last_log_frames) / since_log if since_log > 0 else 0.0
-            print(
-                f"frame={processed} fps={win_fps:.1f} boxes={len(boxes)} "
-                f"ms(pipeline={prof.infer.window_mean():.1f} "
-                f"decode={prof.overlay.window_mean():.1f} "
-                f"total={prof.total.window_mean():.1f}) {summarize(boxes)}"
-            )
-            prof.reset_windows()
-            last_log = now
-            last_log_frames = processed
+            now = time.monotonic()
+            since_log = now - last_log
+            if cfg.profile_interval > 0 and since_log >= cfg.profile_interval:
+                win_fps = (processed - last_log_frames) / since_log if since_log > 0 else 0.0
+                print(
+                    f"frame={processed} fps={win_fps:.1f} boxes={len(boxes)} "
+                    f"ms(pipeline={prof.infer.window_mean():.1f} "
+                    f"decode={prof.overlay.window_mean():.1f} "
+                    f"total={prof.total.window_mean():.1f}) {summarize(boxes)}"
+                )
+                prof.reset_windows()
+                last_log = now
+                last_log_frames = processed
 
-    print_profile_summary(prof, processed, time.monotonic() - steady_start)
-
-    run.close()
+        print_profile_summary(prof, processed, time.monotonic() - steady_start)
+    finally:
+        close_runs(runs)
     return 130 if _stop else 0
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    cfg = read_config(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG)
-    return run_graph(cfg) if cfg.pipeline_mode == "graph" else run_push(cfg)
+    try:
+        cfg = read_config(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG)
+        return run_graph(cfg) if cfg.pipeline_mode == "graph" else run_push(cfg)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

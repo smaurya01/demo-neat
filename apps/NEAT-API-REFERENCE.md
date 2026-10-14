@@ -83,13 +83,13 @@ pull from.
 | --- | --- | --- |
 | `preset` | `Balanced` | `Realtime` (drop to stay current) vs `Reliable` (never drop). |
 | `queue_depth` | `4` | Frames in flight. Too low starves the MLA; too high adds latency. |
-| `overflow_policy` | — | `KeepLatest` = drop old frames (live video). `Block` = never drop, keeps push/pull strictly paired. |
-| `output_memory` | — | `ZeroCopy` = a view into pipeline memory (fast). `Owned` = your own copy (safe to hold/mutate). |
+| `overflow_policy` | `Block` | `KeepLatest` = drop old frames (live video). `Block` = never drop, keeps push/pull strictly paired. |
+| `output_memory` | `Auto` | `ZeroCopy` = a view into pipeline memory (fast). `Owned` = your own copy (safe to hold/mutate). `Auto` lets Neat choose. |
 
 > **Live streaming preset used by nearly every app here:**
 > `preset=Realtime`, `overflow_policy=KeepLatest`, `queue_depth=3`, `output_memory=ZeroCopy`.
-> The multi-stream apps deliberately use `Reliable` + `Block` for the shared model instead — the
-> comments in [`multi-stream-yolo-yolo11/main.py`](multi-stream-yolo-yolo11/main.py) (the engine
+> `multi-stream-yolo-yolo11` deliberately uses `Reliable` + `Block` for its shared model instead —
+> the comments in [`multi-stream-yolo-yolo11/main.py`](multi-stream-yolo-yolo11/main.py) (the engine
 > and `model_queue_depth`) explain why.
 
 ---
@@ -262,7 +262,7 @@ Used by [`detection-vlm-assistant`](detection-vlm-assistant/README.md). Full tre
 | `BoxDecodeType` | `YoloV8` (also **YOLO11**), `YoloV26`, `YoloV8Seg`, `YoloV26Pose`, `YoloX` |
 | `RunPreset` | `Realtime`, `Reliable`, `Balanced` |
 | `OverflowPolicy` | `KeepLatest` (live), `Block` (never drop) |
-| `OutputMemory` | `ZeroCopy`, `Owned` |
+| `OutputMemory` | `Auto`, `ZeroCopy`, `Owned` |
 | `ResizeMode` | `Letterbox` |
 | `NormalizePreset` | `COCO_YOLO`, `None` |
 | `PreprocessColorFormat` | `NV12`, `RGB`, `BGR`, `I420`, `GRAY8` |
@@ -288,7 +288,7 @@ Find the row whose ticks match what you are building and read that app.
 | [`quad-stream-quad-model`](quad-stream-quad-model/README.md) | ✅ | | ✅ | | | | ✅ | ✅ | ✅ |
 | [`16stream4model`](16stream4model/README.md) | ✅ | | ✅ | ✅ | | | ✅ | | ✅ |
 | [`usb-camera-yolo26m`](usb-camera-yolo26m/README.md) | | ✅ | ✅ | ✅ | ✅ | | ✅ | | |
-| [`detection-vlm-assistant`](detection-vlm-assistant/README.md) | ✅ | | | | | | ✅ | | + GenAI |
+| [`detection-vlm-assistant`](detection-vlm-assistant/README.md) | ✅ | | ✅ | | | | ✅ | | + GenAI |
 | [`pcb-defect-detection-yolo26n`](pcb-defect-detection-yolo26n/README.md) | | | | | | | ✅ | | *`Model::Runner`, no Graph* |
 | [`benchmark`](benchmark/README.md) | | | | | | | | | *`Model::benchmark()`, no Graph* |
 

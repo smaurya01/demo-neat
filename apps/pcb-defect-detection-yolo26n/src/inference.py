@@ -39,6 +39,33 @@ def to_bgr_tensor(bgr):
     )
 
 
+def letterbox(bgr, size: int, pad_value: int = 114):
+    """Fit an image into size x size without distorting it.
+
+    Scales the image so its long side is `size`, centres it, and pads the rest with
+    `pad_value` (the YOLO convention). Returns (image, scale, pad_x, pad_y); a box at
+    (x, y) in the letterboxed image is at ((x - pad_x) / scale, (y - pad_y) / scale) in
+    the original. A size x size image is returned unchanged.
+    """
+    import cv2
+    import numpy as np
+
+    oh, ow = bgr.shape[:2]
+    if (oh, ow) == (size, size):
+        return bgr, 1.0, 0, 0
+    scale = min(size / float(ow), size / float(oh))
+    nw = max(1, min(size, int(round(ow * scale))))
+    nh = max(1, min(size, int(round(oh * scale))))
+    # INTER_AREA downscales without aliasing; INTER_LINEAR is the right choice upscaling.
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    resized = cv2.resize(bgr, (nw, nh), interpolation=interp)
+    pad_x = (size - nw) // 2
+    pad_y = (size - nh) // 2
+    canvas = np.full((size, size, 3), pad_value, dtype=np.uint8)
+    canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+    return canvas, scale, pad_x, pad_y
+
+
 def parse_bbox_payload(payload: bytes, img_w: int, img_h: int, min_score: float) -> List[dict]:
     """Parse pyneat BBOX payload records into original-image-space detections."""
     if not payload or len(payload) < 4:
@@ -86,10 +113,13 @@ class PyNeatDetector:
         opt.top_k = top_k
         opt.num_classes = num_classes
         # boxdecode_original_* is the frame size the model's coordinate inversion maps back to.
-        # infer() resizes EVERY image to model_size x model_size before pushing, so that is the
-        # frame the graph actually sees; infer() then scales the returned boxes back to the
-        # original image. (Feeding full-size images while claiming model_size here was what put
-        # every box in the top-left corner of any larger image.)
+        # infer() letterboxes EVERY image to model_size x model_size before pushing, so that is
+        # the frame the graph actually sees, and boxes come back in that frame; infer() itself
+        # undoes the letterbox. The field is deprecated (Neat now reads the size from preprocess
+        # metadata); it is kept because it pins box decode to exactly that frame and does not
+        # change the geometry here.
+        # (Feeding full-size images while claiming model_size here was what put every box in the
+        # top-left corner of any larger image.)
         opt.boxdecode_original_width = model_size
         opt.boxdecode_original_height = model_size
         self.model_size = model_size
@@ -102,10 +132,7 @@ class PyNeatDetector:
 
         # Seed at the SAME size infer() will push, or the runner's fixed input caps would be
         # built for the first image's dimensions and reject every resized frame after it.
-        import cv2
-        if seed_bgr.shape[:2] != (model_size, model_size):
-            seed_bgr = cv2.resize(seed_bgr, (model_size, model_size),
-                                  interpolation=cv2.INTER_AREA)
+        seed_bgr = letterbox(seed_bgr, model_size)[0]
         t_seed = to_bgr_tensor(seed_bgr)
         self.runner = self.model.build(
             [t_seed],
@@ -147,39 +174,35 @@ class PyNeatDetector:
         return None
 
     def infer(self, bgr) -> List[dict]:
-        """Accept an image of ANY size; resize to the model input before inference.
+        """Accept an image of ANY size; letterbox it to the model input before inference.
 
         The runner's input caps are fixed by the seed image at build time, so pushing a
-        differently-sized image later fails. Normalising every image to model_size x model_size
-        here means a mixed-resolution folder works, and it is also what makes
-        boxdecode_original_* correct: the graph always sees exactly that frame.
+        differently-sized image later fails. Letterboxing every image to model_size x model_size
+        here means a mixed-resolution folder works without stretching non-square images, and
+        the graph always sees exactly the frame boxdecode_original_* describes.
         """
-        import cv2
-
         oh, ow = bgr.shape[:2]
         size = self.model_size
-        if (oh, ow) != (size, size):
-            # INTER_AREA downscales without aliasing; INTER_LINEAR is the right choice upscaling.
-            interp = cv2.INTER_AREA if (ow > size or oh > size) else cv2.INTER_LINEAR
-            model_in = cv2.resize(bgr, (size, size), interpolation=interp)
-        else:
-            model_in = bgr
+        model_in, scale, pad_x, pad_y = letterbox(bgr, size)
 
         out = self.runner.run([to_bgr_tensor(model_in)], timeout_ms=self.timeout_ms)
         payload = self._extract_bbox_payload(out)
         if not payload:
             return []
 
-        # Boxes come back in model_size space; map them back to the caller's image.
+        # Boxes come back in model_size space; undo the letterbox to map them back to the
+        # caller's image (a model_size x model_size image needs no mapping).
         dets = parse_bbox_payload(payload, size, size, self.score)
         if (oh, ow) != (size, size):
-            sx = ow / float(size)
-            sy = oh / float(size)
+            mapped = []
             for d in dets:
-                d["x1"] *= sx
-                d["x2"] *= sx
-                d["y1"] *= sy
-                d["y2"] *= sy
+                x1 = max(0.0, min(float(ow), (d["x1"] - pad_x) / scale))
+                x2 = max(0.0, min(float(ow), (d["x2"] - pad_x) / scale))
+                y1 = max(0.0, min(float(oh), (d["y1"] - pad_y) / scale))
+                y2 = max(0.0, min(float(oh), (d["y2"] - pad_y) / scale))
+                if x2 > x1 and y2 > y1:       # drop boxes that lie only in the padding
+                    mapped.append(dict(d, x1=x1, y1=y1, x2=x2, y2=y2))
+            dets = mapped
         return dets
 
     def describe(self) -> str:

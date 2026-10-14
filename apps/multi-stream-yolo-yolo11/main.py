@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
-"""Two-stream RTSP -> shared YOLO11 model stage -> annotated H.264/RTP UDP output.
+"""Two RTSP streams -> one shared YOLO model -> one annotated H.264/RTP UDP stream per input.
 
-Two RTSP inputs are decoded independently, run through ONE shared Neat YOLO11
-model stage (a single compiled archive / model graph), decoded with Neat box
-decode, annotated, and published as one H.264/RTP UDP stream per input. Stream
-identity is preserved end to end: each decoded frame is inferenced and annotated
-in place before the next stream is serviced, and every stream owns its own UDP
-output port.
+Each RTSP input has its own source graph (RTSP -> H.264 decode -> NV12) and its own
+video-sender graph (H.264 encode -> RTP -> UDP), so every stream keeps its own UDP port
+and an on-frame `STREAM <id> :<port>` banner. All streams share ONE model graph (one
+compiled archive, one Run):
 
-Design notes (all APIs traceable to https://github.com/sima-neat/core):
-- Per-stream RTSP source graph + video-sender graph, following the three-graph
-  shuttle pattern from apps/single-stream-yolo-yolo11/main.py.
-- ONE shared model graph (the "shared YOLO11 model stage"): both streams push
-  into the same model Run handle round-robin and pull their own result before
-  the next stream is serviced, so the bbox result always belongs to the frame
-  just pushed. This is the pragmatic single-process form of the multi-stream
-  pattern in core/tutorials/015_run_multiple_streams (combine/ByFrame joins
-  streams inside one graph; here we keep per-stream sinks instead of joining).
-- pyneat best practices: ModelOptions
-  preprocess presets (COCO_YOLO), BoxDecodeType, NO deprecated
-  boxdecode_original_width/height fields (Model.h marks them deprecated;
-  box decode reads geometry from preprocess metadata).
+    source thread per stream -> round-robin pusher -> shared model Run -> puller
+        -> per-stream output worker (box decode, overlay, UDP send)
+
+The model Run uses OverflowPolicy.Block, so results come back in push order; a FIFO of
+in-flight frames routes each result back to the stream and frame it belongs to.
+
+Settings come from config/default.conf (or --config); the main ones can be overridden
+with the flags below. Both streams must have the same resolution.
 """
 
 from __future__ import annotations
@@ -58,15 +51,15 @@ COCO_LABELS = [
 
 @dataclass
 class Config:
-    # Two RTSP inputs. Both default to the same source by design for now.
-    rtsp_url_0: str = "rtsp://<rtsp-server-ip>:8555/stream"
-    rtsp_url_1: str = "rtsp://<rtsp-server-ip>:8555/stream"
+    # Two RTSP inputs; they may point at the same source.
+    rtsp_url_0: str = "<rtsp-url>"
+    rtsp_url_1: str = "<rtsp-url>"
     model_path: str = ""
     models_dir: str = ""
-    model_name: str = "yolo11"  # yolo11 | yolo26n (selects BoxDecodeType)
+    model_name: str = "yolov8"  # yolov8 | yolo11 | yolo26n (selects the box decode family)
     width: int = 1280
     height: int = 720
-    fps: int = 25
+    fps: int = 60
     probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     model_width: int = 640
     model_height: int = 640
@@ -76,14 +69,14 @@ class Config:
     top_k: int = 100
     num_classes: int = 80
     frames: int = 0
-    udp_host: str = "<host-ip-that-receives-video>"
+    udp_host: str = "<host-ip>"
     # Stream i publishes on udp_port_base + i * udp_port_stride.
-    udp_port_base: int = 5206
-    udp_port_stride: int = 2
+    udp_port_base: int = 9000
+    udp_port_stride: int = 1
     bitrate_kbps: int = 4000
     tcp: bool = True
     # Frames the shared model Run keeps in flight. With OverflowPolicy.Block this is
-    # what pipelines the MLA (the C++ 4-stream demo uses 4).
+    # what pipelines the MLA.
     model_queue_depth: int = 4
     # Bounded hand-off depth per stream (input queue and result queue).
     stream_queue_depth: int = 4
@@ -168,7 +161,7 @@ class StreamContext:
     stream_id: int
     rtsp_url: str
     source_run: object
-    # Endpoint name on the SHARED source Run (one Run now serves every stream).
+    # Output endpoint name on this stream's own source Run.
     source_endpoint: str
     video_run: object
     video_port: int
@@ -294,19 +287,24 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.profile_interval = float(value)
     elif key == "warmup_frames":
         cfg.warmup_frames = int(value)
-    elif key in {"only", "allow_missing", "load_only"}:
-        return
     else:
         raise ValueError(f"unknown config key: {key}")
 
 
-def load_config_file(cfg: Config, path: Path, required: bool) -> None:
+def strip_comment(line: str) -> str:
+    """A '#' starts a comment only at the start of a line or after whitespace, so a value
+    that contains '#' (for example an RTSP password) is kept intact."""
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
+def load_config_file(cfg: Config, path: Path) -> None:
     if not path.exists():
-        if required:
-            raise FileNotFoundError(f"config file not found: {path}")
-        return
+        raise FileNotFoundError(f"config file not found: {path}")
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.split("#", 1)[0].strip()
+        line = strip_comment(raw).strip()
         if not line:
             continue
         if "=" not in line:
@@ -316,7 +314,8 @@ def load_config_file(cfg: Config, path: Path, required: bool) -> None:
 
 
 def parse_args(argv: list[str] | None) -> Config:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=default_config_path())
     parser.add_argument("--rtsp0", help="RTSP URL for stream 0")
     parser.add_argument("--rtsp1", help="RTSP URL for stream 1")
@@ -348,7 +347,7 @@ def parse_args(argv: list[str] | None) -> Config:
     args = parser.parse_args(argv)
 
     cfg = Config()
-    load_config_file(cfg, args.config, required=args.config.exists())
+    load_config_file(cfg, args.config)
     if args.rtsp0 is not None:
         cfg.rtsp_url_0 = args.rtsp0
     if args.rtsp1 is not None:
@@ -407,12 +406,25 @@ def resolve_model_path(cfg: Config) -> str:
     return str(models_dir / model_filename(cfg))
 
 
+MODEL_NAMES = ("yolov8", "yolo11", "yolo26n")
+
+
+def is_placeholder(value: str) -> bool:
+    """True for an unedited placeholder such as "<rtsp-url>" or "rtsp://<rtsp-server-ip>/src1"."""
+    return not value or value.startswith("<") or "://<" in value
+
+
 def validate_config(cfg: Config) -> None:
     for idx, url in enumerate(cfg.rtsp_urls()):
-        if not url:
-            raise ValueError(f"RTSP URL for stream {idx} must not be empty")
-    if not cfg.udp_host:
-        raise ValueError("UDP host must not be empty")
+        if is_placeholder(url):
+            raise ValueError(f"set rtsp_url_{idx} in the config (or pass --rtsp{idx}) to your "
+                             f"camera's RTSP URL; it is still \"{url}\"")
+    if is_placeholder(cfg.udp_host):
+        raise ValueError(f"set udp_host in the config (or pass --udp-host) to the machine that "
+                         f"receives the video; it is still \"{cfg.udp_host}\"")
+    if cfg.model_name not in MODEL_NAMES:
+        raise ValueError(f"model_name must be one of {', '.join(MODEL_NAMES)}; "
+                         f"got \"{cfg.model_name}\"")
     if cfg.udp_port_base <= 0 or cfg.udp_port_base > 65535:
         raise ValueError("udp_port_base must be in 1..65535")
     if cfg.udp_port_stride <= 0:
@@ -423,7 +435,8 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_stream(url: str, tcp: bool = True):
-    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+    """((width, height, fps), "") as the RTSP stream reports them, or (None, reason) if it
+    cannot be probed.
 
     Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
     a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
@@ -435,10 +448,14 @@ def probe_stream(url: str, tcp: bool = True):
         "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
         "-of", "default=nw=1", url]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "ffprobe is not installed on the DevKit (sudo apt install ffmpeg)"
+    except subprocess.TimeoutExpired:
+        return None, "no reply within 15 s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    vals = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
 
     def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
         num, _, den = (text or "0").partition("/")
@@ -446,22 +463,27 @@ def probe_stream(url: str, tcp: bool = True):
             value = float(num) / float(den or 1)
         except (ValueError, ZeroDivisionError):
             return 0
-        return int(round(value)) if value > 0 else 0
+        value = int(round(value)) if value > 0 else 0
+        # A real camera runs at 1..240 fps; anything else (a 90000/1 timebase) is not a frame rate.
+        return value if 1 <= value <= 240 else 0
 
     try:
         width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
     except ValueError:
-        return None
+        width = height = 0
     fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
-    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+    if width > 0 and height > 0 and fps > 0:
+        return (width, height, fps), ""
+    errors = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+    return None, (errors[-1][:200] if errors else "no usable width/height/frame rate in the reply")
 
 
 def probe_rtsp(cfg: Config, url: str) -> tuple[int, int, int]:
     """Width, height and fps from the stream itself; the config's values only if probing fails."""
-    probed = probe_stream(url, cfg.tcp) if cfg.probe_source else None
+    probed, reason = probe_stream(url, cfg.tcp) if cfg.probe_source else (None, "")
     if probed is None:
         if cfg.probe_source:
-            print(f"[warn] could not probe {url} with ffprobe; using the config's "
+            print(f"[warn] could not probe {url} with ffprobe ({reason}); using the config's "
                   f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
         return cfg.width, cfg.height, cfg.fps
     if probed != (cfg.width, cfg.height, cfg.fps):
@@ -532,8 +554,7 @@ def make_source_graph(cfg: Config, stream_id: int, url: str, width: int, height:
     graph.add(pyneat.nodes.sima_decode(dec))
     graph.add(pyneat.nodes.caps_raw("NV12", width, height, fps, pyneat.CapsMemory.Any))
     # 4 slots, not 1: one slot means the decoder waits on the source thread every gap.
-    # drop=True: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind
-    # (observed: stream 0 stopped at 8 frames while stream 1 ran on).
+    # drop=True: a non-dropping appsink can permanently stall the decoder once it falls behind.
     src_out = pyneat.OutputOptions.every_frame(cfg.stream_queue_depth)
     src_out.drop = True
     graph.add(pyneat.nodes.output(source_endpoint(stream_id), src_out))
@@ -839,9 +860,7 @@ def source_worker(cfg, ctx, in_q, stop, errors) -> None:
 def _source_worker_loop(cfg, ctx, in_q, stop) -> None:
     while not stop.is_set():
         t_frame = time.perf_counter()
-        # Named pull: one Run serves every stream, so the endpoint says which camera this frame is.
-        # SHORT timeout, not 1000 ms: a long blocking pull on one endpoint starves the others
-        # (measured at 1000 ms: stream 1 took 16510 frames while stream 0 got 8).
+        # Short timeout, so the loop re-checks `stop` promptly.
         sample = ctx.source_run.pull(ctx.source_endpoint, 20)
         if sample is None:
             continue
@@ -884,32 +903,38 @@ def pusher_worker(cfg, model_run, in_queues, pending, pending_cv, stop, errors) 
             ctx, nv12, tensor, w, h, t_frame, t_enq, rtsp_ms, prep_ms = item
             qwait_ms = (time.perf_counter() - t_enq) * 1000.0
 
+            # Register the frame BEFORE pushing it, so its result can never arrive while
+            # `pending` is empty: the puller drops any result that finds `pending` empty.
+            # Slots 5 (t_pushed) and 9 (push_ms) are filled in once push() returns.
+            mark = time.perf_counter()
+            entry = [ctx, nv12, w, h, t_frame, mark, rtsp_ms, prep_ms, qwait_ms, 0.0]
+            with pending_cv:
+                pending.append(entry)
+                pending_cv.notify()
+
             # Block overflow: this push BLOCKS while the MLA already holds
             # queue_depth frames. A large `push` time therefore means the model is
             # the bottleneck and backpressure is working as intended.
-            mark = time.perf_counter()
             if not model_run.push([tensor]):
-                # A failed push may still have left the buffer in the graph. `pending` is shared
-                # across streams and matched by FIFO POSITION only, so one unrecorded result would
-                # pop another camera's entry and route EVERY later result to the wrong stream,
-                # permanently. Clear the FIFO so an orphan result hits the puller's empty-pending
-                # path and is discarded, instead of corrupting stream identity.
-                # This narrows the window; it does not close it. Closing it properly needs the
-                # result tagged with its stream (e.g. Sample.frame_id propagated through the
-                # model graph) rather than matched by position.
+                # A failed push may still have left the buffer in the graph. `pending` is matched
+                # by FIFO position, so a result from it would be paired with the NEXT frame's
+                # entry and every later result would go to the wrong frame (or stream). Take this
+                # frame's entry back, let the earlier frames' results drain, and only then resume:
+                # a late result from the failed push then finds `pending` empty and is dropped.
                 with pending_cv:
-                    pending.clear()
-                    pending_cv.notify_all()
-                print("[warn] model push failed; cleared the pending FIFO to protect "
-                      "stream/result pairing", file=sys.stderr, flush=True)
+                    if pending and pending[-1] is entry:
+                        pending.pop()
+                    deadline = time.perf_counter() + 2.0
+                    while pending and not stop.is_set() and time.perf_counter() < deadline:
+                        pending_cv.wait(timeout=0.05)
+                    pending.clear()  # still undrained after 2 s: these would only be misrouted
+                stop.wait(0.2)  # grace period for a late result from the failed push
+                print("[warn] model push failed; resynchronised the result FIFO",
+                      file=sys.stderr, flush=True)
                 continue
             t_pushed = time.perf_counter()
-            push_ms = (t_pushed - mark) * 1000.0
-
-            with pending_cv:
-                pending.append((ctx, nv12, w, h, t_frame, t_pushed,
-                                rtsp_ms, prep_ms, qwait_ms, push_ms))
-                pending_cv.notify()
+            entry[5] = t_pushed
+            entry[9] = (t_pushed - mark) * 1000.0
     except Exception as exc:
         errors.append(f"pusher: {exc}")
         stop.set()
@@ -933,14 +958,19 @@ def puller_worker(cfg, model_run, pending, pending_cv, stop, errors, model_rate)
             model_rate["last"] = t_pulled
 
             with pending_cv:
-                while not pending and not stop.is_set():
-                    pending_cv.wait(timeout=0.2)
                 if not pending:
+                    # Every pushed frame is registered before its push, so a result with no
+                    # entry waiting is an orphan of a failed push. Pairing it with the next
+                    # frame would put every later result one frame off: drop it.
+                    print("[warn] dropped a model result that no frame was waiting for",
+                          file=sys.stderr, flush=True)
                     continue
                 # Block overflow keeps push/pull paired, so FIFO order holds and the
                 # front of `pending` is the owner of this result.
-                (ctx, nv12, w, h, t_frame, t_pushed,
-                 rtsp_ms, prep_ms, qwait_ms, push_ms) = pending.popleft()
+                entry = pending.popleft()
+                pending_cv.notify_all()
+            (ctx, nv12, w, h, t_frame, t_pushed,
+             rtsp_ms, prep_ms, qwait_ms, push_ms) = entry
             infer_ms = (t_pulled - t_pushed) * 1000.0
             item = (nv12, sample, w, h, t_frame,
                     rtsp_ms, prep_ms, qwait_ms, push_ms, infer_ms)
@@ -1023,33 +1053,37 @@ def run(cfg: Config) -> int:
     model_run = model_graph.build(run_options)
 
     contexts: list[StreamContext] = []
-    for stream_id, url in enumerate(urls):
-        w, h, f = caps[stream_id]
-        video_graph, video_run, video_port = build_video_graph(cfg, stream_id, w, h, f)
-        contexts.append(StreamContext(
-            stream_id=stream_id, rtsp_url=url, source_run=None,
-            source_endpoint=source_endpoint(stream_id),
-            video_run=video_run, video_port=video_port, width=w, height=h, fps=f,
-        ))
+    try:
+        for stream_id, url in enumerate(urls):
+            w, h, f = caps[stream_id]
+            video_graph, video_run, video_port = build_video_graph(cfg, stream_id, w, h, f)
+            contexts.append(StreamContext(
+                stream_id=stream_id, rtsp_url=url, source_run=None,
+                source_endpoint=source_endpoint(stream_id),
+                video_run=video_run, video_port=video_port, width=w, height=h, fps=f,
+            ))
+            if cfg.print_backend:
+                print(f"Stream {stream_id} video backend:\n{video_graph.describe_backend()}")
         if cfg.print_backend:
-            print(f"Stream {stream_id} video backend:\n{video_graph.describe_backend()}")
-    if cfg.print_backend:
-        print(f"Shared model backend:\n{model_graph.describe_backend()}")
+            print(f"Shared model backend:\n{model_graph.describe_backend()}")
 
-    # Start the RTSP sources LAST. Graph.build() STARTS the pipeline, so building the
-    # sources before the ~2 s video graphs means the cameras stream with nobody
-    # pulling and the source edge queue fills before the app is ready.
-    src_opts = pyneat.RunOptions()
-    src_opts.preset = pyneat.RunPreset.Realtime
-    src_opts.queue_depth = 3
-    src_opts.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-    src_opts.output_memory = pyneat.OutputMemory.Owned
-    for ctx in contexts:
-        w, h, f = caps[ctx.stream_id]
-        g = make_source_graph(cfg, ctx.stream_id, ctx.rtsp_url, w, h, f)
-        if cfg.print_backend:
-            print(f"Stream {ctx.stream_id} source backend:\n{g.describe_backend()}")
-        ctx.source_run = g.build(src_opts)
+        # Start the RTSP sources LAST. Graph.build() STARTS the pipeline, so building the
+        # sources before the ~2 s video graphs means the cameras stream with nobody
+        # pulling and the source edge queue fills before the app is ready.
+        src_opts = pyneat.RunOptions()
+        src_opts.preset = pyneat.RunPreset.Realtime
+        src_opts.queue_depth = 3
+        src_opts.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+        src_opts.output_memory = pyneat.OutputMemory.Owned
+        for ctx in contexts:
+            w, h, f = caps[ctx.stream_id]
+            g = make_source_graph(cfg, ctx.stream_id, ctx.rtsp_url, w, h, f)
+            if cfg.print_backend:
+                print(f"Stream {ctx.stream_id} source backend:\n{g.describe_backend()}")
+            ctx.source_run = g.build(src_opts)
+    except BaseException:
+        close_runs(model_run, contexts)  # a later build failed: do not leak the running graphs
+        raise
 
     print(f"Shared model: {resolve_model_path(cfg)} (decode={cfg.model_name})")
     for ctx in contexts:
@@ -1132,12 +1166,20 @@ def run(cfg: Config) -> int:
         print_summary(contexts, wall, model_rate)
         for err in errors:
             print(f"[ERR] {err}", file=sys.stderr, flush=True)
-        model_run.close()
-        for ctx in contexts:
-            ctx.video_run.close()
-        for ctx in contexts:
-            ctx.source_run.close()
+        close_runs(model_run, contexts)
     return sum(c.processed for c in contexts)
+
+
+def close_runs(model_run, contexts: list[StreamContext]) -> None:
+    """Close the shared model Run, then every stream's video and source Run that was built."""
+    runs = [model_run] + [c.video_run for c in contexts] + [c.source_run for c in contexts]
+    for run_handle in runs:
+        if run_handle is None:
+            continue
+        try:
+            run_handle.close()
+        except Exception as exc:
+            print(f"[warn] closing a pipeline failed: {exc}", file=sys.stderr, flush=True)
 
 
 def print_live(cfg, contexts, cursors, started) -> None:
@@ -1174,12 +1216,13 @@ def print_live(cfg, contexts, cursors, started) -> None:
         ))
         cur["n"], cur["processed"], cur["t"], cur["dropped"] = hi, processed, now, dropped
 
+    # Column names match the exit summary's stage names.
     out = [f"\n-- t={now - started:6.1f}s -- ms/frame, mean over this window --",
-           f"{'stream':>6} {'decode':>8} {'infer':>8} {'boxdec':>8} {'overlay':>8} "
-           f"{'encode':>8} {'latency':>9} {'fps':>7} {'dropped':>8}"]
-    for sid, dec, inf, box, ovl, enc, lat, fps, drops in rows:
-        out.append(f"{sid:>6} {dec:>8.2f} {inf:>8.2f} {box:>8.2f} {ovl:>8.2f} "
-                   f"{enc:>8.2f} {lat:>9.2f} {fps:>7.1f} {drops:>8}")
+           f"{'stream':>6} {'rtsp':>8} {'infer':>8} {'decode':>8} {'overlay':>8} "
+           f"{'send':>8} {'latency':>9} {'fps':>7} {'dropped':>8}"]
+    for sid, rtsp, inf, dec, ovl, send, lat, fps, drops in rows:
+        out.append(f"{sid:>6} {rtsp:>8.2f} {inf:>8.2f} {dec:>8.2f} {ovl:>8.2f} "
+                   f"{send:>8.2f} {lat:>9.2f} {fps:>7.1f} {drops:>8}")
     out.append(f"{'':>6} {'':>8} {'':>8} {'':>8} {'':>8} {'':>8} {'aggregate':>9} "
                f"{aggregate:>7.1f} fps")
     # Assemble into ONE write: several threads share stdout and a table built from many

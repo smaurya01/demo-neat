@@ -16,8 +16,10 @@
 //                     [--labels coco_labels.txt] [--channel 0]
 //                     [--video-port-base 9000] [--metadata-port-base 9100]
 //                     [--mode none|grayscale|invert] [--border 12] [--color 0xFF0000]
-//                     [--no-bar] [--min-score 0.35] [--frames N] [--print-graph]
-//                     [--no-frame-timestamps]
+//                     [--no-bar] [--log-interval N] [--min-score 0.35] [--frames N]
+//                     [--print-graph] [--no-frame-timestamps] [--width W --height H --fps F]
+//
+// --labels defaults to coco_labels.txt in the same folder as this executable.
 
 #include "../common/app_common.h"
 #include "../common/framemarker_node.h"
@@ -32,7 +34,9 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -64,6 +68,14 @@ groups::RtspDecodedInputOptions make_source_options(const std::string& url,
   opt.output_caps.fps = g.fps;
   opt.output_caps.memory = neat::CapsMemory::Any;
   return opt;
+}
+
+// coco_labels.txt next to this executable (the build copies it there), so the default works
+// from any working directory.
+std::string default_labels_path() {
+  std::error_code ec;
+  const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::string("coco_labels.txt") : (exe.parent_path() / "coco_labels.txt").string();
 }
 
 std::vector<std::string> load_labels(const std::string& path) {
@@ -101,6 +113,7 @@ std::string boxes_to_json(const std::vector<neat::Box>& boxes,
 
 int main(int argc, char** argv) {
   std::cout.setf(std::ios::unitbuf); // progress lines appear at once, even when logged to a file
+  install_stop_handlers();
   try {
     const Args args(argc, argv);
     const std::string url = args.get("--url");
@@ -108,9 +121,10 @@ int main(int argc, char** argv) {
     if (url.empty() || model_path.empty() || args.has("--help")) {
       std::cerr << "usage: detect_to_insight --url rtsp://<host>:8554/srcN "
                    "--insight-host <host> --model <yolo26 .tar.gz> [--labels coco_labels.txt] "
-                   "[--channel 0] [--mode none|grayscale|invert] [--border N] "
-                   "[--color 0xRRGGBB] [--no-bar] [--min-score 0.35] [--frames N] "
-                   "[--print-graph] [--no-frame-timestamps]\n";
+                   "[--channel 0] [--video-port-base 9000] [--metadata-port-base 9100] "
+                   "[--mode none|grayscale|invert] [--border 0..256] [--color 0xRRGGBB] "
+                   "[--no-bar] [--log-interval N] [--min-score 0.35] [--frames N] "
+                   "[--print-graph] [--no-frame-timestamps] [--width W --height H --fps F]\n";
       return (url.empty() || model_path.empty()) ? 1 : 0;
     }
     const std::string insight_host = args.get("--insight-host", "127.0.0.1");
@@ -119,18 +133,32 @@ int main(int argc, char** argv) {
     // Frame timestamps keep the boxes locked to their frame. With Insight 0.0.8 the viewer fails to
     // match them on a 60 fps stream (it draws nothing); this flag falls back to arrival order.
     const bool frame_timestamps = !args.has("--no-frame-timestamps");
-    const float min_score = std::stof(args.get("--min-score", "0.35"));
-    const auto labels = load_labels(args.get("--labels", "coco_labels.txt"));
+    const float min_score = args.get_float("--min-score", 0.35f);
+    const std::string labels_path = args.get("--labels", default_labels_path());
+    const auto labels = load_labels(labels_path);
     if (labels.empty())
-      std::cerr << "[warn] no labels loaded; boxes will be labelled 'unknown'\n";
+      std::cerr << "[warn] no labels loaded from " << labels_path
+                << "; boxes will be labelled 'unknown'\n";
+
+    // Plugin options are read before the probe and model load so a typo fails at once.
+    FrameMarkerOptions marker_opt;
+    marker_opt.mode = parse_frame_marker_mode(args.get("--mode", "none"));
+    marker_opt.border_width = args.get_int_in_range("--border", 12, 0, 256);
+    marker_opt.color = args.get_uint("--color", 0xFF0000);
+    marker_opt.progress_bar = !args.has("--no-bar");
+    marker_opt.log_interval = args.get_uint("--log-interval", 0);
+    marker_opt.label = "marker";
 
     StreamGeometry geometry{args.get_int("--width", 0), args.get_int("--height", 0),
                             args.get_int("--fps", 0)};
     if (geometry.width <= 0 || geometry.height <= 0 || geometry.fps <= 0)
       geometry = probe_stream(url);
+    if (stop_requested())
+      return 0;
 
     // ---- Model -------------------------------------------------------------------------------
-    // The same options the Apps single-stream detector uses for YOLO26 on NV12 input.
+    // The same options the SiMa Apps single-stream detector (github.com/sima-neat/apps) uses for
+    // YOLO26 on NV12 input.
     neat::Model::Options model_opt;
     model_opt.preprocess.kind = neat::InputKind::Image;
     model_opt.preprocess.enable = neat::AutoFlag::On;
@@ -145,15 +173,10 @@ int main(int argc, char** argv) {
     model_opt.score_threshold = min_score;
     model_opt.top_k = kTopK;
     neat::Model model(model_path, model_opt);
+    if (stop_requested())
+      return 0;
 
     // ---- Display branch: custom plugin, then the encoder -------------------------------------
-    FrameMarkerOptions marker_opt;
-    marker_opt.mode = parse_frame_marker_mode(args.get("--mode", "none"));
-    marker_opt.border_width = args.get_uint("--border", 12);
-    marker_opt.color = args.get_uint("--color", 0xFF0000);
-    marker_opt.progress_bar = !args.has("--no-bar");
-    marker_opt.label = "marker";
-
     auto sender_opt =
         groups::VideoSenderOptions::H264RtpUdpFromRaw(geometry.width, geometry.height, geometry.fps);
     sender_opt.host = insight_host;
@@ -209,7 +232,7 @@ int main(int argc, char** argv) {
               << " channel=" << channel << "\nPress Ctrl-C to stop.\n";
 
     // ---- Pull detections, forward them to Insight ---------------------------------------------
-    install_stop_handlers();
+    // A Ctrl-C that arrived during build() skips the loop and goes straight to close().
     using Clock = std::chrono::steady_clock;
     auto window_start = Clock::now();
     int total = 0, window = 0;
@@ -251,7 +274,8 @@ int main(int argc, char** argv) {
       window_boxes += boxes.size();
       const double secs = std::chrono::duration<double>(Clock::now() - window_start).count();
       if (secs >= 5.0) {
-        std::cout << "frames=" << total << " fps=" << (window / secs)
+        std::cout << "frames=" << total << " fps=" << std::fixed << std::setprecision(1)
+                  << (window / secs)
                   << " avg_boxes=" << (window ? double(window_boxes) / window : 0.0) << "\n";
         window = 0;
         window_boxes = 0;

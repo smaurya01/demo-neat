@@ -192,16 +192,19 @@ def duplicate_pairs(b, iou: float) -> int:
                if int(rows[i][5]) == int(rows[j][5]) and iou_xyxy(rows[i], rows[j]) > iou)
 
 
+SKIPPED = "skipped"     # run_model verdict for a model with no box_decode: not a failure
+
+
 def run_model(pyneat, model_id, project, args, labels) -> tuple[str | None, list]:
     cfg, _ = model_cfg(model_id)
     arc = archive_path(model_id, PRECISION)
     dtype, dopt = cfg.get("box_decode"), cfg.get("box_decode_option", "Auto")
     print(f"\n=== {model_id}  ({cfg['task']}, BoxDecodeType.{dtype} / {dopt}) ===")
-    if arc is None:
-        print("    no _mpk.tar.gz -- compile it first")
-        return None, []
     if not dtype:
         print("    no box_decode in models.yaml -- skipping")
+        return SKIPPED, []
+    if arc is None:
+        print("    no _mpk.tar.gz -- compile it first")
         return None, []
 
     imgs = images(project, args.limit)
@@ -257,8 +260,10 @@ def main() -> int:
         # batched archive needs host-side decode of the raw heads until Neat supports it.
         print(f"SKIP: batch {args.batch_size}: Neat 0.5.0's on-device box decode returns one "
               "result per call, not one per batch item, so it cannot check a batched archive.\n"
-              f"      Check the batch-{args.batch_size} build with: python compile/test_model.py "
-              f"--model-id <id> --batch-size {args.batch_size}   (compares every item's raw heads "
+              f"      Check the batch-{args.batch_size} build on the DevKit with: dk compile/test_model.py "
+              f"--model-id {getattr(args, 'model_id', None) or '<id>'}"
+              f"{' --precision ' + args.precision if getattr(args, 'precision', None) else ''}"
+              f" --batch-size {args.batch_size}   (compares every item's raw heads "
               "with the batch-1 build)")
         return 0
 
@@ -291,13 +296,14 @@ def main() -> int:
     print(f"{'model':<20} {'on-device box decode':<28} verdict")
     print("-" * 68)
     for mid, (w, task) in results.items():
-        print(f"{mid:<20} {(w or '-'):<28} {'PASS' if w else 'FAIL'}")
+        verdict = "SKIP" if w == SKIPPED else "PASS" if w else "FAIL"
+        print(f"{mid:<20} {(w if w and w != SKIPPED else '-'):<28} {verdict}")
 
     bad = [m for m, (w, _) in results.items() if not w]
     if bad:
         print(f"\nfailed ({len(bad)}): {', '.join(bad)}")
         return 1
-    print("\nevery archive decodes on-device with its own BoxDecodeType, NMS applied")
+    print("\nevery archive decodes on-device with its own BoxDecodeType")
     return 0
 
 

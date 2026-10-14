@@ -92,6 +92,6 @@ std::string serialize(const BoxRange& boxes, const std::vector<std::string>& lab
 
 } // namespace sima_examples::detection_egress
 
-// Vendored verbatim from /neat-resources/apps-src/support/object_detection/detection_egress.h
-// so this application is self-contained. It defines the exact JSON envelope Neat Insight's
+// Copied from the Neat apps' object-detection support code so this application is
+// self-contained. It defines the exact JSON envelope Neat Insight's
 // object-detection overlay expects; do not "improve" the field names.

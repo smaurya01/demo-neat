@@ -32,7 +32,8 @@ latency.
 - Models: `./assets/models/*.tar.gz` (git-ignored)
 - Reports: `./output/*_benchmark.json`
 
-Current asset models:
+The commands below use these Model Zoo packages, which you download first (see
+[Model Download Commands](#model-download-commands)):
 
 ```text
 ./assets/models/yolo_v8n_mpk.tar.gz
@@ -167,6 +168,7 @@ report_json=<written report path>
 Each JSON report stores:
 
 ```text
+benchmark.type
 benchmark.frames
 benchmark.timestamp_utc
 model.path

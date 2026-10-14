@@ -8,7 +8,10 @@ takes the same launch fragment you would give gst-launch-1.0.
 
 Usage:
     python3 main.py --url rtsp://<insight-host>:8554/src1 --insight-host <insight-host> \
-        [--channel 0] [--mode grayscale] [--border 12] [--color 0x00FF00] [--no-bar]
+        [--channel 0] [--mode grayscale] [--border 12] [--color 0x00FF00] [--no-bar] \
+        [--log-interval N]
+
+Without --width/--height/--fps the stream is probed with OpenCV (cv2).
 """
 
 import argparse
@@ -38,31 +41,62 @@ def framemarker_fragment(args):
     """The element and its properties, exactly as gst-launch-1.0 would take them."""
     return (
         f"framemarker name=marker mode={args.mode} border-width={args.border} "
-        f"color={args.color} progress-bar={'false' if args.no_bar else 'true'}"
+        f"color=0x{args.color:06X} progress-bar={'false' if args.no_bar else 'true'} "
+        f"log-interval={args.log_interval}"
     )
 
 
+def color_value(text):
+    """argparse type for --color: decimal or 0xRRGGBB."""
+    try:
+        value = int(text, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected 0xRRGGBB, got '{text}'")
+    if not 0 <= value <= 0xFFFFFF:
+        raise argparse.ArgumentTypeError(f"must be 0x000000..0xFFFFFF, got '{text}'")
+    return value
+
+
 def main():
+    # Install the stop handlers first so a Ctrl-C during start-up (probe, build) still ends in
+    # run.close() instead of killing the process half-way.
+    stop = False
+
+    def on_signal(*_):
+        nonlocal stop
+        stop = True
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--url", required=True)
     p.add_argument("--insight-host", default="127.0.0.1")
     p.add_argument("--channel", type=int, default=0)
     p.add_argument("--video-port-base", type=int, default=9000)
     p.add_argument("--mode", choices=["none", "grayscale", "invert"], default="grayscale")
-    p.add_argument("--border", type=int, default=12)
-    p.add_argument("--color", default="0x00FF00")
+    p.add_argument("--border", type=int, default=12, help="border width in pixels, 0..256")
+    p.add_argument("--color", type=color_value, default="0x00FF00", help="border colour 0xRRGGBB")
     p.add_argument("--no-bar", action="store_true")
+    p.add_argument("--log-interval", type=int, default=0,
+                   help="plugin prints frames/fps every N frames (0 = off)")
     p.add_argument("--frames", type=int, default=0, help="stop after N frames (0 = run forever)")
     p.add_argument("--width", type=int, default=0)
     p.add_argument("--height", type=int, default=0)
     p.add_argument("--fps", type=int, default=0)
     p.add_argument("--print-graph", action="store_true")
     args = p.parse_args()
+    if not 0 <= args.border <= 256:
+        p.error(f"--border must be between 0 and 256, got {args.border}")
+    if args.log_interval < 0:
+        p.error(f"--log-interval must be 0 or more, got {args.log_interval}")
 
     if args.width > 0 and args.height > 0 and args.fps > 0:
         width, height, fps = args.width, args.height, args.fps
     else:
         width, height, fps = probe_stream(args.url)
+    if stop:
+        return
 
     # Source: RTSP -> depay -> parse -> hardware decode, pinned to NV12 at the stream size.
     src = pyneat.RtspDecodedInputOptions()
@@ -124,20 +158,16 @@ def main():
         flush=True,
     )
 
-    stop = False
-
-    def on_signal(*_):
-        nonlocal stop
-        stop = True
-
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, on_signal)
-
+    # A Ctrl-C that arrived during build() skips the loop and goes straight to close().
     total, window, window_start = 0, 0, time.monotonic()
     try:
         while not stop and (args.frames <= 0 or total < args.frames):
             sample = run.pull("stats", 1000)
             if sample is None:
+                # pull() returns None on a timeout and when the stream has ended; only the
+                # second one stops the run.
+                if not run.can_pull():
+                    break
                 continue
             total += 1
             window += 1

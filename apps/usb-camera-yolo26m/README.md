@@ -90,7 +90,7 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 cd ../..
 ```
 
@@ -105,7 +105,7 @@ Optionally also fetch the INT8 build — faster on the MLA, but its confidence s
 
 ```bash
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz
 cd ../..
 ```
 
@@ -121,7 +121,8 @@ udp_port=9000
 ```
 
 You **must** change `udp_host`, the machine you want to watch the stream on, and `camera_device`
-unless your camera's capture node is also `/dev/video96` (see [Requirements](#requirements)).
+unless your camera's capture node is also `/dev/video96` (see [Requirements](#requirements)). The
+app stops with a message while `udp_host` still holds the `<host-ip>` placeholder.
 
 If your camera is mounted upside-down, set `flip=rotate-180`. COCO models lose real confidence on
 inverted scenes.
@@ -153,7 +154,8 @@ requires recompiling the model.
 `score_threshold`: Detection score threshold used by YOLO26 box decode. Use `0.30` for the bf16
 model. **Halve it (~0.15) for the INT8 model**, whose scores are capped at 0.50.
 
-`nms_iou`: NMS IoU threshold used by Neat decode.
+`nms_iou`: NMS IoU threshold. Ignored by this model: the `YoloV26` decoder runs no NMS (YOLO26 heads
+are NMS-free).
 
 `top_k`: Maximum decoded detections per frame.
 
@@ -168,10 +170,14 @@ model. **Halve it (~0.15) for the INT8 model**, whose scores are capped at 0.50.
 `overlay`: Draw detection boxes onto the streamed video. Costs ~1.5–4 ms/frame on the CPU. Set `false`
 if you render overlays downstream instead.
 
-`metadata_host`: Optional host running Neat Insight, to receive detection JSON so Insight can render
-overlays itself. Leave empty to disable.
+`metadata_host`: Optional host running Neat Insight. The app then sends each frame's detections as
+`object-detection` JSON (`bbox` = `[x, y, width, height]` in frame pixels, the same format as
+[`single-stream-yolo-insight`](../single-stream-yolo-insight/README.md#appendix-metadata-wire-format))
+and Insight draws the boxes over the video itself. Set `overlay=false` so the boxes are not drawn
+twice. Leave empty to disable.
 
-`metadata_port`: UDP port for detection metadata.
+`metadata_port`: UDP port for detection metadata. Insight pairs video port `9000 + N` with metadata
+port `9100 + N` (channel N), so with `udp_port=9000` keep `metadata_port=9100`.
 
 `pipeline_mode`: `push` (default) or `graph`. **Keep `push`** — `graph` returns zero detections on
 runtimes without `neatcamerabridge`. See [Appendix: Known Limitations](#appendix-known-limitations).
@@ -226,8 +232,8 @@ dk ./build/usb_camera_yolo26m ./config/default.conf
 
 For a bounded smoke test, set `frames=200` in `./config/default.conf`, then run the same command.
 
-> **The first start takes ~48 seconds.** The YOLO26m package is unpacked and its MLA ELF copied into
-> `/tmp/simaai/` before the pipeline runs. Nothing is streamed until the app prints its first
+> **Start-up takes ~48 seconds, on every run.** The YOLO26m package is unpacked and its MLA ELF
+> copied into `/tmp/simaai/` before the pipeline runs. Nothing is streamed until the app prints its first
 > `frame=` line — do not conclude the video output is broken before then.
 
 ## How To Run With Python
@@ -273,8 +279,10 @@ and it works from any device that can reach the host.
    `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
    certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
-3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
+3. Select channel 0 (UDP 9000) — the same port as `udp_port` in `./config/default.conf`.
    Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
+4. Optional: to let Insight draw the boxes instead of the app, set `metadata_host` to the same
+   machine, keep `metadata_port=9100` (channel 0) and set `overlay=false`.
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is
 where the app sends the RTP stream. The number of video channels is set by the SDK's port map;
@@ -329,7 +337,7 @@ Both packages can sit in `./assets/models/`; the `model_path` line switches betw
 | Package | `yolo26m-det-bf16-mla_tess-b1` | `yolo26m-det-int8-b1` |
 | Size | 66 MB | 35 MB |
 | Inference | 30.3 ms | **15.9 ms** (~2x faster) |
-| End-to-end | 30.9 fps | 32.9 fps |
+| End-to-end | ~30 fps (camera-limited) | ~30 fps (camera-limited) |
 | Boxes / classes | correct | correct — identical to bf16 |
 | Confidence scores | **0.0 – 1.0** | **capped at 0.50** |
 | Stages | `CVU preproc -> MLA` | `CVU quanttess -> MLA -> CVU detess+dequant` |
@@ -429,7 +437,7 @@ compares that against what you are actually delivering and tells you which one i
 - `overlay=false` frees ~1.5–4 ms/frame of CPU. Point `metadata_host` at Neat Insight and let it render
   the boxes instead.
 - `profile_interval=0` silences the live lines for a clean run; the exit summary still prints.
-- Python measures within ~1 fps of C++ and returns identical boxes — the language choice is free.
+- Python measures within ~2 fps of C++ (28.4 vs 30.0 fps) and returns identical boxes.
 
 </details>
 
@@ -453,8 +461,10 @@ source_override=multifilesrc location=../../model-compilation/assets/calibration
 COCO image `000000000139` is a living room. Both C++ and Python return the same 15 boxes:
 
 ```text
-boxes=15 person(0.88) chair(0.90) chair(0.89) chair(0.82) potted plant(0.57)
+boxes=15 person(0.88) chair(0.90) chair(0.89) chair(0.82) potted plant(0.57) ...
 ```
+
+Only the first five boxes are listed; ` ...` means there are more.
 
 **If you get high-confidence boxes here but few from the camera, the pipeline is fine** — your scene
 is just hard (dim, or no COCO objects in view). Run this before debugging weak detections.
@@ -489,8 +499,8 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
 
 <br>
 
-[`LEARNING.md`](LEARNING.md) records how this app was built: what was tried, what the numbers said,
-and what did not work — including why the hardware MJPEG decoder was rejected (4 fps vs 27 fps for
+[`LEARNING.md`](LEARNING.md) is the historical design log of how this app was built, on an older Neat
+runtime: what was tried, what the numbers said, and what did not work — including why the hardware MJPEG decoder was rejected (4 fps vs 27 fps for
 CPU `jpegdec`), why the zero-copy graph silently detects nothing, and the measurement mistakes that
 cost the most time.
 

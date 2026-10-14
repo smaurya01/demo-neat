@@ -103,7 +103,8 @@ And on the host:
 ## If the command is not found after installing
 
 The installer adds it to your `PATH` through your shell profile. If a new terminal still cannot find
-it:
+it, run this on the machine where it is missing (shown on the board; on the host the prompt is
+`sima-user@host:~$`):
 
 ```bash
 sima@modalix:~$ source ~/.bashrc

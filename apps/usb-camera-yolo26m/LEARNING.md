@@ -5,9 +5,13 @@ numbers said, what worked, and what didn't. Written so someone can rebuild it fr
 scratch — or, more usefully, so the next person doesn't burn a day on the same three
 dead ends.
 
-> **Historical log; the app now runs on Neat 0.5.0 — see [README.md](README.md).**
+> **Historical design log.** It was written while building the app on an older Neat runtime
+> (0.2.2, `libsima_neat.so.2.1.2`, SDK 2.1.2). Runtime versions, library names, timings and
+> download paths below are from that time. The app now runs on Neat 0.5.0: for current
+> instructions, model download links and how to check your runtime for `neatcamerabridge`
+> (`libsima_neat.so.5`), see [README.md](README.md).
 
-Environment: Modalix DevKit, Neat runtime **0.2.2** (`libsima_neat.so.2.1.2`),
+Environment at the time: Modalix DevKit, Neat runtime **0.2.2** (`libsima_neat.so.2.1.2`),
 SDK 2.1.2, Logitech Brio 100 USB camera.
 
 ## Table of Contents
@@ -139,7 +143,7 @@ The resolution is in the reference app's README
 yolo26 is published as a **direct download, outside the zoo index**:
 
 ```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 ```
 
 **Lesson: "not in the model zoo" does not mean "not available".** Check the example apps'
@@ -505,8 +509,8 @@ Because we are **camera-limited**. bf16 already infers in 30 ms while the camera
 frame every 33 ms. Halving inference to 16 ms just leaves the MLA idle longer. int8 buys
 MLA *headroom* — useful if you want a second model or more streams — but it buys no frames.
 
-Both packages ship in `assets/models/`; `model_path` switches between them. bf16 stays the
-default. If you do use int8, halve `score_threshold` (0.30 → 0.15), because its scores live
+Both packages can sit in `assets/models/` once downloaded (neither is included in the repo);
+`model_path` switches between them. bf16 stays the default. If you do use int8, halve `score_threshold` (0.30 → 0.15), because its scores live
 in 0.0–0.50 and are not comparable to bf16's.
 
 **Two lessons.** First: **profile before optimising.** A 2× faster model stage is worth zero
@@ -523,7 +527,7 @@ answer actually was.
 1. Plug in the camera. `v4l2-ctl --list-devices` → find the *Video Capture* node (not the
    metadata one). `v4l2-ctl -d /dev/videoN --list-formats-ext` → confirm MJPEG 1080p30.
 2. Download the model (it is **not** in `sima-cli modelzoo list`):
-   `sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz`
+   `sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz`
 3. Build the camera fragment with `nodes::Custom(..., InputRole::Source)`. Pin
    `image/jpeg` in the caps. Use `jpegdec`, **not** `SimaDecode`/`neatdecoder`. End the
    fragment on a real element, never on a bare caps string.
