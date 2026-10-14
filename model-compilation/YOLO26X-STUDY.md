@@ -100,8 +100,8 @@ Power reads 0 W: model-benchmark reports 0 W when board power telemetry is unava
 ## 3. Runtime image in → image out (60 real images)
 
 **Tool:** `compile/profile_model.py`, the demo-neat `model-compilation` profiler, on 60 real
-1280×720 frames. These are 15 frames from each of four Insight catalog clips: street, highway,
-parking garage, gym.
+1280×720 frames. These are 15 frames from each of four video clips: street, highway, parking
+garage, gym.
 
 **Path:** Neat's image route, BGR frame → EV74 preprocess (resize, letterbox, quantize) → MLA →
 YoloV26 box decode. Each call is one frame; 120 calls, 10 of them warm-up. `frames/` holds the 60

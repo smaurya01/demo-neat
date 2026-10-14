@@ -343,7 +343,7 @@ static void gst_frame_marker_class_init(GstFrameMarkerClass *klass) {
   gobject_class->get_property = gst_frame_marker_get_property;
 
   const GParamFlags flags =
-      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_CONTROLLABLE;
+      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING;
   g_object_class_install_property(
       gobject_class, PROP_MODE,
       g_param_spec_enum("mode", "Mode", "Whole-frame pixel operation", GST_TYPE_FRAME_MARKER_MODE,

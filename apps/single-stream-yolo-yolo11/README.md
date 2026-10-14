@@ -84,9 +84,13 @@ udp_host=<host-ip>
 udp_port=9000
 ```
 
+The app stops at start with `set rtsp_url in ...` (or `udp_host`) while a value is still a
+`<...>` placeholder.
+
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
-> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`). If it fails, the
+> app prints `[warn] could not probe <url> (<reason>)` and continues with the config values.
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
@@ -160,11 +164,24 @@ dk ./build/single_stream_yolo_yolo11
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`, then run the same command.
 
-The C++ app prints per-frame profile fields:
+Expected output (C++; a receiver example is also printed after the `UDP output` line):
 
 ```text
-fps=<total run fps> steady_fps=<fps after first-frame warm-up> ms(decoder=..., inference=..., overlay=..., encoder=..., total=...)
+RTSP input: <rtsp-url>
+Model:      ./assets/models/yolo_11n_mpk.tar.gz
+UDP output: udp://<host-ip>:9000 H264/RTP payload=96 1280x720@60
+Running. Press Ctrl-C to stop.
+[visualize] frame=30 boxes=<n> sample_frame_id=<id> fps=<run fps> steady_fps=<fps after frame 1> ms(decoder=..., inference=..., overlay=..., encoder=..., total=...) avg_ms(decoder=..., inference=..., overlay=..., encoder=..., total=...)
 ```
+
+The C++ app prints a `[visualize]` line for frame 1, then every 30 frames, and for the last frame
+when `frames` is set.
+`ms(...)` is the time each stage took for that frame and `avg_ms(...)` the average since start, in
+milliseconds. The Python app prints the same timing fields in the form
+`frame=<n> detections=<n> visible=<n> fps=... steady_fps=... ms(...) avg_ms(...)`.
+
+If the RTSP source sends no frame for three 20-second waits in a row, the app stops with
+`[err] no RTSP frame after 3 consecutive timeouts; giving up`, so a bounded run always ends.
 
 ## How To Run With Python
 
@@ -245,8 +262,12 @@ cp ../../model-compilation/work/yolo11n/compile_int8/*/*_mpk.tar.gz \
 | zoo `yolo_11n` | 3x 64-channel raw DFL | probabilities | `BoxDecodeType.YoloV8` |
 | self-compiled `yolo11n` | 3x 64-channel raw DFL | logits | `BoxDecodeType.YoloV8` + `BoxDecodeTypeOption.GroupedByRoleLogit` |
 
-`model_spec()` in [`main.py`](main.py) reports `yolo11`, which selects `YoloV8` for the zoo archive.
-For a self-compiled archive, also set `opt.decode_type_option =
-pyneat.BoxDecodeTypeOption.GroupedByRoleLogit` in `make_model()`.
+`make_model()` selects `YoloV8`, which is right for the zoo archive. For a self-compiled archive,
+also set the logit option in `make_model()`:
+
+- Python ([`main.py`](main.py)): `opt.decode_type_option = pyneat.BoxDecodeTypeOption.GroupedByRoleLogit`
+- C++ ([`main.cpp`](main.cpp)): `opt.decode_type_option = neat::BoxDecodeTypeOption::GroupedByRoleLogit;`
+
+then rebuild the C++ app.
 
 </details>

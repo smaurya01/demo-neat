@@ -8,6 +8,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -33,13 +34,54 @@ public:
 
   int get_int(const std::string& key, int def) const {
     const std::string v = get(key);
-    return v.empty() ? def : std::stoi(v);
+    if (v.empty())
+      return def;
+    try {
+      std::size_t used = 0;
+      const int n = std::stoi(v, &used);
+      if (used == v.size())
+        return n;
+    } catch (const std::exception&) {
+    }
+    throw std::invalid_argument(key + ": expected an integer, got '" + v + "'");
+  }
+
+  // Like get_int, but the value must lie in [lo, hi].
+  int get_int_in_range(const std::string& key, int def, int lo, int hi) const {
+    const int n = get_int(key, def);
+    if (n < lo || n > hi)
+      throw std::invalid_argument(key + " must be between " + std::to_string(lo) + " and " +
+                                  std::to_string(hi) + ", got " + std::to_string(n));
+    return n;
   }
 
   unsigned get_uint(const std::string& key, unsigned def) const {
     const std::string v = get(key);
-    // Base 0 accepts decimal and 0xRRGGBB.
-    return v.empty() ? def : static_cast<unsigned>(std::stoul(v, nullptr, 0));
+    if (v.empty())
+      return def;
+    try {
+      // Base 0 accepts decimal and 0xRRGGBB.
+      std::size_t used = 0;
+      const unsigned long n = std::stoul(v, &used, 0);
+      if (used == v.size() && v[0] != '-' && n <= std::numeric_limits<unsigned>::max())
+        return static_cast<unsigned>(n);
+    } catch (const std::exception&) {
+    }
+    throw std::invalid_argument(key + ": expected a non-negative number, got '" + v + "'");
+  }
+
+  float get_float(const std::string& key, float def) const {
+    const std::string v = get(key);
+    if (v.empty())
+      return def;
+    try {
+      std::size_t used = 0;
+      const float f = std::stof(v, &used);
+      if (used == v.size())
+        return f;
+    } catch (const std::exception&) {
+    }
+    throw std::invalid_argument(key + ": expected a number, got '" + v + "'");
   }
 
 private:
@@ -75,9 +117,14 @@ inline std::atomic<bool>& stop_requested() {
 }
 
 // Ctrl-C, kill and a dropped SSH session all end the pull loop so that Run::close() runs and
-// the decoder, encoder and MLA are released cleanly.
+// the decoder, encoder and MLA are released cleanly. Install them first thing in main() so a
+// Ctrl-C during start-up (stream probe, model load, build) is honoured too. A second Ctrl-C
+// quits at once, for when start-up itself is stuck.
 inline void install_stop_handlers() {
-  auto handler = [](int) { stop_requested().store(true); };
+  auto handler = [](int) {
+    if (stop_requested().exchange(true))
+      std::_Exit(130);
+  };
   std::signal(SIGINT, handler);
   std::signal(SIGTERM, handler);
   std::signal(SIGHUP, handler);

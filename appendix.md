@@ -57,10 +57,12 @@ neat --json
   `videoUDP` (video in, default from 9000) and `metadataUDP` (metadata in, default from 9100).
   **Use this map, not the defaults.** If a default port was taken, the SDK maps a different one,
   and the range also sets how many viewer channels you have.
-- `curl -sk https://127.0.0.1:9900/api/server-ip` reports the host address the **DevKit** should
-  connect to. That is `<sdk-host-ip>` everywhere below. It can differ from the host in `webUiUrl`
-  when the host has more than one network, so always use `/api/server-ip` for RTSP URLs,
-  `udp_host` and `insight_host`. Never give the DevKit `127.0.0.1`: that is the board itself.
+- `<sdk-host-ip>` everywhere below is the host IP the **DevKit** connects to: the IP on the
+  **Insight (remote)** line of `neat`, or the address
+  `curl -sk https://127.0.0.1:9900/api/server-ip` prints in the SDK shell. Use it for RTSP URLs,
+  `udp_host` and `insight_host`. If the host has more than one network and the two differ, use the
+  one the board can reach (`ping` it from the board). Never give the DevKit `127.0.0.1`: that is
+  the board itself.
 
 ### 1.2 Serve a video as an RTSP source
 
@@ -81,7 +83,7 @@ curl -sk -H "Content-Type: application/json" -d '{"index":1}' \
 ```
 
 The DevKit then reads `rtsp://<sdk-host-ip>:8554/src1` (8554, or the mapped `rtsp.tcp` port from
-`neat --json`). That is the `<rtsp-url>` to put in an app's `config/default.conf`. For many sources at once, assign several slots and start them
+`neat --json`): the base URL the **Streaming** tab shows, plus `/src1`. That is the `<rtsp-url>` to put in an app's `config/default.conf`. For many sources at once, assign several slots and start them
 together with `/api/mediasrc/start-bulk` (`{"count": N}` starts the first N *assigned* slots in
 index order).
 
@@ -216,7 +218,7 @@ Run on the Modalix board. Use these when `fix_devkit_runtime.sh` alone did not c
 
 | Command | What it does |
 | --- | --- |
-| `sudo fuser -v /dev/m4_lp_mbox` | Show which process holds the **MLA mailbox**. On a healthy board that is `mlashmcomplex`, the app-complex daemon: **never kill it**. Any other holder (a user app or a pyneat process) is the culprit. |
+| `sudo fuser -v /dev/m4_lp_mbox` | Show which process holds the **MLA mailbox**. On a healthy board that is `mlashmcomplex`, the app-complex daemon: **never kill it** (nor `mla_rt_service`, the other MLA system daemon). Any other holder (a user app or a pyneat process) is the culprit. |
 | `sudo fuser -v /dev/rpmsg*` | Show what holds the RPMsg devices. |
 | `ps aux \| grep pyneat \| grep -v grep` | Find leftover `pyneat` processes still holding the runtime. |
 | `sudo fuser -v <port>/tcp` | Show what holds a server port, for example `9998` for the GenAI server when a restart fails with "address in use". |
@@ -229,7 +231,7 @@ Escalate; do not start at the bottom.
 1. `pgrep -fa <app>`: stop a leftover app.
 2. `top`: kill the specific hung PID.
 3. `bash /usr/bin/fix_devkit_runtime.sh`. It also stops and restarts `simaai-appcomplex` itself.
-4. `sudo fuser -v /dev/m4_lp_mbox`: kill the PID it names **only if it is not `mlashmcomplex`**.
+4. `sudo fuser -v /dev/m4_lp_mbox`: kill the PID it names **only if it is not `mlashmcomplex`** (never kill `mlashmcomplex` or `mla_rt_service`).
 5. `ps aux | grep pyneat`: kill leftovers by PID.
 6. Only then the blunt instrument: `sudo fuser -k <port>/tcp`.
 7. Still stuck: reboot the board.
@@ -243,7 +245,7 @@ For LLiMa models that stop loading, restarting `simaai-appcomplex` (§2.3) is th
 | I want to… | Do this |
 | --- | --- |
 | Find the Insight UI and port map | `neat --json` (`insight.webUiUrl`, `exposedPorts`) |
-| Find the address the DevKit should use | `curl -sk https://127.0.0.1:9900/api/server-ip` |
+| Find the address the DevKit should use | the **Insight (remote)** IP from `neat`, or `curl -sk https://127.0.0.1:9900/api/server-ip` |
 | Serve a video as RTSP | Insight **Streaming**: assign a clip to `srcN` and start it → `rtsp://<sdk-host-ip>:8554/srcN` (or the mapped `rtsp.tcp` port) |
 | Check a source's fps and resolution | `/api/media-info` (§1.3) |
 | See an app's output | set `udp_host` / `insight_host` to the Insight host; open **Video Viewer** channel `N` (port `9000 + N`) |

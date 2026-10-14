@@ -69,12 +69,16 @@ Edit `./config/default.conf` before running. At minimum, set:
 rtsp_url=<rtsp-url>
 model_path=./assets/models/yolo_v8n_seg_mpk.tar.gz
 udp_host=<host-ip>
-udp_port_base=9000
+udp_port=9000
 ```
+
+The app stops at start with `set rtsp_url in ...` (or `udp_host`) while a value is still a
+`<...>` placeholder.
 
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
-> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`). If it fails, the
+> app prints `[warn] could not probe <url> (<reason>)` and continues with the config values.
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
@@ -91,7 +95,8 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
 `udp_host`: Host/IP that receives the annotated UDP/RTP output stream.
 
-`udp_port_base`: UDP/RTP output port used by the H.264 video sender.
+`udp_port`: UDP/RTP output port used by the H.264 video sender. (`udp_port_base` is accepted as an
+older name for the same key.)
 
 `model_path`: Model archive loaded by the Neat model node.
 
@@ -148,6 +153,26 @@ dk ./build/single_stream_yolov8n_seg
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`, then run the same command.
 
+Expected output (C++):
+
+```text
+RTSP input: <rtsp-url>
+Loaded models:
+  yolov8n-seg -> ./assets/models/yolo_v8n_seg_mpk.tar.gz -> udp://<host-ip>:9000
+Running. Press Ctrl-C to stop.
+[yolov8n-seg] frame=30 result=<k> tensors sample_frame_id=<id> masks=<n> fps=<run fps> steady_fps=<fps after frame 1> ms(decoder=..., inference=..., overlay=..., encoder=..., total=...) avg_ms(decoder=..., inference=..., overlay=..., encoder=..., total=...)
+[probe] source_frames=30 active_models=1 fps=<run fps> steady_fps=<fps after frame 1>
+```
+
+The C++ app prints a `[yolov8n-seg]` line (`masks` = instances drawn) and a `[probe]` line for
+frame 1, then every 30 frames, and for the last frame when `frames` is set.
+`ms(...)` is the time each stage took for that frame and `avg_ms(...)` the average since start, in
+milliseconds. The Python app prints the same timing fields in the form
+`frame=<n> detections=<n> visible=<n> fps=... steady_fps=... ms(...) avg_ms(...)`.
+
+If the RTSP source sends no frame for three 20-second waits in a row, the app stops with
+`[err] no RTSP frame after 3 consecutive timeouts; giving up`, so a bounded run always ends.
+
 ## How To Run With Python
 
 Run the Python version on the DevKit from the SDK shell:
@@ -176,7 +201,7 @@ and it works from any device that can reach the host.
    `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
    certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
-3. Set **Port** to **9000** — the same value as `udp_port_base` in `./config/default.conf`.
+3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
    Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
 
 Make sure `udp_host` in `./config/default.conf` points at the machine running Insight — that is

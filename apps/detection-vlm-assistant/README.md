@@ -192,8 +192,8 @@ llima list                                             # confirm it is deployed
 
 It lands in `/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4`, which is what
 `vlm_model_dir` in the config points at. Another deployed VLM works too: pull it and point
-`vlm_model_dir` at its directory. `Qwen3-VL-4B-Instruct-GPTQ-a16w4` (used for the example output
-below) and the much smaller `LFM2.5-VL-450M-Autoround-a16w4` are alternatives. See
+`vlm_model_dir` at its directory. `Qwen3-VL-4B-Instruct-GPTQ-a16w4` and the much smaller
+`LFM2.5-VL-450M-Autoround-a16w4` are alternatives. See
 [`llima/`](../../llima/README.md) for LLiMa itself.
 
 ## Configure
@@ -205,14 +205,18 @@ source=rtsp
 rtsp_url=<rtsp-url>
 model_path=./assets/models/yolo_11n_mpk.tar.gz
 udp_host=<host-ip>
-vlm_trigger_classes=person
+vlm_trigger_classes=car
 ```
 
-`udp_host` is the Insight host that receives the annotated video; leave it empty for stdout only.
+Replace both placeholders: the app stops with an error while `rtsp_url` (or, with video on,
+`udp_host`) still holds one. `udp_host` is the Insight host that receives the annotated video;
+leave it empty for stdout only. `vlm_trigger_classes` picks which detections get a caption (the shipped config uses `car`;
+set it to `person`, or a comma-separated list, to suit your scene).
 
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
-> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`). If it fails, the
+> `[warn] could not probe ...` line says why (for example `ffprobe not installed`).
 
 ### Config parameters
 
@@ -231,6 +235,13 @@ vlm_trigger_classes=person
 - `model_width`, `model_height`: compiled model input size (Neat letterbox-resizes to it).
 - `score_threshold`, `nms_iou`, `top_k`: box-decode controls.
 - `frames`: frames to process; `0` runs until interrupted (rtsp) / processes all images.
+- `duration_s`: wall-clock limit in seconds (rtsp); `0` = no limit. Same as `--duration`.
+- `timeout_ms`: detector pull timeout in milliseconds.
+- `source_timeout_ms`, `rtsp_stall_timeout_s`, `rtsp_reconnect_attempts`: RTSP resilience. One
+  empty pull waits `source_timeout_ms`; only `rtsp_stall_timeout_s` of continuous silence counts
+  as a dead stream, which is reconnected up to `rtsp_reconnect_attempts` times.
+- `video_enabled`, `udp_host`, `udp_port` (or `udp_port_base`), `bitrate_kbps`: annotated video
+  output; see [Visualization](#visualization--boxes-over-udp-h264rtp).
 - **VLM trigger / commenter:**
   - `vlm_enabled`: master switch; `false` => dry-run.
   - `vlm_model_dir`: VLM directory on the board (real mode only).
@@ -239,11 +250,12 @@ vlm_trigger_classes=person
   - `vlm_interval_seconds`: minimum **wall-clock** seconds between VLM calls (rate limit).
   - `vlm_max_pending`: bounded in-flight/queued crops; a full queue drops the trigger.
   - `vlm_dedup_iou`, `vlm_dedup_cooldown_s`: treat a box as the same object at IoU ≥
-    threshold; re-trigger only after the cooldown. Stops one person re-firing every frame.
+    threshold; re-trigger only after the cooldown. Stops one object re-firing every frame.
   - `vlm_max_new_tokens`, `vlm_prompt`: generation controls. `{label}` in the prompt is
     substituted with the detected class.
 
-Every value is overridable on the command line; run `dk ./main.py --help`.
+The main values are also overridable on the command line; run `dk ./main.py --help` for the
+flags.
 
 </details>
 
@@ -292,8 +304,8 @@ VLM-selected one red).
    `insight.webUiUrl`), in a browser. *It is **HTTPS**, not HTTP. The SDK uses a local mkcert
    certificate, so accept the browser warning the first time.*
 2. Go to the **Video Viewer** tab.
-3. Set **Port** to **9000** — the same value as `udp_port` in `./config/default.conf`.
-   Insight ingests video on UDP `9000 + channel`, so channel 0 is port `9000`.
+3. Select channel **0** (UDP `9000`), which matches `udp_port=9000` in `./config/default.conf`.
+   Insight ingests video on UDP `9000 + channel`.
 
 `udp_host` must point at the machine running Insight. The number of video channels is set by the SDK's port map; read the range from `neat --json`
 (`exposedPorts`, `videoUDP`).
@@ -302,31 +314,33 @@ The VLM captions are **not** drawn on the video — they go to stdout, as shown 
 
 ## Expected Output
 
-Detection (live) — per-frame log lines and, when a person clears the gate, a dry-run block:
+With the shipped config on a 1280×720 30 fps source and the VLM deployed, the start-up lines are:
 
 ```text
-detector=yolo_11n_mpk.tar.gz decode=yolo11 vlm=DRY-RUN (crop+prompt logged, VLM not called)
-rtsp=<rtsp-url> stream=1280x720@60
-frame=1 detections=13 fps=14.57
-vlm[dry-run] WOULD send crop -> VLM
-  class   : PERSON score=0.81
-  bbox    : (927, 429, 1019, 666)
-  crop    : shape=(237, 92, 3) (BGR; converted to RGB before the request)
-  model   : /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4
-  prompt  : 'You are watching a security camera. This image is a crop of one detected person. ...'
-frame=30 detections=12 fps=53.65
+detector=yolo_11n_mpk.tar.gz decode=yolo11 vlm=/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4
+rtsp=<rtsp-url> stream=1280x720@30
+video=udp://<host-ip>:9000 (all boxes white, VLM pick red)
+viewer: gst-launch-1.0 -v udpsrc port=9000 ...
 ```
 
-VLM (real, with a deployed VLM) — each dry-run block is replaced by a caption line. This example
-is from `Qwen3-VL-4B-Instruct-GPTQ-a16w4`; the shipped Autoround VLM runs at about 13.8 tok/s (see
-[Verified](#verified)):
+The first caption loads the VLM (about 10 s) and prints a `vlm: loaded ...` line. After that, a
+60 s run (`dk ./main.py --duration 60`) prints lines like these:
 
 ```text
-vlm[PERSON score=0.81 bbox=(927, 429, 1019, 666)]: A person in a dark jacket is walking
-across the platform carrying a bag.  (58 tok, 22.4 tok/s, ttft=0.34s)
+frame=1020 detections=9 fps=17.72
+vlm[CAR score=0.89 bbox=(261, 402, 650, 533)]: A white sedan with sleek alloy wheels and a modern design is parked beside a silver vehicle, its side profile captured in a street-side security camera shot.  (30 tok, 13.8 tok/s, ttft=0.64s)
+frame=1050 detections=10 fps=17.85
+frame=1080 detections=13 fps=18.02
+done: frames=1082 elapsed=60.1s avg_fps=18.00 vlm_captions=12 reconnects=0
 ```
 
-Exact wording depends on the image and the model's sampling; the shape is what to verify.
+The `fps=` value is the running average since start; it cannot exceed the source rate. Captions,
+boxes and timings depend on the video and the model's sampling.
+
+With `--no-vlm` (or no deployed VLM) the app runs in dry-run mode: the banner says
+`vlm=DRY-RUN (crop+prompt logged, VLM not called)`, and each caption line is replaced by a
+`vlm[dry-run] WOULD send crop -> VLM` block that lists the class and score, the box, the crop
+shape, the model directory and the prompt.
 
 ## Visualization — boxes over UDP (H.264/RTP)
 
@@ -361,7 +375,7 @@ red/white boxes never leak into the image handed to the VLM.
 ### How the VLM box is chosen (what the red box means)
 
 The red box is the highest-score detection that passes the trigger gate: class in
-`vlm_trigger_classes` (default `person`), `score >= vlm_trigger_min_score`, and area
+`vlm_trigger_classes` (`car` in the shipped config), `score >= vlm_trigger_min_score`, and area
 `>= vlm_trigger_min_area_frac` of the frame. The *actual* VLM send additionally applies
 the rate limit (`vlm_interval_seconds`), IoU/cooldown dedup (`vlm_dedup_iou`,
 `vlm_dedup_cooldown_s`), and the bounded queue (`vlm_max_pending`); the red overlay
@@ -407,7 +421,14 @@ uses the HTTP path; see [`llima/05-genai-server`](../../llima/05-genai-server/).
 <br>
 
 With the shipped config, Neat 0.5.0, the Model Zoo `yolo_11n` and
-`Qwen3-VL-4B-Instruct-Autoround-a16w4`, on a 1280×720 30 fps RTSP source, a 60 s run ends with:
+`Qwen3-VL-4B-Instruct-Autoround-a16w4`, on a 1280×720 30 fps RTSP source, a 60 s run
+(the shipped config has no time limit, so pass `--duration`):
+
+```bash
+dk ./main.py --duration 60
+```
+
+ends with:
 
 ```text
 done: frames=1082 elapsed=60.1s avg_fps=18.00 vlm_captions=12 reconnects=0

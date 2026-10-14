@@ -7,7 +7,7 @@
 #   surgery      : none | yolo_ultralytics | yolox | world   (which rewrite graph_surgery.py applies)
 #   output_names : the EXACT tensors the compiled archive exposes (surgery models expose raw heads)
 #   decode       : how test_model.py interprets the outputs
-#   box_decode   : the Neat BoxDecodeType that decodes the archive ON-DEVICE (NMS included), and
+#   box_decode   : the Neat BoxDecodeType that decodes the archive ON-DEVICE (NMS except YOLO26), and
 #   box_decode_option : its BoxDecodeTypeOption. Each family keeps its own decoder:
 #                  YOLOv8/YOLO11 (+ world)  -> YoloV8 / YoloV8Seg, GroupedByRoleLogit (raw 64-ch DFL
 #                                              bbox heads, class LOGITS: the decoder applies sigmoid)

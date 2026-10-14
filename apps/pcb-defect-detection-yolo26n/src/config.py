@@ -1,4 +1,4 @@
-"""Runtime config loader for the PLC defect detector.
+"""Runtime config loader for the PCB defect detector.
 
 Parses a simple key=value `.conf` (single-stream-yolo26n style) — no third-party
 deps so it runs as-is inside the on-device pyneat environment.
@@ -50,6 +50,8 @@ def load_config(path: str) -> Config:
             setattr(cfg, key, float(val))
         elif key == "labels":
             cfg.labels = [s.strip() for s in val.split(",") if s.strip()]
+        else:
+            raise ValueError(f"{path}: unknown config key: {key}")
     return cfg
 
 

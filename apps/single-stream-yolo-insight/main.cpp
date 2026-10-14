@@ -4,6 +4,7 @@
 #include <neat.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <sys/wait.h>
 #include <vector>
 
 namespace neat = simaai::neat;
@@ -59,7 +61,7 @@ struct Config {
   int model_width = 640;
   int model_height = 640;
   int latency_ms = 200;
-  float score_threshold = 0.25f;
+  float score_threshold = 0.6f;
   float nms_iou = 0.50f;
   int top_k = 100;
   int num_classes = 80;
@@ -150,6 +152,17 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   }
 }
 
+// A '#' starts a comment only at the start of a line or after whitespace, so a value that
+// contains '#' (for example an RTSP password) is kept intact.
+void strip_comment(std::string& line) {
+  for (std::size_t i = 0; i < line.size(); ++i) {
+    if (line[i] == '#' && (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t')) {
+      line.erase(i);
+      return;
+    }
+  }
+}
+
 Config read_config() {
   Config cfg;
   std::ifstream file(kConfigPath);
@@ -159,10 +172,7 @@ Config read_config() {
 
   std::string line;
   while (std::getline(file, line)) {
-    const auto comment = line.find('#');
-    if (comment != std::string::npos) {
-      line.erase(comment);
-    }
+    strip_comment(line);
     line = trim(line);
     if (line.empty()) {
       continue;
@@ -173,11 +183,17 @@ Config read_config() {
   return cfg;
 }
 
+// True for an unedited placeholder such as "<rtsp-url>" or "rtsp://<rtsp-server-ip>:8554/src1".
+bool is_placeholder(const std::string& value) {
+  return value.empty() || value.front() == '<' || value.find("://<") != std::string::npos;
+}
+
 void validate_config(const Config& cfg) {
-  if (cfg.rtsp_url.empty()) {
-    throw std::runtime_error("rtsp_url must not be empty");
+  if (is_placeholder(cfg.rtsp_url)) {
+    throw std::runtime_error("set rtsp_url in " + std::string(kConfigPath) +
+                             " to your camera's RTSP URL (it is still \"" + cfg.rtsp_url + "\")");
   }
-  if (cfg.insight_host.empty() || cfg.insight_host.front() == '<') {
+  if (is_placeholder(cfg.insight_host)) {
     throw std::runtime_error("insight_host must be set to the host running Neat Insight");
   }
   if (cfg.channel < 0) {
@@ -199,9 +215,11 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   // 3, not 1: preproc publishes RGB (3 channels), and Neat 0.3.0 enforces this capacity
   // bound. With 1 it aborts: "color_input_requires_input_shape_channels_3".
   opt.preprocess.input_max_depth = 3;
+  opt.preprocess.resize.enable = neat::AutoFlag::On;
   opt.preprocess.resize.width = cfg.model_width;
   opt.preprocess.resize.height = cfg.model_height;
   opt.preprocess.resize.mode = neat::ResizeMode::Letterbox;
+  opt.preprocess.resize.pad_value = 114;
   opt.preprocess.color_convert.input_format = neat::PreprocessColorFormat::NV12;
   opt.preprocess.color_convert.output_format = neat::PreprocessColorFormat::RGB;
   opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
@@ -312,6 +330,7 @@ struct StreamGeometry {
   int width = 0;
   int height = 0;
   int fps = 0;
+  std::string error;  // why the probe failed; empty on success
 };
 
 // "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
@@ -326,6 +345,11 @@ int fps_from_rate(const std::string& rate) {
   }
 }
 
+// A real camera runs at 1..240 fps. Anything else (a 90000/1 timebase, 0/0) is not a frame rate.
+bool plausible_fps(int fps) {
+  return fps >= 1 && fps <= 240;
+}
+
 StreamGeometry probe_stream(const std::string& url, bool tcp) {
   std::string quoted = "'";
   for (const char c : url) {
@@ -337,10 +361,11 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
                               "-timeout 5000000 -select_streams v:0 "
                               "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
                               "-of default=nw=1 " +
-                              quoted + " 2>/dev/null";
+                              quoted + " 2>&1";
   StreamGeometry g;
   int avg_fps = 0;
   int r_fps = 0;
+  std::string last_message;  // last line that is not a key=value result: ffprobe's error text
   if (FILE* pipe = popen(command.c_str(), "r")) {
     char buffer[256];
     while (std::fgets(buffer, sizeof(buffer), pipe)) {
@@ -349,11 +374,8 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
         line.pop_back();
       }
       const auto eq = line.find('=');
-      if (eq == std::string::npos) {
-        continue;
-      }
-      const std::string key = line.substr(0, eq);
-      const std::string value = line.substr(eq + 1);
+      const std::string key = eq == std::string::npos ? std::string() : line.substr(0, eq);
+      const std::string value = eq == std::string::npos ? std::string() : line.substr(eq + 1);
       if (key == "width") {
         g.width = std::atoi(value.c_str());
       } else if (key == "height") {
@@ -362,11 +384,22 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
         avg_fps = fps_from_rate(value);
       } else if (key == "r_frame_rate") {
         r_fps = fps_from_rate(value);
+      } else if (!trim(line).empty()) {
+        last_message = trim(line);
       }
     }
-    pclose(pipe);
+    const int status = pclose(pipe);
+    if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+      g.error = "ffprobe is not installed on the DevKit (sudo apt install ffmpeg)";
+    }
+  } else {
+    g.error = "could not start ffprobe";
   }
-  g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  g.fps = plausible_fps(avg_fps) ? avg_fps : (plausible_fps(r_fps) ? r_fps : 0);
+  if (g.error.empty() && (g.width <= 0 || g.height <= 0 || g.fps <= 0)) {
+    g.error = last_message.empty() ? "no usable width/height/frame rate in the reply"
+                                   : last_message.substr(0, 200);
+  }
   return g;
 }
 
@@ -377,9 +410,10 @@ void apply_stream_geometry(Config& cfg) {
     return;
   }
   const StreamGeometry g = probe_stream(cfg.rtsp_url, cfg.tcp);
-  if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
-    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " with ffprobe; using the config's "
-              << cfg.width << "x" << cfg.height << "@" << cfg.fps << "\n";
+  if (!g.error.empty()) {
+    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " with ffprobe (" << g.error
+              << "); using the config's " << cfg.width << "x" << cfg.height << "@" << cfg.fps
+              << "\n";
     return;
   }
   if (g.width != cfg.width || g.height != cfg.height || g.fps != cfg.fps) {

@@ -65,26 +65,22 @@ the Neat Library move as a set.
 
 The first install takes several minutes.
 
-> **SDK 2.0.0, 2.1.2.0 or 2.1.2.1** use the older two-step install (image pull, then
-> `sima-cli sdk setup`). See
-> [Two Step SDK Installation](https://developer.sima.ai/software/reference/two-step-sdk-installation/).
-> The prompts below are the same either way.
-
 ---
 
 ## The eight prompts
 
-Setup is a series of prompts. Everything you actually have to decide is here; the rest is `Enter`.
+Setup is a series of prompts. Everything you actually have to decide is here; the rest is `Enter`,
+except prompt 6 on a repeat run.
 
 | # | Prompt | Answer | Why |
 |---|---|---|---|
 | 1 | Pair this SDK with a DevKit now? `[y/N]` | `y`, then the DevKit IP | `N` is fine too — the workspace is still created, and you can pair later with `sima-cli sdk setup --devkit <devkit-ip>` |
 | 2 | Some system checks failed — continue anyway? `[y/N]` | `y` **if** the only failure is a `Firewall` warning | Anything else is worth reading before you continue |
 | 3 | SDK Docker image | `Enter` | The image you just downloaded is pre-selected |
-| 4 | Host workspace path | **`~/workspace`** | ⚠️ Use `~/workspace` as the workspace folder. This is the folder shared by host, SDK and board |
+| 4 | Host workspace path | **`~/workspace`** — `Enter` if that is the default, otherwise type it | ⚠️ Use `~/workspace` as the workspace folder. This is the folder shared by host, SDK and board |
 | 5 | SDK extension | `Enter` | |
-| 6 | Create a new SDK container? | **First install:** create it. **Every later run:** `n` | ⚠️ The one that matters. `y` on a repeat run builds a second container and reinstalls from scratch |
-| 7 | Install the Model Compiler extension? | `n`, unless you need to compile ONNX or GenAI models | ~15 minutes and ~10 GB. You can add it later |
+| 6 | Container … already exists — `Remove and recreate it? [Y/n]` | **First install:** let setup create it. **Every later run:** `n` | ⚠️ The one that matters. The default is `Y`: `Enter` removes the existing container and recreates it from scratch. Answer `n` to reuse it |
+| 7 | Install the Model Compiler extension? | `n`, unless you need to compile ONNX or GenAI models | ~15 minutes and about 20 GB of disk. You can add it later |
 | 8 | DevKit workspace path | `Enter` for `/workspace` | Mounts the host workspace onto the board. Password, if asked: `edgeai` |
 
 <p align="center">
@@ -101,7 +97,9 @@ Setup is a series of prompts. Everything you actually have to decide is here; th
 > sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
 > ```
 >
-> Press `n` at prompt 6 to reuse the container you already have. It re-pulls nothing.
+> Answer `n` at prompt 6 (`Container '…' already exists. Remove and recreate it? [Y/n]`) to reuse
+> the container you already have. It re-pulls nothing. `Enter` accepts the default `Y` and
+> recreates the container.
 
 Use it every time you come back to the SDK, and after the board's IP address changes.
 
@@ -160,7 +158,7 @@ compiled C++ binaries the same way — [Chapter 18](18-cpp-video-app.md) builds 
 |---|---|
 | Version mismatch errors | `cat /etc/buildinfo` on the board, then pin the SDK and Model Compiler to match — [Chapter 9](09-check-and-update-image.md#which-version-should-you-be-on) |
 | Pairing fails | Host and DevKit must be on the same network and able to `ping` each other. Check firewall rules |
-| Setup reinstalls everything | You pressed `y` at prompt 6. Press `n` to reuse the existing container |
+| Setup reinstalls everything | You accepted the default `Y` (or pressed `Enter`) at prompt 6. Answer `n` to reuse the existing container |
 | You are copying files by hand | Don't — use the shared `/workspace` that pairing set up |
 
 ---

@@ -6,7 +6,7 @@ results into four independent H.264/UDP outputs.
 
 It ships **twice**: `main.cpp` and `main.py`, same models, same `config/default.conf`, same
 output. That is deliberate — the pair is itself one of the lessons (Lesson 8: C++ delivers
-~2.2× the throughput, and the entire difference is the GIL, not the accelerator).
+about 3× the throughput, and the entire difference is the GIL, not the accelerator).
 
 Everything below was measured on a Modalix DevKit against a live 1280×720 H.264 stream.
 Where a number appears, it came from a run, not from an estimate. Where something is still
@@ -442,7 +442,7 @@ Kept deliberately, because the wrong turns cost more time than the fixes.
 Be honest about the remaining ceiling — it is the most instructive part.
 
 **1. In C++, nothing in the pipeline is the bottleneck — the cameras are.** All four streams
-deliver at the source rate, ~240 fps aggregate against a 239.8 fps ceiling (see the
+deliver at the source rate, ~236 fps aggregate against a 239.8 fps ceiling (see the
 [README's Time Profile](README.md#time-profile)). Do not predict multi-model capacity by adding
 service times: the preprocess / MLA / dequantize stages of *different* streams overlap, so the
 aggregate beats `1 / Σ(service)`. Measure it.
@@ -454,9 +454,9 @@ roughly in half (42.5 → **95.6 fps aggregate**), and the remaining per-stage p
 
 | stage | Python (now) | C++ | note |
 | --- | --- | --- | --- |
-| `infer` | 24 ms | 21.7 ms | parity — the MLA path is not the problem |
-| overlay, detection | 58 ms | 0.51 ms | 13 `rectangle` + 13 `putText`, GIL-contended |
-| overlay, segmentation | 87 ms | 10.4 ms | per-object `cv2.resize` + masked add |
+| `infer` | 24 ms | 21.8 ms | parity — the MLA path is not the problem |
+| overlay, detection | 58 ms | 0.60 ms | 13 `rectangle` + 13 `putText`, GIL-contended |
+| overlay, segmentation | 87 ms | 13.9 ms | per-object `cv2.resize` + masked add |
 | source copy | 3.58 ms | 1.75 ms | `copy_payload_bytes` + one writable `.copy()` |
 | source **wait** | 12.29 ms | 14.63 ms | the 60 fps frame period — **irreducible** |
 
@@ -471,7 +471,7 @@ If you need in-graph rendering (no host frame at all), Neat has
 `nodes::SimaRender` (`core/include/nodes/sima/SimaRender.h`): it consumes the BoxDecode
 output and draws **inside the graph**. It is not wired here because it renders **bounding
 boxes only** — adopting it would cost the segmentation masks and pose skeletons, which are
-the whole point of those two streams. In C++ the host overlay is cheap enough (0.5 – 12 ms)
+the whole point of those two streams. In C++ the host overlay is cheap enough (0.3 – 14 ms)
 that the trade is not worth making. That is a real design choice, not an oversight.
 
 **3. Teardown heap abort (Python only).** The Python process intermittently dies at exit with

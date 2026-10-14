@@ -18,23 +18,16 @@ on-device with Neat's fused BoxDecode — there is no host-side decode anywhere:
 
 The decode family is chosen by the shape of the archive's HEAD, not by the model's
 version number:
-  * The zoo archives keep the raw 64-channel DFL bbox heads -> the YoloV8 family
+  * The zoo YOLO11 archives keep the raw 64-channel DFL bbox heads -> the YoloV8 family
     (this is why zoo YOLO11 decodes as YoloV8, not as some "YoloV11").
-  * The self-compiled archives fold the DFL into the graph and emit 4-channel
-    l/t/r/b distance heads -> the YoloV26 family.
-Both are correct; they are different contracts. Get it wrong and the app still
-runs and still draws boxes — just decoded from the wrong channels.
+  * yolo26s-pose has YOLO26's one-to-one heads, already 4-channel l/t/r/b distances
+    -> YoloV26Pose.
+  * yolox_s exposes YOLOX's decoupled bbox / objectness / class heads -> YoloX.
+Get it wrong and the app still runs and still draws boxes — just decoded from the
+wrong channels.
 
-The zoo has no YOLO-pose and no YOLOX, which is why those two stay self-compiled.
-
-Design provenance (every API traceable to https://github.com/sima-neat/core):
-  * three-graph shuttle (source / model / video) — apps/multi-stream-yolo-yolo11/main.py
-  * NV12 RTSP source + video_sender groups — pyneat.groups (core/include/neat/node_groups.h)
-  * ModelOptions preprocess presets + BoxDecodeType — core/include/model/Model.h,
-    core/include/pipeline/BoxDecodeType.h
-  * push/pull named endpoints + RunOptions(queue_depth/overflow/preset) — core/include/pipeline/Run.h
-  * pyneat.decode_bbox / decode_pose / decode_segmentation read the BBOX payload the
-    on-device BoxDecode stage produced — core/python/src/module.cpp.
+The zoo publishes no yolo26s-pose (only the nano yolo_26n_pose) and no YOLOX, which is
+why those two are self-compiled.
 """
 from __future__ import annotations
 
@@ -65,7 +58,7 @@ DEFAULT_ARCHIVES = {
     # From the SiMa model zoo — see README "Model Download Command".
     "detection":    str(MODELS_DIR / "yolo_11s_mpk.tar.gz"),
     "segmentation": str(MODELS_DIR / "yolo_11s_seg_mpk.tar.gz"),
-    # Not published in the zoo (it has no YOLO-pose and no YOLOX), so these two are
+    # Not published in the zoo (it has no yolo26s-pose and no YOLOX), so these two are
     # built by the graph-surgery flow in ../../model-compilation.
     "pose":         str(MODELS_DIR / "yolo26s-pose.compile_ready_mpk.tar.gz"),
     "yolox":        str(MODELS_DIR / "yolox_s.compile_ready_mpk.tar.gz"),
@@ -110,15 +103,16 @@ class StreamSpec:
 
 @dataclass
 class Config:
-    rtsp_default: str = "rtsp://<rtsp-server-ip>:8555/stream"
-    udp_host: str = "<host-ip-that-receives-video>"
-    udp_port_base: int = 5206
-    udp_port_stride: int = 2
+    # Defaults match config/default.conf, so a key missing from the file behaves the same.
+    rtsp_default: str = "<rtsp-url>"
+    udp_host: str = "<host-ip>"
+    udp_port_base: int = 9000
+    udp_port_stride: int = 1
     model_width: int = 640
     model_height: int = 640
     width: int = 1280
     height: int = 720
-    fps: int = 30
+    fps: int = 60
     probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     latency_ms: int = 200
     score_threshold: float = 0.25
@@ -162,8 +156,8 @@ class Config:
     pull_timeout_ms: int = 20000
     # Execution target for the model's pre/post CVU stages. Pin to EV74: AUTO does not reliably
     # pick the accelerator.
-    cvu_pre_target: str = "AUTO"
-    cvu_post_target: str = "AUTO"
+    cvu_pre_target: str = "EV74"
+    cvu_post_target: str = "EV74"
     # Measure over a fixed wall-clock window, not a per-stream frame count, so slow and fast
     # streams are compared over the same interval.
     duration_s: float = 0.0
@@ -251,7 +245,7 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.serial = parse_bool(value)
     elif key == "no_overlay":
         cfg.no_overlay = parse_bool(value)
-    elif key in {"model_queue_depth", "output_queue_depth"}:
+    elif key in {"model_queue_depth", "output_queue_depth", "mode"}:
         # C++-ONLY knobs: config/default.conf is shared with main.cpp, so accept and ignore them here
         # rather than failing on an unknown key.
         pass
@@ -265,8 +259,10 @@ def resolve_app_path(value: str) -> Path:
 
 
 def load_config_file(cfg: Config, path: Path) -> None:
-    if not path.exists():
-        return
+    # A missing file is an error, not "run on the code defaults": that would quietly ignore
+    # every setting the user thinks they made.
+    if not path.is_file():
+        raise FileNotFoundError(f"config file not found: {path}")
     for n, raw in enumerate(path.read_text().splitlines(), 1):
         line = raw.split("#", 1)[0].strip()
         if not line:
@@ -479,7 +475,10 @@ class StreamContext:
     fps: int
     processed: int = 0
     last_objs: int = 0
-    dropped: int = 0
+    # Frames shed by the two drop-oldest queues. One counter per writer thread (source and
+    # model), so neither thread's `+=` can overwrite the other's update.
+    dropped_in: int = 0
+    dropped_out: int = 0
     pull_timeouts: int = 0
     model_q: object = None   # set by the pipelined engine
     out_q: object = None     # set by the pipelined engine
@@ -488,6 +487,10 @@ class StreamContext:
     # must be (processed - steady_base), not (processed - warmup).
     steady_base: int = 0
     profile: StageProfile = field(default_factory=StageProfile)
+
+    @property
+    def dropped(self) -> int:
+        return self.dropped_in + self.dropped_out
 
 
 # ── graph builders (NV12 shuttle; mirrors multi-stream-yolo-yolo11) ──────────
@@ -617,12 +620,14 @@ def make_nv12_input_options(w: int, h: int, fps: int):
     return o
 
 
-def make_model(cfg: Config, spec: StreamSpec):
+def model_options(cfg: Config, spec: StreamSpec):
+    """The ModelOptions for one stream. Shared with tools/pose_probe.py, so the probe builds the
+    model exactly as this app does."""
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
-    # The input_max_* envelope is NOT set, matching main.cpp: Neat derives it from the archive,
-    # and hand-setting it produced contradictory capacity bounds.
+    # input_max_width/height are NOT set: Neat derives them from the archive, and hand-setting
+    # them produced contradictory capacity bounds.
     opt.preprocess.input_max_depth = 3
     opt.preprocess.resize.enable = pyneat.AutoFlag.On
     opt.preprocess.resize.width = cfg.model_width
@@ -650,7 +655,11 @@ def make_model(cfg: Config, spec: StreamSpec):
     opt.num_classes = NUM_CLASSES[spec.task]
     # NOT setting boxdecode_original_width/height — deprecated in core/include/model/Model.h;
     # box decode reads the frame geometry from the preprocess metadata.
-    return pyneat.Model(spec.model_path, opt)
+    return opt
+
+
+def make_model(cfg: Config, spec: StreamSpec):
+    return pyneat.Model(spec.model_path, model_options(cfg, spec))
 
 
 # (build_source_graph removed. It built ONE rtsp_decoded_input graph -- and therefore
@@ -936,7 +945,9 @@ def crop_mask_to_box(mask, det, frame_w, frame_h, model_w, model_h):
     y2 = int(np.clip((det.y2 * scale + pad_y) / q, 0, mask.shape[0]))
     if x2 <= x1 or y2 <= y1:
         return None
-    return mask[y1:y2, x1:x2]
+    # Mask values are sigmoid * 255 (0 outside the box), so "inside" is > 127. annotate() uses
+    # the crop as a cv2 mask, where ANY non-zero pixel counts and almost the whole box would paint.
+    return (mask[y1:y2, x1:x2] > 127).view(np.uint8)
 
 
 def service_stream(cfg, ctx: StreamContext) -> bool:
@@ -1058,8 +1069,14 @@ def print_profile(contexts: list, wall_s: float, mode: str, no_overlay: bool) ->
 
 
 # ── probing + main loop ───────────────────────────────────────────────────────
+# A probed rate outside this range is not a camera frame rate (r_frame_rate can report a timebase
+# such as 90000/1, or a field rate), so it is treated as "could not probe".
+MIN_PROBED_FPS, MAX_PROBED_FPS = 1, 240
+
+
 def probe_stream(url: str, tcp: bool = True):
-    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+    """((width, height, fps), "") as the RTSP stream reports them, or (None, reason) if it
+    cannot be probed.
 
     Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
     a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
@@ -1071,10 +1088,15 @@ def probe_stream(url: str, tcp: bool = True):
         "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
         "-of", "default=nw=1", url]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "ffprobe is not installed on this machine (sudo apt install ffmpeg)"
+    except subprocess.TimeoutExpired:
+        return None, "ffprobe timed out"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"ffprobe failed: {exc}"
+    vals = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    err_lines = [line for line in proc.stderr.splitlines() if line.strip()]
 
     def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
         num, _, den = (text or "0").partition("/")
@@ -1082,14 +1104,19 @@ def probe_stream(url: str, tcp: bool = True):
             value = float(num) / float(den or 1)
         except (ValueError, ZeroDivisionError):
             return 0
-        return int(round(value)) if value > 0 else 0
+        fps = int(round(value)) if value > 0 else 0
+        return fps if MIN_PROBED_FPS <= fps <= MAX_PROBED_FPS else 0
 
     try:
         width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
     except ValueError:
-        return None
+        width = height = 0
+    if width <= 0 or height <= 0:
+        return None, (err_lines[-1] if err_lines else "no video stream found")
     fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
-    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+    if fps <= 0:
+        return None, f"no usable frame rate (expected {MIN_PROBED_FPS}..{MAX_PROBED_FPS} fps)"
+    return (width, height, fps), ""
 
 
 def resolve_stream_geometry(cfg, specs):
@@ -1100,11 +1127,18 @@ def resolve_stream_geometry(cfg, specs):
     """
     if not cfg.probe_source:
         return
-    probed = {s.stream_id: probe_stream(s.rtsp_url, cfg.tcp) for s in specs}
-    found = {sid: g for sid, g in probed.items() if g is not None}
-    for sid, g in probed.items():
-        if g is None:
-            print(f"[warn] could not probe stream {sid} with ffprobe", file=sys.stderr, flush=True)
+    found = {}
+    for s in specs:
+        geometry, reason = probe_stream(s.rtsp_url, cfg.tcp)
+        if geometry is not None:
+            found[s.stream_id] = geometry
+        elif reason.startswith("ffprobe is not installed"):
+            print(f"[warn] cannot read the streams' resolution and frame rate: {reason}",
+                  file=sys.stderr, flush=True)
+            break
+        else:
+            print(f"[warn] could not probe stream {s.stream_id} ({s.rtsp_url}) with ffprobe: "
+                  f"{reason}", file=sys.stderr, flush=True)
     if not found:
         print(f"[warn] using the config's {cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
         return
@@ -1135,10 +1169,24 @@ def build_run_options(cfg, *, model: bool = False):
     return ro
 
 
+def check_placeholders(cfg: Config, specs) -> None:
+    """The shipped config carries <...> placeholders. Refuse to start on one rather than wait on
+    ffprobe and then fail inside GStreamer (or stream to a host literally named "<host-ip>")."""
+    if cfg.udp_host.startswith("<"):
+        raise ValueError(f"udp_host is still the placeholder '{cfg.udp_host}': set udp_host in "
+                         "the config to the IP of the machine that receives the video")
+    for s in specs:
+        if s.rtsp_url.startswith("<"):
+            key = f"stream{s.stream_id}_rtsp" if s.stream_id in cfg._rtsp else "rtsp_default"
+            raise ValueError(f"{key} is still the placeholder '{s.rtsp_url}': set {key} in the "
+                             "config (or pass --rtsp) to your RTSP URL")
+
+
 def run(cfg: Config) -> int:
     load_runtime_dependencies()
     os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
     specs = cfg.stream_specs()
+    check_placeholders(cfg, specs)
     for s in specs:
         if not Path(s.model_path).exists():
             raise FileNotFoundError(f"stream {s.stream_id} ({s.task}) archive not found: {s.model_path}")
@@ -1290,7 +1338,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                 tensor = make_nv12_tensor(nv12, fw, fh)
                 prep_ms = (time.perf_counter() - mark) * 1000.0
 
-                ctx.dropped += _drop_oldest_put(
+                ctx.dropped_in += _drop_oldest_put(
                     ctx.model_q, (nv12, tensor, fw, fh, decode_ms, prep_ms, time.perf_counter()))
         except Exception as exc:
             errors.append(f"source {ctx.spec.stream_id}: {exc}")
@@ -1343,7 +1391,7 @@ def run_pipelined(cfg, contexts: list, warmup: int) -> int:
                         continue
                     nv12, fw, fh, decode_ms, prep_ms, t_in, push_mark = pending.pop(0)
                     infer_ms = (time.perf_counter() - push_mark) * 1000.0
-                    ctx.dropped += _drop_oldest_put(
+                    ctx.dropped_out += _drop_oldest_put(
                         ctx.out_q, (nv12, sample, fw, fh, decode_ms, prep_ms, infer_ms, t_in))
         except Exception as exc:
             errors.append(f"model {ctx.spec.stream_id}: {exc}")

@@ -52,7 +52,7 @@ One model, four ways of running it:
 
 The model is Ultralytics' published `yolo26s.pt` (10.0 M parameters,
 AGPL-3.0), downloaded by `compile/convert_to_onnx.py`. The bf16 and INT8 archives were compiled from
-it in the Neat SDK 2.1.3 (Model Compiler 2.1.0) and run on a Modalix DevKit with Neat 0.4.0.
+it in the Neat SDK 2.1.3 and run on a Modalix DevKit with Neat 0.4.0.
 These numbers have not been re-measured on Neat 0.5.0 / SDK 2.1.3.1. The study decodes on the host,
 so the Neat 0.5.0 `YoloV26` decoder change does not affect it.
 
@@ -172,6 +172,7 @@ contributes.
 
 Build either with the same four steps; only `compiler.py --precision` changes
 ([COMPILE-COMMANDS.md, section 14](COMPILE-COMMANDS.md#14-yolo26s--detection-int8-and-bf16-accuracy-study)).
+Each model's default precision, and how to build or check the other: [`PRECISION.md`](PRECISION.md).
 
 ---
 

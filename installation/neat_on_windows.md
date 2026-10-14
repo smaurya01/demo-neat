@@ -53,7 +53,7 @@ Windows 11 (host)
 │
 ├── WSL2  ──────────────────────────►  Ubuntu 22.04 / 24.04
 │                                         ├── Docker (Engine via WSL integration)
-│                                         ├── Python 3.12+  +  pip
+│                                         ├── Python 3.10+  +  pip
 │                                         ├── sima-cli
 │                                         └── NEAT SDK / NEAT Core / PyNeat
 │
@@ -88,7 +88,7 @@ What you are installing and how the pieces fit together — the same NEAT softwa
 - [ ] WSL2 installed with Ubuntu 22.04 / 24.04 — [Step 2](#2-install-wsl2--ubuntu)
 - [ ] WSL networking set to **mirrored** (needed for DevKit Sync) — [Step 3](#3-configure-wsl-networking)
 - [ ] Docker working **inside Ubuntu** (`docker ps`) — [Step 4](#4-install-docker-with-wsl2-integration)
-- [ ] Python 3.12+ and pip available **inside Ubuntu** — [Step 5](#5-verify-python-and-pip-inside-wsl)
+- [ ] Python 3.10+ and pip available **inside Ubuntu** — [Step 5](#5-verify-python-and-pip-inside-wsl)
 - [ ] `sima-cli` installed **inside Ubuntu** and logged in — [Step 6](#6-install-sima-cli-inside-wsl) / [Step 7](#7-log-in-to-the-sima-developer-portal)
 - [ ] NEAT SDK installed — [Step 8](#8-install-the-neat-sdk)
 - [ ] DevKit reachable and paired — [Step 9](#9-pair-with-the-modalix-devkit)
@@ -249,10 +249,10 @@ docker ps          # should list containers (empty is fine), no permission error
 
 ## 5. Verify Python and pip inside WSL
 
-`sima-cli` needs **Python 3.12 or newer** with `pip` and `venv`, **inside Ubuntu**.
+`sima-cli` needs **Python 3.10 or newer** with `pip` and `venv`, **inside Ubuntu**.
 
 ```bash
-python3 --version   # should be >= 3.12
+python3 --version   # should be >= 3.10
 pip3 --version
 ```
 
@@ -345,13 +345,6 @@ The initial download can take several minutes and may show no progress bar. Afte
 
 ![NEAT SDK install — pulling the container image](images/windows/sima-neat-install.png)
 
-> **Older SDK releases (legacy two-step install).** For SDK **2.0.0, 2.1.2.0, or 2.1.2.1**, use the legacy image-pull + setup flow instead — pull the image that matches your board, then run setup separately:
->
-> ```bash
-> sima-cli install ghcr:sima-neat/sdk:v2.0.0   # match the tag to your board
-> sima-cli sdk setup --devkit <devkit-ip>
-> ```
-
 References:
 
 - https://developer.sima.ai/software/getting-started/dev-environment/install-the-environment#install
@@ -433,19 +426,13 @@ Walk through the prompts (your DevKit IP, workspace path, and container name wil
 
    ![SDK extensions directory and NFS export](images/windows/Install_5.png)
 
-6. **Container start sequence.** If the SDK container already exists, setup asks `Remove and recreate it? [Y/n]`. For **second and later runs**, press `n` to reuse the existing container. For a **first-time** setup (or to rebuild), press `Y`.
+6. **Container start sequence.** If the SDK container already exists, setup asks `Container '…' already exists. Remove and recreate it? [Y/n]`. The default is `Y`, so pressing `Enter` removes the container and recreates it. For **second and later runs**, type `n` to reuse the existing container. Answer `Y` only on a **first-time** setup or when you want to rebuild.
 
    ![Container already exists — remove and recreate prompt](images/windows/Install_6.png)
 
 7. **DevKit connection.** Setup copies user accounts into the container, configures the DevKit NFS client, and shares `/workspace` bi-directionally. At `Destination mount path on DevKit [/workspace]`, press `Enter` to accept the default. Pairing is complete.
 
    ![DevKit connection setup and mount path](images/windows/Install_7.png)
-
-Open the SDK shell at any time with:
-
-```bash
-sima-cli sdk neat
-```
 
 References:
 
@@ -474,7 +461,7 @@ The installer needs a one-time device login. It tries to open a browser, but in 
 
 ![Model Compiler install — device login link](images/windows/model-compiler-device-login.png)
 
-After you sign in, the terminal greets you and downloads the package (~180 MB download, ~9 GB installed):
+After you sign in, the terminal greets you and downloads the package (~180 MB download; the installer needs about 20 GB of disk):
 
 ![Model Compiler install — signed in and downloading](images/windows/model-compiler-download.png)
 
@@ -484,7 +471,7 @@ If the installer stops with `Missing required system packages` and `Installation
 
 ```bash
 sudo apt-get update && sudo apt-get install -y cmake libbz2-dev libffi-dev libllvm18 liblzma-dev libopenblas0-pthread libreadline-dev libsqlite3-dev libssl-dev tk-dev
-sima-cli install -v 2.1.3 tools/model-compiler/amd64   # rerun for your architecture
+sima-cli install -v 2.1.3 tools/model-compiler/amd64   # rerun the same install command
 ```
 
 ![Model Compiler install — missing packages and the recommended apt command](images/windows/model-compiler-missing-packages.png)
@@ -539,7 +526,7 @@ Reference: https://developer.sima.ai/software/compile-a-model/
 
    ```python
    import pyneat
-   print("PyNeat import successful")
+   print("pyneat import successful")
    ```
 
    Run it with `dk hello_neat.py` to confirm runtime availability on the Modalix DevKit.
@@ -565,7 +552,7 @@ Reference: https://developer.sima.ai/software/develop-apps/hello-neat/minimal/
 Tips:
 
 - Use the shared `/workspace` (set by pairing) instead of copying files between host and DevKit.
-- **NEAT Insight** runs inside the SDK for inspecting streams, files, and logs. On a Windows direct-link (ICS) setup, open it **locally** at `https://localhost:9900` — firewall and WSL port-forwarding constraints prevent reaching it remotely from other machines on the network. See [neat_insight.md](neat_insight.md).
+- **NEAT Insight** runs inside the SDK for inspecting streams, files, and logs. On a Windows direct-link (ICS) setup, open it **locally** at the **Insight (local)** URL from `neat`, usually `https://127.0.0.1:9900` — firewall and WSL port-forwarding constraints prevent reaching it remotely from other machines on the network. See [neat_insight.md](neat_insight.md).
 
 ---
 

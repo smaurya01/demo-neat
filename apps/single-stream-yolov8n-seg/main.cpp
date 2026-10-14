@@ -16,11 +16,12 @@
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <sys/wait.h>
 
 namespace neat = simaai::neat;
 namespace groups = simaai::neat::nodes::groups;
@@ -38,10 +39,10 @@ void handle_signal(int) {
 
 struct Config {
   std::string rtsp_url;
-  std::string model_path;
+  std::string model_path = "./assets/models/yolo_v8n_seg_mpk.tar.gz";
   int width = 1280;
   int height = 720;
-  int fps = 25;
+  int fps = 60;
   bool probe_source = true;  // read width/height/fps from the stream
   int model_width = 640;
   int model_height = 640;
@@ -52,7 +53,7 @@ struct Config {
   int num_classes = 80;
   int frames = 0;
   std::string udp_host;
-  int udp_port_base = 0;
+  int udp_port = 9000;
   int bitrate_kbps = 4000;
   bool tcp = true;
   bool print_backend = false;
@@ -149,7 +150,7 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   } else if (key == "fps") {
     cfg.fps = to_int(key, value);
   } else if (key == "probe_source") {
-    cfg.probe_source = value == "true" || value == "1" || value == "yes";
+    cfg.probe_source = to_bool(value);
   } else if (key == "model_width") {
     cfg.model_width = to_int(key, value);
   } else if (key == "model_height") {
@@ -168,8 +169,8 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
     cfg.frames = to_int(key, value);
   } else if (key == "udp_host") {
     cfg.udp_host = value;
-  } else if (key == "udp_port_base") {
-    cfg.udp_port_base = to_int(key, value);
+  } else if (key == "udp_port" || key == "udp_port_base") {  // udp_port_base: older name
+    cfg.udp_port = to_int(key, value);
   } else if (key == "bitrate_kbps") {
     cfg.bitrate_kbps = to_int(key, value);
   } else if (key == "rtsp_transport") {
@@ -220,13 +221,26 @@ Config read_config() {
   return cfg;
 }
 
+// The shipped config has placeholders (`<rtsp-url>`, `<host-ip>`). Catch them here with a clear
+// message instead of a slow ffprobe timeout and an obscure GStreamer error later.
+void require_set(const std::string& key, const std::string& value) {
+  if (value.empty() || value.front() == '<') {
+    throw std::runtime_error(std::string("set ") + key + " in " + kConfigPath + " (currently '" +
+                             value + "')");
+  }
+}
+
+void validate_config(const Config& cfg) {
+  require_set("rtsp_url", cfg.rtsp_url);
+  require_set("udp_host", cfg.udp_host);
+}
+
 struct ModelSpec {
   std::string name;
   std::string path;
-  std::optional<neat::BoxDecodeType> decode_type;
+  neat::BoxDecodeType decode_type = neat::BoxDecodeType::YoloV8Seg;
   int model_width = 640;
   int model_height = 640;
-  bool coco_yolo_preprocess = true;
 };
 
 struct ModelRuntime {
@@ -237,6 +251,7 @@ struct ModelRuntime {
   neat::Graph udp_graph;
   neat::Run udp_run;
   int udp_port = 0;
+  bool pushed = false;  // this frame reached the model, so there is a result to pull
   int processed = 0;
   int last_visible_boxes = -1;
   Clock::time_point inference_begin;
@@ -296,7 +311,7 @@ std::string class_label(int class_id) {
 
 std::vector<ModelSpec> make_specs(const Config& cfg) {
   return {{"yolov8n-seg", cfg.model_path, neat::BoxDecodeType::YoloV8Seg,
-           cfg.model_width, cfg.model_height, true}};
+           cfg.model_width, cfg.model_height}};
 }
 
 std::unique_ptr<neat::Model> make_model(const Config& cfg, const ModelSpec& spec) {
@@ -313,23 +328,12 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const ModelSpec& spec
   opt.preprocess.color_convert.input_format = neat::PreprocessColorFormat::NV12;
   opt.preprocess.color_convert.output_format = neat::PreprocessColorFormat::RGB;
   opt.preprocess.resize.mode = neat::ResizeMode::Letterbox;
-  if (spec.coco_yolo_preprocess) {
-    opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
-  } else {
-    opt.preprocess.preset = neat::NormalizePreset::None;
-    opt.preprocess.resize.enable = neat::AutoFlag::On;
-    opt.preprocess.normalize.enable = neat::AutoFlag::On;
-    opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
-    opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
-    opt.preprocess.normalize.has_explicit_stats = true;
-  }
-  if (spec.decode_type.has_value()) {
-    opt.decode_type = *spec.decode_type;
-    opt.score_threshold = cfg.score_threshold;
-    opt.nms_iou_threshold = cfg.nms_iou;
-    opt.top_k = cfg.top_k;
-    opt.num_classes = cfg.num_classes;
-  }
+  opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
+  opt.decode_type = spec.decode_type;
+  opt.score_threshold = cfg.score_threshold;
+  opt.nms_iou_threshold = cfg.nms_iou;
+  opt.top_k = cfg.top_k;
+  opt.num_classes = cfg.num_classes;
   return std::make_unique<neat::Model>(spec.path, opt);
 }
 
@@ -362,7 +366,7 @@ neat::Graph make_source_pipeline(const Config& cfg) {
   neat::Graph app("seg_source");
   app.add(source);
   // EveryFrame(4), not Latest(): Latest() changed meaning in 0.3.0 (max_buffers=1, drop=true)
-  // and measured 55.1 vs 60.8 fps here.
+  // and costs frame rate here.
   // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
   auto frame_out = neat::OutputOptions::EveryFrame(4);
   frame_out.drop = true;
@@ -511,24 +515,6 @@ std::uint8_t* nv12_uv_plane(neat::Tensor& tensor, int width, int height) {
          static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
 }
 
-void draw_nv12_point(neat::Tensor& frame, int width, int height, int x, int y,
-                     const Nv12Color& color) {
-  if (x < 0 || y < 0 || x >= width || y >= height) {
-    return;
-  }
-  auto* y_plane = nv12_y_plane(frame, width, height);
-  auto* uv_plane = nv12_uv_plane(frame, width, height);
-  y_plane[static_cast<std::size_t>(y) * width + x] = color.y;
-
-  const int uv_x = x & ~1;
-  const int uv_y = y / 2;
-  if (uv_x + 1 < width && uv_y >= 0 && uv_y < height / 2) {
-    const std::size_t offset = static_cast<std::size_t>(uv_y) * width + uv_x;
-    uv_plane[offset] = color.u;
-    uv_plane[offset + 1] = color.v;
-  }
-}
-
 void fill_nv12_rect(neat::Tensor& frame, int width, int height, int x1, int y1, int x2, int y2,
                     const Nv12Color& color) {
   x1 = std::max(0, std::min(x1, width));
@@ -567,42 +553,6 @@ void draw_nv12_line_h(neat::Tensor& frame, int width, int height, int x1, int x2
 void draw_nv12_line_v(neat::Tensor& frame, int width, int height, int x, int y1, int y2,
                       int thickness, const Nv12Color& color) {
   fill_nv12_rect(frame, width, height, x, y1, x + thickness, y2, color);
-}
-
-void draw_nv12_line(neat::Tensor& frame, int width, int height, int x1, int y1, int x2, int y2,
-                    int thickness, const Nv12Color& color) {
-  const int dx = std::abs(x2 - x1);
-  const int sx = x1 < x2 ? 1 : -1;
-  const int dy = -std::abs(y2 - y1);
-  const int sy = y1 < y2 ? 1 : -1;
-  int err = dx + dy;
-  while (true) {
-    fill_nv12_rect(frame, width, height, x1 - thickness / 2, y1 - thickness / 2,
-                   x1 + thickness / 2 + 1, y1 + thickness / 2 + 1, color);
-    if (x1 == x2 && y1 == y2) {
-      break;
-    }
-    const int e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x1 += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y1 += sy;
-    }
-  }
-}
-
-void draw_nv12_circle(neat::Tensor& frame, int width, int height, int cx, int cy, int radius,
-                      const Nv12Color& color) {
-  for (int y = -radius; y <= radius; ++y) {
-    for (int x = -radius; x <= radius; ++x) {
-      if (x * x + y * y <= radius * radius) {
-        draw_nv12_point(frame, width, height, cx + x, cy + y, color);
-      }
-    }
-  }
 }
 
 void draw_nv12_box(neat::Tensor& frame, int width, int height, const neat::Box& box,
@@ -735,16 +685,6 @@ std::vector<neat::Box> boxes_from_decoded_tensor(const neat::Tensor& tensor) {
     boxes.push_back(neat::Box{row[0], row[1], row[2], row[3], row[4], static_cast<int>(row[5])});
   }
   return boxes;
-}
-
-std::vector<neat::Box> decode_boxes_from_sample(const neat::Sample& sample, int width, int height,
-                                                int top_k) {
-  const auto tensors = neat::tensors_from_sample(sample, false);
-  if (tensors.empty()) {
-    return {};
-  }
-  const auto decoded = neat::decode_bbox_tensor(tensors.front(), width, height, top_k, false);
-  return decoded.boxes;
 }
 
 std::uint8_t blend_u8(std::uint8_t base, std::uint8_t overlay, float alpha) {
@@ -930,14 +870,7 @@ void draw_model_overlay(neat::Tensor& frame, ModelRuntime& runtime, const neat::
 
   const Nv12Color white{235, 128, 128};
   const Nv12Color black{16, 128, 128};
-  const Nv12Color green{210, 40, 40};
-  const Nv12Color blue{90, 240, 110};
-  const Nv12Color orange{190, 80, 210};
-  const Nv12Color magenta{160, 210, 190};
-  const Nv12Color model_color = runtime.spec.name == "yolov8n"       ? green
-                                : runtime.spec.name == "yolo26n"     ? orange
-                                : runtime.spec.name == "yolov8n-seg" ? blue
-                                                                       : magenta;
+  const Nv12Color model_color{90, 240, 110};  // blue
 
   fill_nv12_rect(frame, width, height, 0, 0, width, 34, black);
   draw_nv12_text(frame, width, height, 10, 8, runtime.spec.name, model_color, 2);
@@ -986,15 +919,21 @@ struct StreamGeometry {
   int width = 0;
   int height = 0;
   int fps = 0;
+  std::string error;  // why the probe failed, for the warning
 };
 
-// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0. A rate outside
+// 1..240 fps (for example an RTP clock rate such as 90000/1) is not a frame rate: also 0.
 int fps_from_rate(const std::string& rate) {
   try {
     const auto slash = rate.find('/');
     const double num = std::stod(rate.substr(0, slash));
     const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
-    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+    if (num <= 0.0 || den <= 0.0) {
+      return 0;
+    }
+    const long fps = std::lround(num / den);
+    return (fps >= 1 && fps <= 240) ? static_cast<int>(fps) : 0;
   } catch (...) {
     return 0;
   }
@@ -1011,36 +950,44 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
                               "-timeout 5000000 -select_streams v:0 "
                               "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
                               "-of default=nw=1 " +
-                              quoted + " 2>/dev/null";
+                              quoted + " 2>&1";
   StreamGeometry g;
   int avg_fps = 0;
   int r_fps = 0;
-  if (FILE* pipe = popen(command.c_str(), "r")) {
-    char buffer[256];
-    while (std::fgets(buffer, sizeof(buffer), pipe)) {
-      std::string line(buffer);
-      while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-        line.pop_back();
-      }
-      const auto eq = line.find('=');
-      if (eq == std::string::npos) {
-        continue;
-      }
-      const std::string key = line.substr(0, eq);
-      const std::string value = line.substr(eq + 1);
-      if (key == "width") {
-        g.width = std::atoi(value.c_str());
-      } else if (key == "height") {
-        g.height = std::atoi(value.c_str());
-      } else if (key == "avg_frame_rate") {
-        avg_fps = fps_from_rate(value);
-      } else if (key == "r_frame_rate") {
-        r_fps = fps_from_rate(value);
-      }
-    }
-    pclose(pipe);
+  std::string last_message;  // last line that is not one of the values asked for (stderr)
+  FILE* pipe = popen(command.c_str(), "r");
+  if (!pipe) {
+    g.error = "could not start ffprobe";
+    return g;
   }
+  char buffer[256];
+  while (std::fgets(buffer, sizeof(buffer), pipe)) {
+    std::string line(buffer);
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+      line.pop_back();
+    }
+    const auto eq = line.find('=');
+    const std::string key = eq == std::string::npos ? std::string() : line.substr(0, eq);
+    const std::string value = eq == std::string::npos ? std::string() : line.substr(eq + 1);
+    if (key == "width") {
+      g.width = std::atoi(value.c_str());
+    } else if (key == "height") {
+      g.height = std::atoi(value.c_str());
+    } else if (key == "avg_frame_rate") {
+      avg_fps = fps_from_rate(value);
+    } else if (key == "r_frame_rate") {
+      r_fps = fps_from_rate(value);
+    } else if (!trim(line).empty()) {
+      last_message = trim(line).substr(0, 200);
+    }
+  }
+  const int status = pclose(pipe);
   g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+    g.error = "ffprobe not installed (sudo apt install ffmpeg)";
+  } else if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+    g.error = last_message.empty() ? "no usable video stream reported" : "ffprobe: " + last_message;
+  }
   return g;
 }
 
@@ -1051,9 +998,10 @@ void apply_stream_geometry(Config& cfg) {
     return;
   }
   const StreamGeometry g = probe_stream(cfg.rtsp_url, cfg.tcp);
-  if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
-    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " with ffprobe; using the config's "
-              << cfg.width << "x" << cfg.height << "@" << cfg.fps << "\n";
+  if (!g.error.empty()) {
+    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " (" << g.error
+              << "); using the config's " << cfg.width << "x" << cfg.height << "@" << cfg.fps
+              << "\n";
     return;
   }
   if (g.width != cfg.width || g.height != cfg.height || g.fps != cfg.fps) {
@@ -1075,6 +1023,7 @@ int main() {
 
   try {
     Config cfg = read_config();
+    validate_config(cfg);
     apply_stream_geometry(cfg);
     const auto specs = make_specs(cfg);
 
@@ -1089,7 +1038,7 @@ int main() {
     for (std::size_t i = 0; i < specs.size(); ++i) {
       ModelRuntime rt;
       rt.spec = specs[i];
-      rt.udp_port = cfg.udp_port_base + static_cast<int>(i);
+      rt.udp_port = cfg.udp_port + static_cast<int>(i);
       rt.model = make_model(cfg, rt.spec);
       rt.model_graph = make_model_pipeline(cfg, *rt.model, rt.spec.name);
       rt.udp_graph = make_udp_pipeline(cfg, rt.udp_port, rt.spec.name);
@@ -1127,6 +1076,11 @@ int main() {
     int processed = 0;
     const auto start = Clock::now();
     Clock::time_point steady_start = start;
+    // Give up after a few consecutive source timeouts, so a dead source ends the run (and a
+    // frames=N smoke test stays bounded) instead of warning every 20 s forever.
+    constexpr int kMaxSourceTimeouts = 3;
+    int source_timeouts = 0;
+    bool model_closed = false;
     while (!g_stop.load() && (cfg.frames == 0 || processed < cfg.frames)) {
       neat::Sample frame_sample;
       neat::PullError frame_error;
@@ -1134,9 +1088,17 @@ int main() {
       auto status = source_run.pull("frame", 20000, frame_sample, &frame_error);
       const auto decoder_end = Clock::now();
       if (status == neat::PullStatus::Timeout) {
-        std::cerr << "[warn] timed out waiting for RTSP frame\n";
+        ++source_timeouts;
+        std::cerr << "[warn] timed out waiting for RTSP frame (" << source_timeouts << "/"
+                  << kMaxSourceTimeouts << ")\n";
+        if (source_timeouts >= kMaxSourceTimeouts) {
+          std::cerr << "[err] no RTSP frame after " << kMaxSourceTimeouts
+                    << " consecutive timeouts; giving up\n";
+          break;
+        }
         continue;
       }
+      source_timeouts = 0;
       if (status == neat::PullStatus::Closed) {
         std::cerr << "RTSP source closed\n";
         break;
@@ -1155,13 +1117,16 @@ int main() {
         rt.current_profile = {};
         rt.current_profile.decoder_ms = ms_since(decoder_begin, decoder_end);
         rt.inference_begin = Clock::now();
-        if (!rt.model_run.push("image", neat::TensorList{frame_tensors.front()})) {
+        rt.pushed = rt.model_run.push("image", neat::TensorList{frame_tensors.front()});
+        if (!rt.pushed) {
           std::cerr << "[warn] failed to push frame to " << rt.spec.name << "\n";
-          continue;
         }
       }
 
       for (auto& rt : runtimes) {
+        if (!rt.pushed) {
+          continue;  // nothing in flight for this frame: do not wait 20 s on the pull
+        }
         neat::Sample model_sample;
         neat::PullError pull_error;
         status = rt.model_run.pull("result", 20000, model_sample, &pull_error);
@@ -1182,7 +1147,8 @@ int main() {
         }
         if (status == neat::PullStatus::Closed) {
           std::cerr << rt.spec.name << " model pipeline closed\n";
-          continue;
+          model_closed = true;
+          break;
         }
         if (status != neat::PullStatus::Ok) {
           throw std::runtime_error("failed to pull " + rt.spec.name + ": " + pull_error.message);
@@ -1234,6 +1200,9 @@ int main() {
                     << ", encoder=" << avg.encoder_ms
                     << ", total=" << avg.total_ms() << ")\n";
         }
+      }
+      if (model_closed) {
+        break;
       }
 
       ++processed;

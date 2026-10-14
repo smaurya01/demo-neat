@@ -40,12 +40,12 @@ PALETTE = [
 
 @dataclass
 class Config:
-    rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
+    rtsp_url: str = "<rtsp-url>"
     model_path: str = ""
     models_dir: str = ""
     width: int = 1280
     height: int = 720
-    fps: int = 25
+    fps: int = 60
     probe_source: bool = True  # read width/height/fps from the stream (ffprobe)
     model_width: int = 640
     model_height: int = 640
@@ -55,9 +55,8 @@ class Config:
     top_k: int = 100
     num_classes: int = 80
     frames: int = 0
-    udp_host: str = "<host-ip-that-receives-video>"
-    udp_port: int = 0
-    udp_port_base: int = 0
+    udp_host: str = "<host-ip>"
+    udp_port: int = 9000
     bitrate_kbps: int = 4000
     tcp: bool = True
     print_backend: bool = False
@@ -110,10 +109,6 @@ def load_runtime_dependencies() -> None:
     pyneat = pyneat_module
 
 
-def project_name() -> str:
-    return Path(__file__).resolve().parent.name
-
-
 def default_config_path() -> Path:
     return Path(__file__).resolve().parent / "config" / "default.conf"
 
@@ -126,14 +121,7 @@ def resolve_app_path(value: str) -> Path:
 
 
 def model_spec() -> tuple[str, str]:
-    name = project_name()
-    if name == "single-stream-yolov8n-seg":
-        return "yolov8n-seg", "yolo_v8n_seg_mpk.tar.gz"
-    if name == "single-stream-yolo26n":
-        return "yolo26n", "yolo26n-det-bf16-mla_tess-b1.tar.gz"
-    if name == "single-stream-yolo-yolov8m":
-        return "yolov8m", "yolo_v8m_mpk.tar.gz"
-    return "yolov8n", "yolo_v8n_mpk.tar.gz"
+    return "yolov8n-seg", "yolo_v8n_seg_mpk.tar.gz"
 
 
 def parse_bool(value: str) -> bool:
@@ -178,10 +166,8 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.frames = int(value)
     elif key == "udp_host":
         cfg.udp_host = value
-    elif key == "udp_port":
+    elif key in {"udp_port", "udp_port_base"}:  # udp_port_base: older name, same meaning
         cfg.udp_port = int(value)
-    elif key == "udp_port_base":
-        cfg.udp_port_base = int(value)
     elif key == "bitrate_kbps":
         cfg.bitrate_kbps = int(value)
     elif key == "rtsp_transport":
@@ -191,10 +177,17 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         cfg.tcp = transport == "tcp"
     elif key == "print_backend":
         cfg.print_backend = parse_bool(value)
-    elif key in {"only", "allow_missing", "load_only"}:
-        return
     else:
         raise ValueError(f"unknown config key: {key}")
+
+
+def strip_comment(line: str) -> str:
+    """Cut a comment only where '#' starts the line or follows whitespace (as the C++ app does),
+    so a value that contains '#' -- an RTSP password, say -- survives."""
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
 
 
 def load_config_file(cfg: Config, path: Path, required: bool) -> None:
@@ -203,7 +196,7 @@ def load_config_file(cfg: Config, path: Path, required: bool) -> None:
             raise FileNotFoundError(f"config file not found: {path}")
         return
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.split("#", 1)[0].strip()
+        line = strip_comment(raw).strip()
         if not line:
             continue
         if "=" not in line:
@@ -268,10 +261,11 @@ def parse_args(argv: list[str] | None) -> Config:
         cfg.frames = args.frames
     if args.udp_host is not None:
         cfg.udp_host = args.udp_host
+    # Command line beats the config; --udp-port-base is the older name for --udp-port.
     if args.udp_port is not None:
         cfg.udp_port = args.udp_port
-    if args.udp_port_base is not None:
-        cfg.udp_port_base = args.udp_port_base
+    elif args.udp_port_base is not None:
+        cfg.udp_port = args.udp_port_base
     if args.bitrate is not None:
         cfg.bitrate_kbps = args.bitrate
     if args.rtsp_udp:
@@ -290,13 +284,13 @@ def resolve_model_path(cfg: Config) -> str:
 
 
 def validate_config(cfg: Config) -> None:
-    if not cfg.rtsp_url:
-        raise ValueError("RTSP URL must not be empty")
-    if not cfg.udp_host:
-        raise ValueError("UDP host must not be empty")
-    # udp_port wins only when it was actually set. `cfg.udp_port or cfg.udp_port_base` made a
-    # truthy config value beat an explicit --udp-port-base flag, silently.
-    port = cfg.udp_port if cfg.udp_port > 0 else cfg.udp_port_base
+    # The shipped config has placeholders (`<rtsp-url>`, `<host-ip>`). Catch them here with a
+    # clear message instead of a slow ffprobe timeout and an obscure GStreamer error later.
+    for key, flag, value in (("rtsp_url", "--rtsp", cfg.rtsp_url),
+                             ("udp_host", "--udp-host", cfg.udp_host)):
+        if not value or value.startswith("<"):
+            raise ValueError(f"set {key} in the config (or pass {flag}); currently '{value}'")
+    port = cfg.udp_port
     if port <= 0 or port > 65535:
         raise ValueError("UDP port must be in 1..65535")
     model_path = Path(resolve_model_path(cfg))
@@ -305,7 +299,7 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_stream(url: str, tcp: bool = True):
-    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+    """((width, height, fps), "") as the RTSP stream reports them, or (None, reason) on failure.
 
     Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
     a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
@@ -317,10 +311,14 @@ def probe_stream(url: str, tcp: bool = True):
         "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
         "-of", "default=nw=1", url]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "ffprobe not installed (sudo apt install ffmpeg)"
+    except subprocess.TimeoutExpired:
+        return None, "ffprobe timed out"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"ffprobe failed: {exc}"
+    vals = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
 
     def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
         num, _, den = (text or "0").partition("/")
@@ -328,22 +326,27 @@ def probe_stream(url: str, tcp: bool = True):
             value = float(num) / float(den or 1)
         except (ValueError, ZeroDivisionError):
             return 0
-        return int(round(value)) if value > 0 else 0
+        fps = int(round(value)) if value > 0 else 0
+        # Outside 1..240 it is not a frame rate (e.g. an RTP clock rate such as 90000/1).
+        return fps if 1 <= fps <= 240 else 0
 
     try:
         width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
     except ValueError:
-        return None
+        width = height = 0
     fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
-    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+    if width > 0 and height > 0 and fps > 0:
+        return (width, height, fps), ""
+    errors = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+    return None, f"ffprobe: {errors[-1][:200]}" if errors else "no usable video stream reported"
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
     """Width, height and fps from the stream itself; the config's values only if probing fails."""
-    probed = probe_stream(cfg.rtsp_url, cfg.tcp) if cfg.probe_source else None
+    probed, reason = probe_stream(cfg.rtsp_url, cfg.tcp) if cfg.probe_source else (None, "")
     if probed is None:
         if cfg.probe_source:
-            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe; using the config's "
+            print(f"[warn] could not probe {cfg.rtsp_url} ({reason}); using the config's "
                   f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
         return cfg.width, cfg.height, cfg.fps
     if probed != (cfg.width, cfg.height, cfg.fps):
@@ -351,7 +354,6 @@ def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
               f"{cfg.width}x{cfg.height}@{cfg.fps}); using the stream's values", flush=True)
     cfg.width, cfg.height, cfg.fps = probed
     return probed
-
 
 
 def make_source_options(cfg: Config, width: int, height: int, fps: int):
@@ -377,7 +379,6 @@ def make_source_options(cfg: Config, width: int, height: int, fps: int):
 
 
 def make_model(cfg: Config, source_width: int = 0, source_height: int = 0):
-    name, _filename = model_spec()
     opt = pyneat.ModelOptions()
     opt.preprocess.kind = pyneat.InputKind.Image
     opt.preprocess.enable = pyneat.AutoFlag.On
@@ -398,41 +399,12 @@ def make_model(cfg: Config, source_width: int = 0, source_height: int = 0):
     opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
     opt.preprocess.resize.pad_value = 114
     opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
-    if name == "yolo26n":
-        opt.decode_type = pyneat.BoxDecodeType.YoloV26
-    elif name == "yolov8n-seg":
-        opt.decode_type = pyneat.BoxDecodeType.YoloV8Seg
-    else:
-        opt.decode_type = pyneat.BoxDecodeType.YoloV8
+    opt.decode_type = pyneat.BoxDecodeType.YoloV8Seg
     opt.score_threshold = cfg.score_threshold
     opt.nms_iou_threshold = cfg.nms_iou
     opt.top_k = cfg.top_k
     opt.num_classes = cfg.num_classes
     return pyneat.Model(resolve_model_path(cfg), opt)
-
-
-def build_inference_graph(cfg: Config, width: int, height: int, fps: int):
-    source = pyneat.groups.rtsp_decoded_input(make_source_options(cfg, width, height, fps))
-    branch = pyneat.graphs.branch("source", ["frame", "model"])
-
-    frame_graph = pyneat.Graph("frame")
-    frame_graph.add(pyneat.nodes.output("frame", pyneat.OutputOptions.every_frame(4)))
-
-    model_graph = pyneat.Graph("model")
-    model_graph.connect(pyneat.nodes.input("model"), make_model(cfg))
-
-    result_graph = pyneat.Graph("result")
-    result_graph.add(pyneat.nodes.output("result", pyneat.OutputOptions.every_frame(4)))
-
-    joined = pyneat.graphs.combine(["frame", "result"], "output", pyneat.CombinePolicy.ByFrame)
-    graph = pyneat.Graph(project_name() + "_python")
-    graph.connect(source, branch)
-    graph.connect(branch, frame_graph)
-    graph.connect(branch, model_graph)
-    graph.connect(model_graph, result_graph)
-    graph.connect(frame_graph, joined)
-    graph.connect(result_graph, joined)
-    return graph
 
 
 def make_nv12_input_options(width: int, height: int, fps: int):
@@ -477,7 +449,7 @@ def build_video_graph(cfg: Config, width: int, height: int, fps: int):
     sender_opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(width, height, max(1, fps))
     sender_opt.host = cfg.udp_host
     sender_opt.channel = 0
-    sender_opt.video_port_base = cfg.udp_port if cfg.udp_port > 0 else cfg.udp_port_base
+    sender_opt.video_port_base = cfg.udp_port
     sender_opt.encoder.bitrate_kbps = cfg.bitrate_kbps
 
     graph = pyneat.Graph("video")
@@ -492,26 +464,6 @@ def build_video_graph(cfg: Config, width: int, height: int, fps: int):
 def tensor_dim(tensor, name: str) -> int:
     value = getattr(tensor, name)
     return int(value() if callable(value) else value)
-
-
-def tensor_bgr_from_decoded(tensor):
-    if tensor.is_nv12():
-        width = tensor_dim(tensor, "width")
-        height = tensor_dim(tensor, "height")
-        payload = np.frombuffer(tensor.copy_payload_bytes(), dtype=np.uint8)
-        expected = width * height * 3 // 2
-        if payload.size < expected:
-            raise RuntimeError(f"NV12 payload too small: {payload.size} < {expected}")
-        nv12 = payload[:expected].reshape((height * 3 // 2, width))
-        return np.ascontiguousarray(cv2.cvtColor(nv12, cv2.COLOR_YUV2BGR_NV12))
-    frame = np.asarray(tensor.to_numpy(copy=True))
-    if frame.ndim == 4 and frame.shape[0] == 1:
-        frame = frame[0]
-    if frame.ndim != 3:
-        raise RuntimeError(f"unexpected decoded tensor shape {frame.shape}")
-    if frame.dtype != np.uint8:
-        frame = np.clip(frame, 0, 255).astype(np.uint8)
-    return np.ascontiguousarray(frame)
 
 
 def tensor_nv12_from_decoded(tensor):
@@ -539,42 +491,6 @@ def extract_tensors(sample) -> list:
     return tensors
 
 
-def find_field(sample, label: str):
-    if sample is None:
-        return None
-    if getattr(sample, "stream_label", "") == label:
-        return sample
-    for field in getattr(sample, "fields", []):
-        found = find_field(field, label)
-        if found is not None:
-            return found
-    return None
-
-
-def joined_field(sample, label: str, index: int):
-    field = find_field(sample, label)
-    fields = list(getattr(sample, "fields", []))
-    if field is not None:
-        return field
-    if getattr(sample, "kind", None) == pyneat.SampleKind.Bundle and len(fields) > index:
-        return fields[index]
-    raise RuntimeError(f"joined output missing {label} field")
-
-
-def frame_tensor_from_sample(sample):
-    tensors = extract_tensors(joined_field(sample, "frame", 0))
-    if not tensors:
-        raise RuntimeError("joined frame field has no tensor")
-    return tensors[0]
-
-
-def result_tensors_from_sample(sample) -> list:
-    tensors = extract_tensors(joined_field(sample, "result", 1))
-    if not tensors:
-        raise RuntimeError("joined result field has no tensors")
-    return tensors
-
-
 def class_label(class_id: int) -> str:
     if 0 <= class_id < len(COCO_LABELS):
         return COCO_LABELS[class_id]
@@ -583,19 +499,6 @@ def class_label(class_id: int) -> str:
 
 def class_color(class_id: int) -> tuple[int, int, int]:
     return PALETTE[max(0, class_id) % len(PALETTE)]
-
-
-def decode_boxes(tensors: list, width: int, height: int, top_k: int) -> list[dict]:
-    decoded = pyneat.decode_bbox(tensors, clamp_to=(width, height), top_k=top_k)
-    boxes = []
-    for tensor in decoded:
-        arr = np.asarray(tensor.to_numpy(copy=True), dtype=np.float32).reshape((-1, 6))
-        for x1, y1, x2, y2, score, class_id in arr:
-            boxes.append({
-                "x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2),
-                "score": float(score), "class_id": int(class_id),
-            })
-    return boxes[:top_k]
 
 
 def draw_boxes(frame, boxes: list[dict], min_score: float) -> int:
@@ -612,123 +515,6 @@ def draw_boxes(frame, boxes: list[dict], min_score: float) -> int:
         label = class_label(box["class_id"])
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
         cv2.putText(frame, label, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        visible += 1
-    return visible
-
-
-def draw_y_line(y_plane, x1: int, x2: int, y: int, value: int, thickness: int) -> None:
-    height, width = y_plane.shape
-    if y < 0 or y >= height:
-        return
-    x1 = max(0, min(width - 1, x1))
-    x2 = max(0, min(width - 1, x2))
-    if x2 < x1:
-        x1, x2 = x2, x1
-    half = thickness // 2
-    for yy in range(y - half, y + half + 1):
-        if 0 <= yy < height:
-            y_plane[yy, x1:x2 + 1] = value
-
-
-def draw_y_col(y_plane, x: int, y1: int, y2: int, value: int, thickness: int) -> None:
-    height, width = y_plane.shape
-    if x < 0 or x >= width:
-        return
-    y1 = max(0, min(height - 1, y1))
-    y2 = max(0, min(height - 1, y2))
-    if y2 < y1:
-        y1, y2 = y2, y1
-    half = thickness // 2
-    for xx in range(x - half, x + half + 1):
-        if 0 <= xx < width:
-            y_plane[y1:y2 + 1, xx] = value
-
-
-def draw_uv_rect(uv_plane, x1: int, y1: int, x2: int, y2: int, u_value: int, v_value: int) -> None:
-    uv_height, uv_stride = uv_plane.shape
-    uv_width = uv_stride // 2
-    x1 = max(0, min(uv_width - 1, x1 // 2))
-    x2 = max(0, min(uv_width - 1, x2 // 2))
-    y1 = max(0, min(uv_height - 1, y1 // 2))
-    y2 = max(0, min(uv_height - 1, y2 // 2))
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    uv_plane[y1, x1 * 2:(x2 + 1) * 2:2] = u_value
-    uv_plane[y1, x1 * 2 + 1:(x2 + 1) * 2:2] = v_value
-    uv_plane[y2, x1 * 2:(x2 + 1) * 2:2] = u_value
-    uv_plane[y2, x1 * 2 + 1:(x2 + 1) * 2:2] = v_value
-    uv_plane[y1:y2 + 1, x1 * 2] = u_value
-    uv_plane[y1:y2 + 1, x1 * 2 + 1] = v_value
-    uv_plane[y1:y2 + 1, x2 * 2] = u_value
-    uv_plane[y1:y2 + 1, x2 * 2 + 1] = v_value
-
-
-def fill_nv12_rect(y_plane, uv_plane, x1: int, y1: int, x2: int, y2: int,
-                   y_value: int, u_value: int, v_value: int) -> None:
-    height, width = y_plane.shape
-    x1 = max(0, min(width, x1))
-    x2 = max(0, min(width, x2))
-    y1 = max(0, min(height, y1))
-    y2 = max(0, min(height, y2))
-    if x2 <= x1 or y2 <= y1:
-        return
-
-    y_plane[y1:y2, x1:x2] = y_value
-
-    uv_y1 = y1 // 2
-    uv_y2 = (y2 + 1) // 2
-    uv_x1 = x1 & ~1
-    uv_x2 = (x2 + 1) & ~1
-    uv_y1 = max(0, min(uv_plane.shape[0], uv_y1))
-    uv_y2 = max(0, min(uv_plane.shape[0], uv_y2))
-    uv_x1 = max(0, min(width, uv_x1))
-    uv_x2 = max(0, min(width, uv_x2))
-    if uv_x2 <= uv_x1 or uv_y2 <= uv_y1:
-        return
-
-    uv_plane[uv_y1:uv_y2, uv_x1:uv_x2:2] = u_value
-    uv_plane[uv_y1:uv_y2, uv_x1 + 1:uv_x2:2] = v_value
-
-
-def draw_boxes_on_nv12(nv12, width: int, height: int, boxes: list[dict], min_score: float) -> int:
-    y_plane = nv12[:height, :]
-    uv_plane = nv12[height:height + height // 2, :]
-    y_value = 76
-    u_value = 84
-    v_value = 255
-    thickness = 3
-    visible = 0
-    for box in boxes:
-        if box["score"] < min_score:
-            continue
-        x1 = max(0, int(box["x1"]))
-        y1 = max(0, int(box["y1"]))
-        x2 = min(width - 1, int(box["x2"]))
-        y2 = min(height - 1, int(box["y2"]))
-        if x2 <= x1 or y2 <= y1:
-            continue
-        fill_nv12_rect(y_plane, uv_plane, x1, y1, x2 + 1, y1 + thickness,
-                       y_value, u_value, v_value)
-        fill_nv12_rect(y_plane, uv_plane, x1, y2 - thickness + 1, x2 + 1, y2 + 1,
-                       y_value, u_value, v_value)
-        fill_nv12_rect(y_plane, uv_plane, x1, y1, x1 + thickness, y2 + 1,
-                       y_value, u_value, v_value)
-        fill_nv12_rect(y_plane, uv_plane, x2 - thickness + 1, y1, x2 + 1, y2 + 1,
-                       y_value, u_value, v_value)
-        label = class_label(box["class_id"])
-        label_y = y1 - 6 if y1 >= 20 else min(height - 8, y1 + 18)
-        cv2.putText(
-            y_plane,
-            label,
-            (x1, label_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            235,
-            1,
-            cv2.LINE_AA,
-        )
         visible += 1
     return visible
 
@@ -866,12 +652,6 @@ def push_video(video_run, frame_bgr) -> None:
         raise RuntimeError("video push failed")
 
 
-def push_nv12_video(video_run, nv12, width: int, height: int) -> None:
-    tensor = make_nv12_tensor(nv12, width, height)
-    if not video_run.push([tensor]):
-        raise RuntimeError("video push failed")
-
-
 def run(cfg: Config) -> int:
     load_runtime_dependencies()
     os.environ.setdefault("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1")
@@ -879,39 +659,42 @@ def run(cfg: Config) -> int:
     width, height, fps = probe_rtsp(cfg)
     source_graph = build_source_graph(cfg, width, height, fps)
     model_graph = build_model_graph(cfg, width, height, fps)
-    video_graph, video_run, video_port = build_video_graph(cfg, width, height, fps)
-
-    if cfg.print_backend:
-        print("Source backend:")
-        print(source_graph.describe_backend())
-        print("Model backend:")
-        print(model_graph.describe_backend())
-        print("Video backend:")
-        print(video_graph.describe_backend())
-
-    run_options = pyneat.RunOptions()
-    run_options.preset = pyneat.RunPreset.Realtime
-    run_options.queue_depth = 3
-    run_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-    run_options.output_memory = pyneat.OutputMemory.ZeroCopy
-    source_run_options = pyneat.RunOptions()
-    source_run_options.preset = pyneat.RunPreset.Realtime
-    source_run_options.queue_depth = 3
-    source_run_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
-    source_run_options.output_memory = pyneat.OutputMemory.Owned
-    source_run = source_graph.build(source_run_options)
-    model_run = model_graph.build(run_options)
-
-    print(f"RTSP input: {cfg.rtsp_url}")
-    print(f"Model:      {resolve_model_path(cfg)}")
-    print(f"UDP output: udp://{cfg.udp_host}:{video_port}")
-    print(f"Viewer:     gst-launch-1.0 -v udpsrc port={video_port} caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false")
-
-    processed = 0
-    profile_sum = StageProfile()
-    run_start = time.perf_counter()
-    steady_start = run_start
+    # Opened right after the first build, so a later build that fails still closes the runs
+    # that were already built.
+    video_run = source_run = model_run = None
     try:
+        video_graph, video_run, video_port = build_video_graph(cfg, width, height, fps)
+
+        if cfg.print_backend:
+            print("Source backend:")
+            print(source_graph.describe_backend())
+            print("Model backend:")
+            print(model_graph.describe_backend())
+            print("Video backend:")
+            print(video_graph.describe_backend())
+
+        run_options = pyneat.RunOptions()
+        run_options.preset = pyneat.RunPreset.Realtime
+        run_options.queue_depth = 3
+        run_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+        run_options.output_memory = pyneat.OutputMemory.ZeroCopy
+        source_run_options = pyneat.RunOptions()
+        source_run_options.preset = pyneat.RunPreset.Realtime
+        source_run_options.queue_depth = 3
+        source_run_options.overflow_policy = pyneat.OverflowPolicy.KeepLatest
+        source_run_options.output_memory = pyneat.OutputMemory.Owned
+        source_run = source_graph.build(source_run_options)
+        model_run = model_graph.build(run_options)
+
+        print(f"RTSP input: {cfg.rtsp_url}")
+        print(f"Model:      {resolve_model_path(cfg)}")
+        print(f"UDP output: udp://{cfg.udp_host}:{video_port}")
+        print(f"Viewer:     gst-launch-1.0 -v udpsrc port={video_port} caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink sync=false")
+
+        processed = 0
+        profile_sum = StageProfile()
+        run_start = time.perf_counter()
+        steady_start = run_start
         # Bound the FAILURE path too. Every `continue` below skips `processed += 1`, so on a dead
         # source the loop never advanced toward cfg.frames and `--frames 30` (the README's smoke
         # test) warned every 20 s forever instead of exiting.
@@ -944,23 +727,23 @@ def run(cfg: Config) -> int:
             model_sample = model_run.pull("detections", 20000)
             inference_end = time.perf_counter()
             if model_sample is None:
-                print("[warn] timed out waiting for model output", file=sys.stderr)
+                # A timeout does not cancel the in-flight inference: this frame's result is still
+                # queued, and the next pull would pair it with the WRONG frame from then on.
+                # Drain the sink (0 ms = non-blocking) to resynchronise before continuing.
+                drained = 0
+                while model_run.pull("detections", 0) is not None:
+                    drained += 1
+                print(f"[warn] timed out waiting for model output; drained {drained} stale "
+                      "result(s)", file=sys.stderr)
                 continue
             tensors = extract_tensors(model_sample)
             overlay_start = time.perf_counter()
-            if model_spec()[0] == "yolov8n-seg":
-                frame = np.ascontiguousarray(cv2.cvtColor(nv12, cv2.COLOR_YUV2BGR_NV12))
-                detections = decode_segmentation(tensors, width, height, cfg.top_k)
-                visible = overlay_segmentation(frame, detections, cfg.score_threshold)
-                overlay_end = time.perf_counter()
-                encoder_start = time.perf_counter()
-                push_video(video_run, frame)
-            else:
-                detections = decode_boxes(tensors, width, height, cfg.top_k)
-                visible = draw_boxes_on_nv12(nv12, frame_width, frame_height, detections, cfg.score_threshold)
-                overlay_end = time.perf_counter()
-                encoder_start = time.perf_counter()
-                push_nv12_video(video_run, nv12, frame_width, frame_height)
+            frame = np.ascontiguousarray(cv2.cvtColor(nv12, cv2.COLOR_YUV2BGR_NV12))
+            detections = decode_segmentation(tensors, width, height, cfg.top_k)
+            visible = overlay_segmentation(frame, detections, cfg.score_threshold)
+            overlay_end = time.perf_counter()
+            encoder_start = time.perf_counter()
+            push_video(video_run, frame)
             encoder_end = time.perf_counter()
             processed += 1
             frame_profile = StageProfile(
@@ -991,9 +774,9 @@ def run(cfg: Config) -> int:
                 )
             time.sleep(0)
     finally:
-        model_run.close()
-        source_run.close()
-        video_run.close()
+        for run_ in (model_run, source_run, video_run):
+            if run_ is not None:
+                run_.close()
     return processed
 
 

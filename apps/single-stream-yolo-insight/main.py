@@ -36,9 +36,9 @@ COCO_LABELS = [
 
 @dataclass
 class Config:
-    rtsp_url: str = "rtsp://<rtsp-server-ip>:8555/stream"
+    rtsp_url: str = "<rtsp-url>"
     model_path: str = ""
-    insight_host: str = "<insight-host-ip>"
+    insight_host: str = "<host-ip>"
     channel: int = 0
     video_port_base: int = 9000
     metadata_port_base: int = 9100
@@ -49,7 +49,7 @@ class Config:
     model_width: int = 640
     model_height: int = 640
     latency_ms: int = 200
-    score_threshold: float = 0.25
+    score_threshold: float = 0.6
     nms_iou: float = 0.50
     top_k: int = 100
     num_classes: int = 80
@@ -145,11 +145,20 @@ def apply_config_value(cfg: Config, key: str, value: str) -> None:
         raise ValueError(f"unknown config key: {key}")
 
 
+def strip_comment(line: str) -> str:
+    """A '#' starts a comment only at the start of a line or after whitespace, so a value
+    that contains '#' (for example an RTSP password) is kept intact."""
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
 def load_config_file(cfg: Config, path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"config file not found: {path}")
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.split("#", 1)[0].strip()
+        line = strip_comment(raw).strip()
         if not line:
             continue
         if "=" not in line:
@@ -204,10 +213,16 @@ def resolve_model_path(cfg: Config) -> str:
     return str(Path(__file__).resolve().parent / "assets" / "models" / "yolo_11n_mpk.tar.gz")
 
 
+def is_placeholder(value: str) -> bool:
+    """True for an unedited placeholder such as "<rtsp-url>" or "rtsp://<rtsp-server-ip>/src1"."""
+    return not value or value.startswith("<") or "://<" in value
+
+
 def validate_config(cfg: Config) -> None:
-    if not cfg.rtsp_url:
-        raise ValueError("RTSP URL must not be empty")
-    if not cfg.insight_host or cfg.insight_host.startswith("<"):
+    if is_placeholder(cfg.rtsp_url):
+        raise ValueError(f"set rtsp_url in the config (or pass --rtsp) to your camera's RTSP URL; "
+                         f"it is still \"{cfg.rtsp_url}\"")
+    if is_placeholder(cfg.insight_host):
         raise ValueError("insight_host must be set to the host running Neat Insight")
     if cfg.channel < 0:
         raise ValueError("channel must be >= 0")
@@ -221,7 +236,8 @@ def validate_config(cfg: Config) -> None:
 
 
 def probe_stream(url: str, tcp: bool = True):
-    """(width, height, fps) as the RTSP stream reports them, or None if it cannot be probed.
+    """((width, height, fps), "") as the RTSP stream reports them, or (None, reason) if it
+    cannot be probed.
 
     Neat 0.5.0 sets the decoder up from width/height/fps even when the stream reports its own, and
     a value that differs from the camera stops build() with misconfig.media_caps. So the app reads
@@ -233,10 +249,14 @@ def probe_stream(url: str, tcp: bool = True):
         "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
         "-of", "default=nw=1", url]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "ffprobe is not installed on the DevKit (sudo apt install ffmpeg)"
+    except subprocess.TimeoutExpired:
+        return None, "no reply within 15 s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    vals = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
 
     def rate(text):  # "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0
         num, _, den = (text or "0").partition("/")
@@ -244,23 +264,28 @@ def probe_stream(url: str, tcp: bool = True):
             value = float(num) / float(den or 1)
         except (ValueError, ZeroDivisionError):
             return 0
-        return int(round(value)) if value > 0 else 0
+        value = int(round(value)) if value > 0 else 0
+        # A real camera runs at 1..240 fps; anything else (a 90000/1 timebase) is not a frame rate.
+        return value if 1 <= value <= 240 else 0
 
     try:
         width, height = int(vals.get("width") or 0), int(vals.get("height") or 0)
     except ValueError:
-        return None
+        width = height = 0
     fps = rate(vals.get("avg_frame_rate")) or rate(vals.get("r_frame_rate"))
-    return (width, height, fps) if width > 0 and height > 0 and fps > 0 else None
+    if width > 0 and height > 0 and fps > 0:
+        return (width, height, fps), ""
+    errors = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+    return None, (errors[-1][:200] if errors else "no usable width/height/frame rate in the reply")
 
 
 def probe_rtsp(cfg: Config) -> tuple[int, int, int]:
     """Width, height and fps from the stream itself; the config's values only if probing fails."""
-    probed = probe_stream(cfg.rtsp_url, cfg.tcp) if cfg.probe_source else None
+    probed, reason = probe_stream(cfg.rtsp_url, cfg.tcp) if cfg.probe_source else (None, "")
     if probed is None:
         if cfg.probe_source:
-            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe; using the config's "
-                  f"{cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
+            print(f"[warn] could not probe {cfg.rtsp_url} with ffprobe ({reason}); using the "
+                  f"config's {cfg.width}x{cfg.height}@{cfg.fps}", file=sys.stderr, flush=True)
         return cfg.width, cfg.height, cfg.fps
     if probed != (cfg.width, cfg.height, cfg.fps):
         print(f"[source] stream is {probed[0]}x{probed[1]}@{probed[2]} (config says "
@@ -388,7 +413,7 @@ def build_metadata_objects(boxes: list[dict], width: int, height: int,
     """Insight expects object-detection bbox as [x, y, w, h] top-left in
     encoded-frame pixels; decode_bbox returns corners, so convert here."""
     objects = []
-    for index, box in enumerate(boxes, start=1):
+    for box in boxes:
         if box["score"] < min_score:
             continue
         x = max(0, int(box["x1"]))
@@ -398,10 +423,10 @@ def build_metadata_objects(boxes: list[dict], width: int, height: int,
         if w <= 0 or h <= 0:
             continue
         objects.append({
-            "id": f"obj_{index}",
+            "id": f"obj_{len(objects) + 1}",
             "label": class_label(box["class_id"]),
             "confidence": float(box["score"]),
-            "bbox": [float(x), float(y), float(w), float(h)],
+            "bbox": [x, y, w, h],
         })
     return objects
 
@@ -429,15 +454,18 @@ def run(cfg: Config) -> int:
     run_options.output_memory = pyneat.OutputMemory.ZeroCopy
     run_handle = graph.build(run_options)
 
-    metadata_options = pyneat.MetadataSenderOptions()
-    metadata_options.host = cfg.insight_host
-    metadata_options.channel = cfg.channel
-    metadata_options.metadata_port_base = cfg.metadata_port_base
-    metadata_sender = pyneat.MetadataSender(metadata_options)
-    # main.cpp throws on !ok(); Python silently printed its banner and streamed video with no
-    # metadata at all when the sender failed to bind.
-    if hasattr(metadata_sender, "ok") and not metadata_sender.ok():
-        raise RuntimeError(f"metadata sender failed to start on port {cfg.metadata_port_base}")
+    try:
+        metadata_options = pyneat.MetadataSenderOptions()
+        metadata_options.host = cfg.insight_host
+        metadata_options.channel = cfg.channel
+        metadata_options.metadata_port_base = cfg.metadata_port_base
+        metadata_sender = pyneat.MetadataSender(metadata_options)
+        # Stop here, as main.cpp does, rather than stream video with no metadata at all.
+        if hasattr(metadata_sender, "ok") and not metadata_sender.ok():
+            raise RuntimeError(f"metadata sender failed to start on port {cfg.metadata_port_base}")
+    except BaseException:
+        run_handle.close()  # the graph is already running; do not leak it
+        raise
     metadata_failures = 0
 
     print(f"RTSP input:  {cfg.rtsp_url} ({width}x{height}@{fps})")
@@ -486,17 +514,23 @@ def run(cfg: Config) -> int:
             # timestamp_ms = -1 OMITS the field on purpose. The video graph re-stamps each frame
             # with its push time, so no source timestamp can match a video frame; without one the
             # viewer pairs metadata with the newest frame instead.
-            # Check the return, as main.cpp does. Discarding it made sustained UDP send failures
-            # completely invisible: the app streamed video forever with no metadata and no warning.
-            if not metadata_sender.send_metadata(
-                "object-detection",
-                json.dumps({"objects": objects}, separators=(",", ":")),
-                -1,
-                str(frame_id),
-            ):
+            # A failed send (False, or an exception such as a network error) is counted and
+            # reported, never fatal: the video keeps streaming, as in main.cpp.
+            try:
+                sent = metadata_sender.send_metadata(
+                    "object-detection",
+                    json.dumps({"objects": objects}, separators=(",", ":")),
+                    -1,
+                    str(frame_id),
+                )
+                send_error = ""
+            except Exception as exc:  # e.g. OSError: network unreachable
+                sent = False
+                send_error = f": {exc}"
+            if not sent:
                 metadata_failures += 1
                 if metadata_failures in (1, 10, 100) or metadata_failures % 1000 == 0:
-                    print(f"[warn] metadata send failed ({metadata_failures} so far)",
+                    print(f"[warn] metadata send failed ({metadata_failures} so far){send_error}",
                           file=sys.stderr, flush=True)
             send_end = time.perf_counter()
 

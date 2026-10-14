@@ -18,6 +18,8 @@
 #include <string_view>
 #include <vector>
 
+#include <sys/wait.h>
+
 namespace neat = simaai::neat;
 namespace groups = simaai::neat::nodes::groups;
 
@@ -34,10 +36,10 @@ void handle_signal(int) {
 
 struct Config {
   std::string rtsp_url;
-  std::string model_path;
+  std::string model_path = "./assets/models/yolo26n-det-bf16-mla_tess-b1.tar.gz";
   int width = 1280;
   int height = 720;
-  int fps = 25;
+  int fps = 60;
   bool probe_source = true;  // read width/height/fps from the stream
   int model_width = 640;
   int model_height = 640;
@@ -48,7 +50,7 @@ struct Config {
   int num_classes = 80;
   int frames = 0;
   std::string udp_host;
-  int udp_port = 0;
+  int udp_port = 9000;
   int bitrate_kbps = 4000;
   bool tcp = true;
   bool print_backend = false;
@@ -150,7 +152,7 @@ void set_config_value(Config& cfg, const std::string& key, const std::string& va
   } else if (key == "fps") {
     cfg.fps = to_int(key, value);
   } else if (key == "probe_source") {
-    cfg.probe_source = value == "true" || value == "1" || value == "yes";
+    cfg.probe_source = to_bool(value);
   } else if (key == "model_width") {
     cfg.model_width = to_int(key, value);
   } else if (key == "model_height") {
@@ -223,6 +225,20 @@ Config read_config() {
   return cfg;
 }
 
+// The shipped config has placeholders (`<rtsp-url>`, `<host-ip>`). Catch them here with a clear
+// message instead of a slow ffprobe timeout and an obscure GStreamer error later.
+void require_set(const std::string& key, const std::string& value) {
+  if (value.empty() || value.front() == '<') {
+    throw std::runtime_error(std::string("set ") + key + " in " + kConfigPath + " (currently '" +
+                             value + "')");
+  }
+}
+
+void validate_config(const Config& cfg) {
+  require_set("rtsp_url", cfg.rtsp_url);
+  require_set("udp_host", cfg.udp_host);
+}
+
 std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   neat::Model::Options opt;
   opt.preprocess.kind = neat::InputKind::Image;
@@ -240,6 +256,7 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg) {
   opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
   opt.decode_type = neat::BoxDecodeType::YoloV26;
   opt.score_threshold = cfg.score_threshold;
+  // YOLO26 heads are NMS-free: YoloV26 skips NMS, so nms_iou has no effect for this model.
   opt.nms_iou_threshold = cfg.nms_iou;
   opt.top_k = cfg.top_k;
   opt.num_classes = cfg.num_classes;
@@ -274,8 +291,8 @@ neat::Graph make_source_pipeline(const Config& cfg) {
 
   neat::Graph app("single_stream_yolo26n_source");
   app.add(source);
-  // EveryFrame(4), not Latest(): Latest() means max_buffers=1 since 0.3.0 (55.1 vs 60.8 fps).
-  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once behind.
+  // drop=true: on 0.4.0 a non-dropping appsink permanently stalls the decoder once the
+  // consumer falls behind. Free while there is headroom.
   auto frame_out = neat::OutputOptions::EveryFrame(4);
   frame_out.drop = true;
   app.add(neat::nodes::Output("frame", frame_out));
@@ -326,6 +343,9 @@ neat::Graph make_udp_pipeline(const Config& cfg) {
 }
 
 std::vector<neat::Box> decode_boxes(const neat::Sample& sample, const Config& cfg) {
+  // require_nonempty=false: with true this THROWS on an empty sample, so the guard below was
+  // dead code and one empty sample (a flush, a caps renegotiation) killed the whole stream
+  // instead of skipping a frame.
   const auto tensors = neat::tensors_from_sample(sample, false);
   if (tensors.empty()) {
     return {};
@@ -415,75 +435,6 @@ neat::Tensor copy_nv12_to_cpu_tensor(const neat::Tensor& input) {
     throw std::runtime_error(err);
   }
   return out;
-}
-
-void draw_y_line(std::uint8_t* y, int width, int height, int x1, int x2, int yv, std::uint8_t value,
-                 int thickness) {
-  if (yv < 0 || yv >= height) {
-    return;
-  }
-  x1 = std::max(0, std::min(width - 1, x1));
-  x2 = std::max(0, std::min(width - 1, x2));
-  if (x2 < x1) {
-    std::swap(x1, x2);
-  }
-  for (int t = -thickness / 2; t <= thickness / 2; ++t) {
-    const int yy = yv + t;
-    if (yy < 0 || yy >= height) {
-      continue;
-    }
-    std::memset(y + static_cast<std::size_t>(yy) * width + x1, value,
-                static_cast<std::size_t>(x2 - x1 + 1));
-  }
-}
-
-void draw_y_col(std::uint8_t* y, int width, int height, int xv, int y1, int y2, std::uint8_t value,
-                int thickness) {
-  if (xv < 0 || xv >= width) {
-    return;
-  }
-  y1 = std::max(0, std::min(height - 1, y1));
-  y2 = std::max(0, std::min(height - 1, y2));
-  if (y2 < y1) {
-    std::swap(y1, y2);
-  }
-  for (int yy = y1; yy <= y2; ++yy) {
-    for (int t = -thickness / 2; t <= thickness / 2; ++t) {
-      const int xx = xv + t;
-      if (xx >= 0 && xx < width) {
-        y[static_cast<std::size_t>(yy) * width + xx] = value;
-      }
-    }
-  }
-}
-
-void draw_uv_rect(std::uint8_t* uv, int width, int height, int x1, int y1, int x2, int y2,
-                  std::uint8_t u_value, std::uint8_t v_value) {
-  const int uv_width = width / 2;
-  const int uv_height = height / 2;
-  x1 = std::max(0, std::min(uv_width - 1, x1 / 2));
-  x2 = std::max(0, std::min(uv_width - 1, x2 / 2));
-  y1 = std::max(0, std::min(uv_height - 1, y1 / 2));
-  y2 = std::max(0, std::min(uv_height - 1, y2 / 2));
-  if (x2 < x1) {
-    std::swap(x1, x2);
-  }
-  if (y2 < y1) {
-    std::swap(y1, y2);
-  }
-  const auto set_uv = [&](int x, int y) {
-    const std::size_t offset = (static_cast<std::size_t>(y) * uv_width + x) * 2U;
-    uv[offset] = u_value;
-    uv[offset + 1U] = v_value;
-  };
-  for (int x = x1; x <= x2; ++x) {
-    set_uv(x, y1);
-    set_uv(x, y2);
-  }
-  for (int y = y1; y <= y2; ++y) {
-    set_uv(x1, y);
-    set_uv(x2, y);
-  }
 }
 
 void fill_nv12_rect(std::uint8_t* y, std::uint8_t* uv, int width, int height, int x1, int y1,
@@ -696,15 +647,21 @@ struct StreamGeometry {
   int width = 0;
   int height = 0;
   int fps = 0;
+  std::string error;  // why the probe failed, for the warning
 };
 
-// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0.
+// "30/1" -> 30, "30000/1001" -> 30 (Neat accepts 29.97 against 30), "0/0" -> 0. A rate outside
+// 1..240 fps (for example an RTP clock rate such as 90000/1) is not a frame rate: also 0.
 int fps_from_rate(const std::string& rate) {
   try {
     const auto slash = rate.find('/');
     const double num = std::stod(rate.substr(0, slash));
     const double den = slash == std::string::npos ? 1.0 : std::stod(rate.substr(slash + 1));
-    return (num > 0.0 && den > 0.0) ? static_cast<int>(std::lround(num / den)) : 0;
+    if (num <= 0.0 || den <= 0.0) {
+      return 0;
+    }
+    const long fps = std::lround(num / den);
+    return (fps >= 1 && fps <= 240) ? static_cast<int>(fps) : 0;
   } catch (...) {
     return 0;
   }
@@ -721,36 +678,44 @@ StreamGeometry probe_stream(const std::string& url, bool tcp) {
                               "-timeout 5000000 -select_streams v:0 "
                               "-show_entries stream=width,height,r_frame_rate,avg_frame_rate "
                               "-of default=nw=1 " +
-                              quoted + " 2>/dev/null";
+                              quoted + " 2>&1";
   StreamGeometry g;
   int avg_fps = 0;
   int r_fps = 0;
-  if (FILE* pipe = popen(command.c_str(), "r")) {
-    char buffer[256];
-    while (std::fgets(buffer, sizeof(buffer), pipe)) {
-      std::string line(buffer);
-      while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-        line.pop_back();
-      }
-      const auto eq = line.find('=');
-      if (eq == std::string::npos) {
-        continue;
-      }
-      const std::string key = line.substr(0, eq);
-      const std::string value = line.substr(eq + 1);
-      if (key == "width") {
-        g.width = std::atoi(value.c_str());
-      } else if (key == "height") {
-        g.height = std::atoi(value.c_str());
-      } else if (key == "avg_frame_rate") {
-        avg_fps = fps_from_rate(value);
-      } else if (key == "r_frame_rate") {
-        r_fps = fps_from_rate(value);
-      }
-    }
-    pclose(pipe);
+  std::string last_message;  // last line that is not one of the values asked for (stderr)
+  FILE* pipe = popen(command.c_str(), "r");
+  if (!pipe) {
+    g.error = "could not start ffprobe";
+    return g;
   }
+  char buffer[256];
+  while (std::fgets(buffer, sizeof(buffer), pipe)) {
+    std::string line(buffer);
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+      line.pop_back();
+    }
+    const auto eq = line.find('=');
+    const std::string key = eq == std::string::npos ? std::string() : line.substr(0, eq);
+    const std::string value = eq == std::string::npos ? std::string() : line.substr(eq + 1);
+    if (key == "width") {
+      g.width = std::atoi(value.c_str());
+    } else if (key == "height") {
+      g.height = std::atoi(value.c_str());
+    } else if (key == "avg_frame_rate") {
+      avg_fps = fps_from_rate(value);
+    } else if (key == "r_frame_rate") {
+      r_fps = fps_from_rate(value);
+    } else if (!trim(line).empty()) {
+      last_message = trim(line).substr(0, 200);
+    }
+  }
+  const int status = pclose(pipe);
   g.fps = avg_fps > 0 ? avg_fps : r_fps;
+  if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+    g.error = "ffprobe not installed (sudo apt install ffmpeg)";
+  } else if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
+    g.error = last_message.empty() ? "no usable video stream reported" : "ffprobe: " + last_message;
+  }
   return g;
 }
 
@@ -761,9 +726,10 @@ void apply_stream_geometry(Config& cfg) {
     return;
   }
   const StreamGeometry g = probe_stream(cfg.rtsp_url, cfg.tcp);
-  if (g.width <= 0 || g.height <= 0 || g.fps <= 0) {
-    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " with ffprobe; using the config's "
-              << cfg.width << "x" << cfg.height << "@" << cfg.fps << "\n";
+  if (!g.error.empty()) {
+    std::cerr << "[warn] could not probe " << cfg.rtsp_url << " (" << g.error
+              << "); using the config's " << cfg.width << "x" << cfg.height << "@" << cfg.fps
+              << "\n";
     return;
   }
   if (g.width != cfg.width || g.height != cfg.height || g.fps != cfg.fps) {
@@ -785,6 +751,7 @@ int main() {
 
   try {
     Config cfg = read_config();
+    validate_config(cfg);
     apply_stream_geometry(cfg);
     auto model = make_model(cfg);
     neat::Graph source_graph = make_source_pipeline(cfg);
@@ -826,6 +793,10 @@ int main() {
     ProfileTotals profile;
     const auto start = Clock::now();
     Clock::time_point steady_start = start;
+    // Give up after a few consecutive source timeouts, so a dead source ends the run (and a
+    // frames=N smoke test stays bounded) instead of warning every 20 s forever.
+    constexpr int kMaxSourceTimeouts = 3;
+    int source_timeouts = 0;
     while (!g_stop.load() && (cfg.frames == 0 || processed < cfg.frames)) {
       neat::Sample frame_sample;
       neat::PullError frame_error;
@@ -833,9 +804,17 @@ int main() {
       auto status = source_run.pull("frame", 20000, frame_sample, &frame_error);
       const auto decoder_end = Clock::now();
       if (status == neat::PullStatus::Timeout) {
-        std::cerr << "[warn] timed out waiting for RTSP frame\n";
+        ++source_timeouts;
+        std::cerr << "[warn] timed out waiting for RTSP frame (" << source_timeouts << "/"
+                  << kMaxSourceTimeouts << ")\n";
+        if (source_timeouts >= kMaxSourceTimeouts) {
+          std::cerr << "[err] no RTSP frame after " << kMaxSourceTimeouts
+                    << " consecutive timeouts; giving up\n";
+          break;
+        }
         continue;
       }
+      source_timeouts = 0;
       if (status == neat::PullStatus::Closed) {
         std::cerr << "RTSP source closed\n";
         break;

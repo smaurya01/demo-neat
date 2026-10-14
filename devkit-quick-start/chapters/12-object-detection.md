@@ -32,7 +32,7 @@ Download into the NVMe, not your home directory:
 ```bash
 sima@modalix:~$ mkdir -p /media/nvme/example/models
 sima@modalix:~$ cd /media/nvme/example/models
-sima@modalix:~$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
 `yolo26m-det-bf16-mla_tess-b1` is a good default: BF16 weights with MLA tessellation, which is what
@@ -411,7 +411,7 @@ The pyneat environment already includes everything the script imports. If you do
 error, install the missing packages:
 
 ```bash
-(pyneat) sima@modalix:~$ pip install numpy opencv-python pyyaml
+(pyneat) sima@modalix:/media/nvme/example$ pip install numpy opencv-python pyyaml
 ```
 
 ---
@@ -444,7 +444,8 @@ Open the output images in `/media/nvme/example/output` to confirm the boxes land
 `score_threshold`. **Boxes in the wrong places?** Either a decode-type mismatch, or the letterbox
 maths was changed without the inverse in `to_original` being changed to match.
 **`timeout waiting for output` partway through the folder?** A frame reached the graph at a size
-it was not built for — every frame must be letterboxed to `model.input_size` before it is pushed.
+it was not built for — every frame must be letterboxed to the `input_size` set under `model:` in `config.yaml` before it
+is pushed.
 
 ---
 

@@ -4,7 +4,7 @@
 Handles three head families, all reduced to a stable set of raw-head ONNX
 outputs so the MLA compiler never sees the CPU-side decode/NMS/TopK tail. Each
 family keeps its OWN head layout, so the archive decodes with its own Neat
-BoxDecodeType (NMS included):
+BoxDecodeType (NMS included for YOLOv8/YOLO11; YOLO26 heads are NMS-free):
 
   * YOLOv8 / YOLO11: raw 64-channel DFL bbox heads (4 x 16 bins) -> YoloV8 / YoloV8Seg
   * YOLO26: one2one heads, already 4 distance channels             -> YoloV26 / YoloV26Pose
@@ -14,7 +14,7 @@ BoxDecodeType (NMS included):
         + mask_coeff_{0,1,2} (32 mask coefficients per scale)
         + proto (32x160x160 prototype masks, already graph output1)
   * pose (yolo26s-pose)       -> 9 outputs:  bbox_{0,1,2}, class_logit_{0,1,2}
-        + kpt_{0,1,2} (51 = 17 keypoints x (x,y,visibility) per scale)
+        + kpt_{0,1,2} (51 = 17 keypoints x (x,y,visibility) per scale, zero-padded to 64)
 
 Shared surgery, identical to the proven yolo11n/yolo26n flow:
   1. attention MatMul -> Einsum rewrite (MLA-friendly batched attention),
@@ -347,11 +347,10 @@ def expose_compile_ready_outputs(model, spec):
             channels = head["channels"]
             if pad_to and pad_to > channels:
                 # Zero-pad the head's channel dim (e.g. keypoints 51 -> 64) by
-                # concatenating a constant. Tests whether the MLA's post-tail is
-                # slow on channel counts that do not align to its tiling: the
-                # 51-ch keypoint outputs cost ~1.8 s/frame, while 4/32/80/85-ch
-                # outputs in the other models are all fast. The host decoder just
-                # ignores the extra channels.
+                # concatenating a constant. The MLA's post-tail is slow on channel
+                # counts that do not align to its tiling: the 51-ch keypoint outputs
+                # cost ~1.8 s/frame, while the 1/4/32/64/80-ch outputs of the other
+                # heads are fast. The decoder ignores the extra channels.
                 pad_c = pad_to - channels
                 pad_name = f"{name}_padconst_{suffix}"
                 new_initializers.append(numpy_helper.from_array(

@@ -10,61 +10,31 @@ interpretation.
 
 ## Table of Contents
 
-- [Folder map](#folder-map)
+- [Notebooks](#notebooks)
 - [Models](#models)
 - [How to run these notebooks](#how-to-run-these-notebooks)
 - [Reference](#reference)
 
 ---
 
-## Folder map
+## Notebooks
 
-```text
-llima/
-  README.md                       # you are here
-  01-llima-basics/
-    llima-introduction.ipynb      # what LLiMa is, the model families, quantization suffixes,
-                                   # and every llima subcommand with its on-disk effect
-  02-run-llm-vlm/
-    01_run_llm.ipynb              # pyneat.genai.GenAIModel: load, generate, stream, options
-    02_run_vlm.ipynb              # pyneat.genai.VisionLanguageModel: image + prompt -> text
-    03_audio_input_asr.ipynb      # pyneat.genai.ASRModel: audio file -> transcription
-    assets/audio.wav              # sample audio for the ASR notebook
-  03-yolo-plus-vlm/
-    01_detection_to_vlm.ipynb     # detection -> trigger-gated VLM captions (pairs with
-                                   # apps/detection-vlm-assistant)
-  04-llm-vlm-compilation/
-    01_llm_compilation.ipynb      # bring-your-own LLM: host-side llima-compile flow,
-                                   # supported formats, artifact contract
-    02_vlm_compilation.ipynb      # VLM specifics: vision encoder + LM, common failures
-    notes/triage_checklist.md     # "is this model LLiMa-able?" decision checklist
-  05-genai-server/
-    01_genai_server.ipynb         # pyneat.genai.GenAIServer: one HTTP server for LLM/VLM/ASR,
-                                   # OpenAI-compatible endpoints, memory budgeting + concurrency
-```
+Work through them in order; each section builds on the one before.
 
-The five sections build on each other:
+| Section | Notebook | What you learn |
+| --- | --- | --- |
+| **01 · Basics** | [`llima-introduction`](01-llima-basics/llima-introduction.ipynb) | What LLiMa is, the model families, quantization suffixes, and every `llima` subcommand |
+| **02 · Run** | [`01_run_llm`](02-run-llm-vlm/01_run_llm.ipynb) | `pyneat.genai.GenAIModel`: load, generate, stream, options |
+|  | [`02_run_vlm`](02-run-llm-vlm/02_run_vlm.ipynb) | `VisionLanguageModel`: image + prompt → text |
+|  | [`03_audio_input_asr`](02-run-llm-vlm/03_audio_input_asr.ipynb) | `ASRModel`: audio file → transcription |
+| **03 · Apply** | [`01_detection_to_vlm`](03-yolo-plus-vlm/01_detection_to_vlm.ipynb) | Detection → trigger-gated VLM captions (pairs with the [`detection-vlm-assistant`](../apps/detection-vlm-assistant/README.md) app) |
+| **04 · Compile** | [`01_llm_compilation`](04-llm-vlm-compilation/01_llm_compilation.ipynb) | Bring your own LLM with the host-side `llima-compile` tool |
+|  | [`02_vlm_compilation`](04-llm-vlm-compilation/02_vlm_compilation.ipynb) | VLM specifics: vision encoder + LM, common failures. Plus a [triage checklist](04-llm-vlm-compilation/notes/triage_checklist.md) |
+| **05 · Serve** | [`01_genai_server`](05-genai-server/01_genai_server.ipynb) | `GenAIServer`: one OpenAI-compatible HTTP server for LLM/VLM + ASR |
 
-- **[`01-llima-basics`](./01-llima-basics/llima-introduction.ipynb)** — what LLiMa is and the `llima` CLI, subcommand by subcommand.
-
-- **[`02-run-llm-vlm`](./02-run-llm-vlm)** — run LLMs, VLMs, and ASR from Python via `pyneat.genai`.
-  See [`02-run-llm-vlm/01_run_llm.ipynb`](02-run-llm-vlm/01_run_llm.ipynb).
-
-- **[`03-yolo-plus-vlm/`](03-yolo-plus-vlm/01_detection_to_vlm.ipynb)** — trigger-based
-  detection → VLM captioning (pairs with `../apps/detection-vlm-assistant`).
-
-- **[`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb)** — bring-your-own
-  LLM/VLM compilation via the host-side `llima-compile` tool, plus a
-  [triage checklist](04-llm-vlm-compilation/notes/triage_checklist.md).
-
-- **[`05-genai-server/`](05-genai-server/01_genai_server.ipynb)** — `pyneat.genai.GenAIServer`:
-  one OpenAI-compatible HTTP server hosting an LLM/VLM + ASR, with a runnable start/client/stop walkthrough.
-
-> **On `04-llm-vlm-compilation/`:** there is **no `llima compile` subcommand** — the on-board `llima`
-> CLI is runtime + model-manager only (`run, search, pull, list, rm, benchmark-server`). GenAI
-> compilation is a separate **host-side `llima-compile` (Model Compiler)** tool. For its flags, see the
-> [SiMa LLiMa compilation docs](https://developer.sima.ai/software/genai-llima/compilation_genai) and
-> [`04-llm-vlm-compilation/`](04-llm-vlm-compilation/01_llm_compilation.ipynb).
+> **There is no `llima compile` subcommand.** The `llima` CLI on the board only runs and manages
+> models. Compiling is done on the host with the separate `llima-compile` tool; see section 04 and
+> the [SiMa LLiMa compilation docs](https://developer.sima.ai/software/genai-llima/compilation_genai).
 
 ## Models
 
@@ -75,20 +45,18 @@ and `llima pull <model-id>` for any you need.
 | Role | Example model ID |
 | --- | --- |
 | LLM (text) | `Qwen3-4B-Instruct-2507-GPTQ-a16w4` |
-| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` (`02_run_vlm` uses `gemma-4-E2B-it-GPTQ-a16w4`) |
+| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
+| VLM in `02_run_vlm` | `gemma-4-E2B-it-GPTQ-a16w4` |
 | ASR (audio) | `whisper-small-a16w8` |
 
-> **Upgrading from Neat 0.4.0?** Pull Whisper again: `llima pull whisper-small-a16w8`. LLiMa 0.5.0
-> needs the layered encoder (one ELF per encoder layer) and rejects the older download with
-> `Unsupported legacy Whisper model … requires 12 layered encoder ELF files`. The LLM and VLM
-> models above load unchanged.
 
 ## How to run these notebooks
 
 Run these **on the DevKit board**, so the notebook kernel can import and execute `pyneat` — `pyneat`
-and `llima` live on the DevKit, not in the SDK container, and so do the models. `/workspace` is
-NFS-mounted on the board at the same path, so you can edit host-side and run board-side with no
-copying.
+and `llima` live on the DevKit, not in the SDK container, and so do the models. When the SDK is
+paired with the board, `/workspace` is NFS-mounted on the board at the same path (check with
+`dk status` in the SDK: its `NFS mount path` line), so you can edit host-side and run board-side
+with no copying. Without the mount, copy this folder to the board first.
 
 Activate the pyneat environment, install Jupyter if needed, and start the notebook server:
 
@@ -126,7 +94,7 @@ If you would rather not run Jupyter, lift the code cells into a script and run t
 - Core tutorials: [`019_run_an_llm`](https://github.com/sima-neat/core/tree/main/tutorials/019_run_an_llm),
   [`020_run_a_vlm`](https://github.com/sima-neat/core/tree/main/tutorials/020_run_a_vlm),
   [`021_serve_genai_models`](https://github.com/sima-neat/core/tree/main/tutorials/021_serve_genai_models)
-- Concept doc: [`genai-model.mdx`](https://github.com/sima-neat/core/blob/main/docs/develop-apps/development-workflow/genai-model.mdx)
+- Concept doc: [`genai-model/`](https://github.com/sima-neat/core/tree/main/docs/develop-apps/development-workflow/genai-model)
 - Official docs: [Getting started](https://developer.sima.ai/software/getting-started/),
   [GenAI model workflow](https://developer.sima.ai/software/develop-apps/development-workflow/genai-model),
   [LLiMa runtime](https://developer.sima.ai/software/genai-llima/runtime)

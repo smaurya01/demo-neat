@@ -12,9 +12,6 @@ notebook is a markdown concept cell, a short runnable code cell, then a brief in
 - [Next](#next)
 - [Assets](#assets)
 - [Getting the models](#getting-the-models)
-  - [ResNet-50 — for notebook `I-easy/04`](#resnet-50--for-notebook-i-easy04)
-  - [YOLOv8s — for notebooks `I-easy/05` and `I-easy/06`](#yolov8s--for-notebooks-i-easy05-and-i-easy06)
-  - [YOLOv8n — for notebooks `II-medium/01` and `II-medium/07`](#yolov8n--for-notebooks-ii-medium01-and-ii-medium07)
 - [References](#references)
 
 ---
@@ -22,8 +19,9 @@ notebook is a markdown concept cell, a short runnable code cell, then a brief in
 ## Running On The DevKit
 
 Run these **on the DevKit board**, so the notebook kernel can import and execute `pyneat`.
-`/workspace` is NFS-mounted on the board at the same path, so you can edit host-side and run
-board-side with no copying.
+When the SDK is paired with the board, `/workspace` is NFS-mounted on the board at the same path
+(check with `dk status` in the SDK: its `NFS mount path` line), so you can edit host-side and run
+board-side with no copying. Without the mount, copy this folder to the board first.
 
 Activate the pyneat environment, install Jupyter if needed, and start the notebook server:
 
@@ -77,7 +75,8 @@ Options and I/O. These are the knobs you will actually turn in an app.
 Notebooks 2, 5, 6 and 7 need **Neat Insight**: 2 and 7 read an Insight RTSP source, and 5, 6 and 7
 send video or metadata to it. Before running them, replace the `<sdk-host-ip>` placeholder in the
 notebook's settings cell with the Insight host's address as seen from the DevKit
-(`curl -sk https://127.0.0.1:9900/api/server-ip` on the SDK host). See
+(the IP on the **Insight (remote)** line of `neat`, or `curl -sk https://127.0.0.1:9900/api/server-ip`
+on the SDK host; never `127.0.0.1`). See
 [`appendix.md`](../appendix.md#1-neat-insight-sources-in-video-out) for serving an RTSP source.
 Notebook 7 also pairs with [`installation/neat_insight.md`](../installation/neat_insight.md).
 
@@ -116,56 +115,24 @@ model, near the end). Update them to match what is on your DevKit.
 
 ## Getting the models
 
-The notebooks need three archives from the SiMa Model Zoo. Run these once, from the `tutorial/`
+The notebooks need three archives from the SiMa Model Zoo. Run this once, from the `tutorial/`
 folder **on the DevKit**:
 
-### ResNet-50 — for notebook `I-easy/04`
-
 ```bash
 mkdir -p assets/models
 cd assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get resnet_50
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get resnet_50   # I-easy/04
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8s    # I-easy/05, I-easy/06
+sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n    # II-medium/01, II-medium/07
 cd ../..
 ```
 
-→ `assets/models/resnet_50_mpk.tar.gz`
-
-### YOLOv8s — for notebooks `I-easy/05` and `I-easy/06`
-
-```bash
-mkdir -p assets/models
-cd assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8s
-cd ../..
-```
-
-→ `assets/models/yolo_v8s_mpk.tar.gz`
-
-### YOLOv8n — for notebooks `II-medium/01` and `II-medium/07`
-
-```bash
-mkdir -p assets/models
-cd assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
-cd ../..
-```
-
-→ `assets/models/yolo_v8n_mpk.tar.gz`
-
-These 2.1.3 zoo archives are the ones every notebook here was run with on Neat 0.5.0 / SDK 2.1.3.1.
+That gives `assets/models/resnet_50_mpk.tar.gz`, `yolo_v8s_mpk.tar.gz` and `yolo_v8n_mpk.tar.gz`.
 If a `sima-cli` update prompt aborts the download, set `SIMA_CLI_CHECK_FOR_UPDATE=0` first.
 
-> **YOLO11 is in the model zoo** — `sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n`
-> works, as do `yolo_11s/m/l/x`. No notebook here needs it, but the YOLO11 apps do; see
-> [`single-stream-yolo-yolo11`](../apps/single-stream-yolo-yolo11/README.md). A zoo YOLO11 archive
-> decodes with `BoxDecodeType.YoloV8` (raw 64-channel DFL bbox heads), which is why `II-medium/01`
-> describes that family as YOLOv8/YOLO11-style. Compile YOLO11 yourself only for a variant the zoo
-> does not publish. The graph-surgery flow in [`model-compilation/`](../model-compilation/README.md)
-> keeps the same 64-channel DFL heads, so the archive still decodes with `BoxDecodeType.YoloV8`; it
-> emits class logits rather than probabilities, so also set
-> `decode_type_option = BoxDecodeTypeOption.GroupedByRoleLogit`. Never decode a YOLOv8/YOLO11 with
-> `YoloV26`: that decoder runs no NMS (YOLO26 heads don't need it), so you get duplicate boxes. The zoo
-> carries a large catalog of models — always check it before compiling something from scratch.
+> **Before compiling a model yourself, check the zoo**: it carries a large catalog, including YOLO11
+> (`yolo_11n/s/m/l/x`). Which Neat box decoder each YOLO family needs:
+> [`model-compilation/BOX-DECODE.md`](../model-compilation/BOX-DECODE.md).
 
 ## References
 

@@ -24,7 +24,7 @@ enum class FrameMarkerMode { None, Grayscale, Invert };
 
 struct FrameMarkerOptions {
   FrameMarkerMode mode = FrameMarkerMode::None;
-  unsigned border_width = 8;     ///< Pixels; 0 disables the border.
+  unsigned border_width = 8;     ///< Pixels, 0..256; 0 disables the border.
   unsigned color = 0x00FF00;     ///< Border colour as 0xRRGGBB.
   bool progress_bar = true;      ///< Bar that advances one step per frame.
   unsigned log_interval = 0;     ///< Print frames/fps every N frames; 0 = off.

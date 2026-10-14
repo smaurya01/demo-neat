@@ -81,19 +81,14 @@ def all_node_outputs(model):
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    # graph_surgery.py always passes --model-id (see its `cmd` construction), so this
-    # MUST accept it. It previously did not, and yolox_s failed instantly with
-    # "unrecognized arguments: --model-id yolox_s" — i.e. it could not be compiled at
-    # all through the documented flow.
+    # graph_surgery.py always passes --model-id (see its `cmd` construction).
     parser.add_argument("--model-id", default="yolox_s", choices=["yolox_s"])
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     base = ROOT / "work" / args.model_id
-    # Read the ONNX that step 1 produced. convert_to_onnx.py downloads Megvii's
-    # pre-exported graph straight to work/<id>/onnx/<id>.onnx — there is no source/
-    # directory in this flow. Reading from a non-existent source/ was the second half
-    # of the bug above.
+    # Read the ONNX that step 1 produced: convert_to_onnx.py downloads Megvii's
+    # pre-exported graph straight to work/<id>/onnx/<id>.onnx.
     source = base / "onnx" / f"{args.model_id}.onnx"
     output = base / "surgery" / f"{args.model_id}.compile_ready.onnx"
     report_dir = base / "reports"

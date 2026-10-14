@@ -1,7 +1,8 @@
 # Modalix DevKit — Quick Start Guide
 
-A chapter-by-chapter walkthrough that takes a Modalix DevKit 3.0 from a sealed box to running
-object detection and a local LLM.
+A chapter-by-chapter walkthrough that takes a Modalix DevKit 3.0 from a sealed box to a running
+C++ application: object detection, a local LLM, the SDK, Neat Insight, and agentic development on
+the way.
 
 <p align="center">
   <img src="images/qsg-devkit-board.png" alt="Modalix DevKit 3.0" width="520">
