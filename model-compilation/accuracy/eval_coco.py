@@ -8,8 +8,8 @@ and the SAME COCO scorer, so the only thing that differs between the numbers is 
     python accuracy/eval_coco.py detect --model-id yolo26s --backend onnx
 
     # 2. INT8 and bf16 - DevKit, the compiled archives through pyneat
-    python accuracy/eval_coco.py detect --model-id yolo26s --backend neat --precision int8
-    python accuracy/eval_coco.py detect --model-id yolo26s --backend neat --precision bf16
+    dk accuracy/eval_coco.py detect --model-id yolo26s --backend neat --precision int8
+    dk accuracy/eval_coco.py detect --model-id yolo26s --backend neat --precision bf16
 
     # 3. Score everything - SDK host (needs pycocotools)
     python accuracy/eval_coco.py score

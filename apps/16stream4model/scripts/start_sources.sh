@@ -2,13 +2,19 @@
 # Assign the 16 720p30 H.264 catalog clips below to Insight media sources src1..src16,
 # start them, and verify every one delivers ~30 fps before the app is launched.
 #
-# Run on the SDK host (Insight on 127.0.0.1:9900), not on the board.
+# Run on the SDK host (Insight on 127.0.0.1:9900), not on the board. The delivery check needs
+# curl and ffmpeg on the SDK host.
 #   ./scripts/start_sources.sh            # stop all, assign, start, verify
 #   ./scripts/start_sources.sh --check    # verify only
 #   ./scripts/start_sources.sh --stop     # stop all sources
+# Environment overrides:
+#   INSIGHT    Insight API base URL        (default https://127.0.0.1:9900)
+#   RTSP_HOST  host serving the sources    (default 127.0.0.1)
+#   RTSP_PORT  RTSP port of the sources    (default 8554)
 set -u
 INSIGHT=${INSIGHT:-https://127.0.0.1:9900}
 RTSP_HOST=${RTSP_HOST:-127.0.0.1}
+RTSP_PORT=${RTSP_PORT:-8554}
 N=16
 FPS=30
 # Insight source i+1 feeds stream i; streams 0-3 model 0, 4-7 model 1, 8-11 model 2, 12-15 model 3.
@@ -47,7 +53,7 @@ check() {
   trap "rm -rf '$tmp'" EXIT
   for i in $(seq 1 $N); do
     ( timeout 26 ffmpeg -hide_banner -loglevel error -rtsp_transport tcp \
-        -i "rtsp://$RTSP_HOST:8554/src$i" -t 20 -map 0:v -c copy -f framecrc - 2>/dev/null \
+        -i "rtsp://$RTSP_HOST:$RTSP_PORT/src$i" -t 20 -map 0:v -c copy -f framecrc - 2>/dev/null \
         | grep -vc '^#' > "$tmp/$i" ) &
   done
   wait
@@ -69,7 +75,8 @@ case "${1:-}" in
   --check|"") ;;
   *) echo "usage: $0 [--check|--stop]"; exit 2 ;;
 esac
-command -v ffmpeg >/dev/null || { echo "ffmpeg not found (needed for the delivery check)"; exit 1; }
+command -v ffmpeg >/dev/null \
+  || { echo "ffmpeg not found on this host (needed for the delivery check; sudo apt install ffmpeg)"; exit 1; }
 [ "${1:-}" = "--check" ] && { check; exit $?; }
 
 have=$(curl -skf --max-time 15 "$INSIGHT/api/mediasrc/videos") \

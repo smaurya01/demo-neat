@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, List
 
 
-PLC_DEFECT_NAMES = [
+PCB_DEFECT_NAMES = [
     "missing_hole",
     "mouse_bite",
     "open_circuit",
@@ -31,7 +31,7 @@ def init_logging(level: str = "INFO") -> logging.Logger:
         format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
         stream=sys.stdout,
     )
-    return logging.getLogger("plc")
+    return logging.getLogger("pcb")
 
 
 def is_image(path: Path, exts: Iterable[str]) -> bool:
@@ -57,8 +57,8 @@ def class_color(class_id: int):
 def class_name(class_id: int, names) -> str:
     if names and 0 <= class_id < len(names):
         return names[class_id]
-    if 0 <= class_id < len(PLC_DEFECT_NAMES):
-        return PLC_DEFECT_NAMES[class_id]
+    if 0 <= class_id < len(PCB_DEFECT_NAMES):
+        return PCB_DEFECT_NAMES[class_id]
     return f"class_{class_id}"
 
 

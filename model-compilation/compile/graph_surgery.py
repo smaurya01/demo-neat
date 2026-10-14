@@ -55,7 +55,12 @@ def run(model_id: str, force: bool = False) -> int:
 
     if p["surgery"].exists() and not force:
         print(f"[surgery] {model_id}: {p['surgery'].name} already exists; use --force to redo")
-        return 0
+        # An existing file may come from an older surgery (e.g. packed YOLOX heads, 4-channel
+        # YOLO11 bbox heads): check it against models.yaml before it is compiled again.
+        rc = check_outputs(model_id, cfg, p["surgery"])
+        if rc:
+            print(f"[surgery] {model_id}: the existing file is stale -- rerun with --force")
+        return rc
 
     impl = {"yolo_ultralytics": "_surgery_ultralytics.py", "yolox": "_surgery_yolox.py",
             "world": "_surgery_world.py"}.get(kind)
@@ -69,12 +74,32 @@ def run(model_id: str, force: bool = False) -> int:
     proc = subprocess.run(cmd, cwd=str(HERE.parent))
     if proc.returncode != 0:
         return proc.returncode
-    import onnx                                    # the compiler is told to expect these names
-    got = [o.name for o in onnx.load(str(p["surgery"]), load_external_data=False).graph.output]
+    return check_outputs(model_id, cfg, p["surgery"])
+
+
+# bbox head depth each on-device decoder expects: 64 DFL channels (4 x 16 bins) for YoloV8 /
+# YoloV8Seg, 4 distance channels for YoloV26 / YoloV26Pose / YoloX.
+BBOX_CHANNELS = {"YoloV8": 64, "YoloV8Seg": 64, "YoloV26": 4, "YoloV26Pose": 4, "YoloX": 4}
+
+
+def check_outputs(model_id: str, cfg: dict, path: Path) -> int:
+    """The compiler is told to expect models.yaml's output_names, and the box decoder a fixed
+    bbox depth: fail if the surgery ONNX at `path` exposes anything else."""
+    import onnx
+    outs = onnx.load(str(path), load_external_data=False).graph.output
+    got = [o.name for o in outs]
     if got != list(cfg["output_names"]):
         print(f"[surgery] {model_id}: FAIL  outputs {got} != models.yaml output_names "
               f"{cfg['output_names']}")
         return 1
+    want = BBOX_CHANNELS.get(cfg.get("box_decode"))
+    for o in outs:
+        dims = o.type.tensor_type.shape.dim
+        ch = dims[1].dim_value if len(dims) > 1 else 0        # 0: not recorded in the graph
+        if want and o.name.startswith("bbox_") and ch not in (0, want):
+            print(f"[surgery] {model_id}: FAIL  {o.name} has {ch} channels; "
+                  f"{cfg['box_decode']} expects {want}")
+            return 1
     print(f"[surgery] {model_id}: OK  outputs={got}")
     return 0
 

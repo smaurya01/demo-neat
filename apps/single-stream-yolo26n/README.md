@@ -51,7 +51,7 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.2/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz
 cd ../..
 ```
 
@@ -72,9 +72,13 @@ udp_host=<host-ip>
 udp_port=9000
 ```
 
+The app stops at start with `set rtsp_url in ...` (or `udp_host`) while a value is still a
+`<...>` placeholder.
+
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
-> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`). If it fails, the
+> app prints `[warn] could not probe <url> (<reason>)` and continues with the config values.
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
@@ -111,7 +115,8 @@ For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`.
 
 `score_threshold`: Detection score threshold used by YOLO26 box decode.
 
-`nms_iou`: NMS IoU threshold used by Neat decode.
+`nms_iou`: Ignored by this app. YOLO26 is NMS-free, so the `YoloV26` decode runs no NMS; the
+key is accepted so configs stay interchangeable with the other single-stream apps.
 
 `top_k`: Maximum decoded detections or instances per frame.
 
@@ -147,6 +152,25 @@ dk ./build/single_stream_yolo26n
 ```
 
 For a bounded C++ smoke test, set `frames=30` in `./config/default.conf`, then run the same command.
+
+Expected output (C++; a receiver example is also printed after the `UDP output` line):
+
+```text
+RTSP input: <rtsp-url>
+Model:      ./assets/models/yolo26n-det-bf16-mla_tess-b1.tar.gz
+UDP output: udp://<host-ip>:9000 H264/RTP payload=96 1280x720@60
+Running. Press Ctrl-C to stop.
+[visualize] frame=30 boxes=<n> sample_frame_id=<id> fps=<run fps> steady_fps=<fps after frame 1> ms(decoder=..., inference=..., overlay=..., encoder=..., total=...) avg_ms(decoder=..., inference=..., overlay=..., encoder=..., total=...)
+```
+
+The C++ app prints a `[visualize]` line for frame 1, then every 30 frames, and for the last frame
+when `frames` is set.
+`ms(...)` is the time each stage took for that frame and `avg_ms(...)` the average since start, in
+milliseconds. The Python app prints the same timing fields in the form
+`frame=<n> detections=<n> visible=<n> fps=... steady_fps=... ms(...) avg_ms(...)`.
+
+If the RTSP source sends no frame for three 20-second waits in a row, the app stops with
+`[err] no RTSP frame after 3 consecutive timeouts; giving up`, so a bounded run always ends.
 
 ## How To Run With Python
 

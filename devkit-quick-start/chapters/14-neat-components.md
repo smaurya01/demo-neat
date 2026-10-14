@@ -66,7 +66,7 @@ need the source, the issue tracker or the reference docs, this is where each pie
 
 | You did this | It came from |
 |---|---|
-| `sima-cli download`, `sima-cli update` ([Chapter 7](07-install-sima-cli.md)) | `sima-cli` |
+| `sima-cli` ([Chapter 7](07-install-sima-cli.md)): `sima-cli update` ([Chapter 9](09-check-and-update-image.md)), `sima-cli download` ([Chapter 12](12-object-detection.md)) | `sima-cli` |
 | `import pyneat` ([Chapter 11](11-install-pyneat.md)) | `core` |
 | `sima-cli neat install apps` ([Chapter 11](11-install-pyneat.md)) | `apps` |
 | Object detection on the MLA ([Chapter 12](12-object-detection.md)) | `core` + `apps` |

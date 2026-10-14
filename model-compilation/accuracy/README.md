@@ -69,8 +69,7 @@ cp -r /workspace/demo-neat/model-compilation/accuracy/data/val2017_subset /media
 
 ### 5. bf16 (DevKit)
 
-On the DevKit, from the `model-compilation` folder (`/workspace/demo-neat` is your clone under
-/workspace; the DevKit sees the same path):
+On the DevKit, from the `model-compilation` folder:
 
 ```bash
 cd /workspace/demo-neat/model-compilation

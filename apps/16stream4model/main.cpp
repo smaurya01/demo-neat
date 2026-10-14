@@ -18,9 +18,7 @@
 // The encoded access unit goes to Insight untouched and Insight draws the overlay from JSON
 // metadata, so nothing is decoded to the host, annotated or re-encoded.
 //
-// Derived from Worker_Safety/app16 with the VLM, the per-stream local frame (snapshot) branch
-// and the violation/event path removed; the pose path now sends Insight pose-estimation
-// metadata. Graph execution options follow the
+// The pose path sends Insight pose-estimation metadata. Graph execution options follow the
 // high-density-multi-stream-object-detector example (internal_queue_depth=1, async MLA).
 //
 // Things that silently go wrong if changed:
@@ -367,7 +365,7 @@ void validate(Config& cfg) {
   if (cfg.skip_rtsp_probe && (cfg.width <= 0 || cfg.height <= 0 || cfg.fps <= 0)) {
     throw std::runtime_error("skip_rtsp_probe=true needs integer width/height/fps");
   }
-  // The shipped config carries <...> placeholders instead of lab addresses.
+  // The shipped config carries <...> placeholders; refuse to start until they are filled in.
   const auto is_placeholder = [](const std::string& v) { return v.find('<') != std::string::npos; };
   if (is_placeholder(cfg.insight_host)) {
     throw std::runtime_error("insight_host is still the placeholder '" + cfg.insight_host +
@@ -533,15 +531,8 @@ groups::RtspDecodedInputOptions make_source_options(const Config& cfg, const Str
   opt.dec_height = cfg.height;
   opt.fallback_h264_width = cfg.width;
   opt.fallback_h264_height = cfg.height;
-  opt.output_caps.width = cfg.width;
-  opt.output_caps.height = cfg.height;
-  if (cfg.skip_rtsp_probe) {
-    opt.source_fps = sc.fps;
-    opt.output_caps.fps = sc.fps;
-  } else {
-    opt.source_fps = 0;
-    opt.output_caps.fps = -1;
-  }
+  // No output caps filter (output_caps.enable stays false): the decoder's own caps carry the size.
+  opt.source_fps = cfg.skip_rtsp_probe ? sc.fps : 0;
   return opt;
 }
 
@@ -582,10 +573,6 @@ neat::Graph make_decoder(const groups::RtspDecodedInputOptions& opt, int decoder
   decode.decoder_tuning = opt.decoder_tuning;
   decode.memory_opt = opt.decoder_memory_opt;
   graph.add(neat::nodes::SimaDecode(std::move(decode)));
-  if (opt.output_caps.enable) {
-    graph.add(neat::nodes::CapsRaw("NV12", opt.output_caps.width, opt.output_caps.height,
-                                   opt.output_caps.fps, opt.output_caps.memory));
-  }
   // In source-only mode the app drains this endpoint itself; a non-dropping sink would
   // back-pressure the hardware decoder the moment the consumer falls behind.
   auto frame_out = neat::OutputOptions::EveryFrame(4);

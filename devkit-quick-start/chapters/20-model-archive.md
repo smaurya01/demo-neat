@@ -51,7 +51,7 @@ there, skip this step.
 sima@modalix:~$ export MODELZOO_VERSION="2.1.3"
 sima@modalix:~$ mkdir -p /media/nvme/example/models
 sima@modalix:~$ cd /media/nvme/example/models
-sima@modalix:~$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
 The name already tells you a lot: `yolo26m` model, `det` (detection), `bf16` precision,
@@ -412,13 +412,14 @@ a stock YOLO export produces `.so` files and how to get to one `.elf`.
 2. **Extract it** into a private runtime folder, sorted by type:
 
    ```text
-   <extract root>/proc_<pid>/pkg_<hash>/<archive name without .tar.gz>/
+   <extract root>/proc_<pid>/pkg_<hash>/p/
    ├── etc/     every .json, plus the _mla_stats.yaml
    ├── lib/     any .so
    └── share/   the .elf
    ```
 
-   The compile script is not extracted. The extract root is the first writable one of: a mounted
+   The package folder is always named `p` (the sample output below shows `.../pkg_<hash>/p/`); the
+   archive name is not used. The compile script is not extracted. The extract root is the first writable one of: a mounted
    NVMe (`/media/nvme/simaai/coprocessing/models` on a board set up as in
    [Chapter 8](08-mount-nvme.md)), `/data/simaai/coprocessing/models`, then
    `simaai/coprocessing/models` under `$TMPDIR` (or `/tmp`). Set `SIMA_MPK_EXTRACT_ROOT` to choose

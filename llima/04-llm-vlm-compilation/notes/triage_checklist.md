@@ -109,8 +109,8 @@ The deployed `<model-id>/` directory **must** contain:
   - `whisper_config.json` → task = ASR
   - Having **both** or **neither** → runtime throws.
 - For an **image-capable VLM**, `vlm_config.json` must carry non-null `vm_cfg`,
-  non-null `mm_cfg`, and a non-empty `vision_model_name` — that is exactly how the
-  runtime sets `accepts_image()`. A VLM compiled without these loads as
+  non-null `mm_cfg`, and a non-empty `vision_model_name` (a string or an array) —
+  that is exactly how the runtime sets `accepts_image()`. A VLM compiled without these loads as
   a **text-only** model (silent capability loss — see `02_vlm_compilation.ipynb`).
 
 (The compiler's own output tree is `output_directory/{onnx_files,sima_files/{devkit,mpk,npy_files}}`;

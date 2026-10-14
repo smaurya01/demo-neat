@@ -5,8 +5,9 @@
 #   cmake --build apps/build -j2
 #
 # The plugin itself is not linked into these apps. GStreamer loads it at run time from
-# GST_PLUGIN_PATH, so the apps only need the Neat library.
-cmake_minimum_required(VERSION 3.16)
+# GST_PLUGIN_PATH_1_0 (with SIMA_GST_NEAT_ONLY=0; source scripts/env.sh), so the apps only need
+# the Neat library.
+cmake_minimum_required(VERSION 3.18)
 project(custom_plugin_apps LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -26,5 +27,6 @@ foreach(app stream_to_insight detect_to_insight)
   target_include_directories(${app} PRIVATE ${OPENCV_INCLUDE_DIR})
 endforeach()
 
-# Keep the labels next to the detector binary so the default --labels path works.
+# Copy the labels next to the detector binary. Without --labels, detect_to_insight looks for
+# coco_labels.txt in its own folder (found via /proc/self/exe), whatever the working directory.
 configure_file(detect_to_insight/coco_labels.txt ${CMAKE_BINARY_DIR}/coco_labels.txt COPYONLY)

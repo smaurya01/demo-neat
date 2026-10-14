@@ -98,7 +98,8 @@ def run_inference(model_id: str, limit: int, topk: int, timeout_ms: int) -> int:
     cfg, project = model_cfg(model_id)
     arc = archive_path(model_id, PRECISION, model_batch_size(model_id, BATCH))
     if arc is None:
-        raise SystemExit(f"[test] {model_id}: no archive; compile first")
+        print(f"   FAIL: {model_id}: no archive; compile first")
+        return 1
     batch = model_batch_size(model_id, BATCH)
     if batch > 1:
         return run_batched(model_id, arc, batch, limit, timeout_ms)
@@ -107,7 +108,8 @@ def run_inference(model_id: str, limit: int, topk: int, timeout_ms: int) -> int:
     imgs = sorted(p for p in infer_dir.iterdir()
                   if p.suffix.lower() in {".jpg", ".jpeg", ".png"})[:limit]
     if not imgs:
-        raise SystemExit(f"[test] no images in {infer_dir}")
+        print(f"   FAIL: no images in {infer_dir}")
+        return 1
 
     _, _, h, w = cfg["input_shape"]
     decode = cfg.get("decode", "imagenet_topk")
@@ -186,6 +188,8 @@ def preprocess(cfg: dict, path: Path):
 
     _, _, h, w = cfg["input_shape"]
     bgr = cv2.imread(str(path))
+    if bgr is None:
+        raise ValueError(f"cannot read the image {path.name}")
     img = cv2.resize(bgr, (w, h), interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     mean = np.array(cfg.get("mean", [0, 0, 0]), dtype=np.float32)
@@ -229,7 +233,8 @@ def run_batched(model_id: str, arc: Path, batch: int, limit: int, timeout_ms: in
     infer_dir = ROOT / project.get("infer_dir", "assets/inference")
     imgs = sorted(p for p in infer_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
     if not imgs:
-        raise SystemExit(f"[test] no images in {infer_dir}")
+        print(f"   FAIL: no images in {infer_dir}")
+        return 1
     picked = [imgs[i % len(imgs)] for i in range(batch)]      # repeat images to fill the batch
     stack = np.stack([preprocess(cfg, p) for p in picked])
 
@@ -287,7 +292,8 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=None,
                     help="test the batch-N build (default: the model's batch_size in models.yaml, else 1)")
     ap.add_argument("--validate-only", action="store_true", help="archive contract only; no board")
-    ap.add_argument("--limit", type=int, default=3)
+    ap.add_argument("--limit", type=int, default=3,
+                    help="images to run (batch 1); a batch-N build always runs one batch of N images")
     ap.add_argument("--topk", type=int, default=3)
     ap.add_argument("--timeout-ms", type=int, default=20000)
     args = ap.parse_args()

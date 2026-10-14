@@ -134,8 +134,8 @@ sima@modalix:~$ sima-cli nvme remount
 
 ### The root filesystem is full
 
-The 16 GB eMMC fills fast, and the symptoms rarely mention disk space — installs die halfway, logs
-stop, services misbehave.
+The eMMC (16 GB or 32 GB, see [Chapter 1](01-know-the-hardware.md)) fills fast, and the symptoms
+rarely mention disk space — installs die halfway, logs stop, services misbehave.
 
 ```bash
 sima@modalix:~$ df -h /
@@ -178,10 +178,11 @@ Defaults are `sima` / `edgeai`. If they were changed, contact your administrator
 
 ## Neat SDK and `dk`
 
-### Setup reinstalled everything, or there are now two SDK containers
+### Setup reinstalled everything
 
-You pressed `y` at setup prompt 6. Run setup again and press `n` to reuse the container you
-already have:
+At setup prompt 6, `Container '…' already exists. Remove and recreate it? [Y/n]`, you accepted the
+default `Y` (or pressed `Enter`), so setup removed and recreated the container. Next time, answer
+`n` to reuse the container you already have:
 
 ```bash
 sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
@@ -247,7 +248,8 @@ Stop only the process you recognise as yours:
 sima@modalix:~$ kill <pid>
 ```
 
-**Never kill `mla_rt_service`** — it is the system service that runs the MLA.
+**Never kill `mla_rt_service` or `mlashmcomplex`** — they are system daemons that run the MLA
+(`mlashmcomplex` is the app-complex daemon that holds the MLA mailbox).
 
 ---
 
@@ -285,17 +287,20 @@ The SDK is not paired with a board. Run `sima-cli sdk setup --devkit <devkit-ip>
 ### The application times out waiting for frames
 
 The RTSP source is not running. In Insight's **Streaming** tab, start `src1` again, and check the
-URL in your config matches the one Insight shows.
+URL in your config is the tab's base URL plus `/src1`, with the host IP the DevKit uses (not
+`127.0.0.1`).
 
 ### No video in the Video Viewer
 
-- `insight_host` in your config must be the Insight host's IP — the IP on the **Insight (remote)**
-  line of `neat` — and the board must be able to reach it.
-- `video_port` must match the `videoUDP` row of `neat`.
+- `insight_host` in your config must be the host IP the DevKit uses — the IP on the
+  **Insight (remote)** line of `neat`, or the output of
+  `curl -sk https://127.0.0.1:9900/api/server-ip` — and the board must be able to reach it. Never
+  `127.0.0.1`: on the board, that is the board itself.
+- `video_port` must match the start value of the `videoUDP` row of `neat`.
 
 ### Video, but no boxes
 
-- `metadata_port` must match the `metadataUDP` row of `neat`.
+- `metadata_port` must match the start value of the `metadataUDP` row of `neat`.
 - Lower `min_score` in the config — the threshold may be filtering out every detection.
 
 ---

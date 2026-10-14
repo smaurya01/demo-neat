@@ -10,7 +10,7 @@
 //   stream_to_insight --url rtsp://<insight-host>:8554/src1 --insight-host <insight-host>
 //                     [--channel 0] [--video-port-base 9000]
 //                     [--mode none|grayscale|invert] [--border 12] [--color 0x00FF00]
-//                     [--no-bar] [--custom] [--frames N] [--print-graph]
+//                     [--no-bar] [--log-interval N] [--custom] [--frames N] [--print-graph]
 //                     [--width W --height H --fps F]
 
 #include "../common/app_common.h"
@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <string>
 
@@ -58,32 +59,38 @@ groups::RtspDecodedInputOptions make_source_options(const std::string& url,
 
 int main(int argc, char** argv) {
   std::cout.setf(std::ios::unitbuf); // progress lines appear at once, even when logged to a file
+  install_stop_handlers();
   try {
     const Args args(argc, argv);
     const std::string url = args.get("--url");
     if (url.empty() || args.has("--help")) {
       std::cerr << "usage: stream_to_insight --url rtsp://<host>:8554/srcN "
-                   "--insight-host <host> [--channel 0] [--mode none|grayscale|invert] "
-                   "[--border N] [--color 0xRRGGBB] [--no-bar] [--custom] [--frames N] "
-                   "[--print-graph]\n";
+                   "--insight-host <host> [--channel 0] [--video-port-base 9000] "
+                   "[--mode none|grayscale|invert] [--border 0..256] [--color 0xRRGGBB] "
+                   "[--no-bar] [--log-interval N] [--custom] [--frames N] [--print-graph] "
+                   "[--width W --height H --fps F]\n";
       return url.empty() ? 1 : 0;
     }
     const std::string insight_host = args.get("--insight-host", "127.0.0.1");
     const int channel = args.get_int("--channel", 0);
     const int frames_limit = args.get_int("--frames", 0);
 
+    // ---- The custom plugin, as a Neat Node ---------------------------------------------------
+    // Options are read before the probe so a typo fails at once.
+    FrameMarkerOptions marker_opt;
+    marker_opt.mode = parse_frame_marker_mode(args.get("--mode", "grayscale"));
+    marker_opt.border_width = args.get_int_in_range("--border", 12, 0, 256);
+    marker_opt.color = args.get_uint("--color", 0x00FF00);
+    marker_opt.progress_bar = !args.has("--no-bar");
+    marker_opt.log_interval = args.get_uint("--log-interval", 0);
+    marker_opt.label = "marker";
+
     StreamGeometry geometry{args.get_int("--width", 0), args.get_int("--height", 0),
                             args.get_int("--fps", 0)};
     if (geometry.width <= 0 || geometry.height <= 0 || geometry.fps <= 0)
       geometry = probe_stream(url);
-
-    // ---- The custom plugin, as a Neat Node ---------------------------------------------------
-    FrameMarkerOptions marker_opt;
-    marker_opt.mode = parse_frame_marker_mode(args.get("--mode", "grayscale"));
-    marker_opt.border_width = args.get_uint("--border", 12);
-    marker_opt.color = args.get_uint("--color", 0x00FF00);
-    marker_opt.progress_bar = !args.has("--no-bar");
-    marker_opt.label = "marker";
+    if (stop_requested())
+      return 0;
 
     // Two equivalent ways to put the element in the graph:
     //   --custom : nodes::Custom() with a raw launch fragment (public, stable API)
@@ -134,7 +141,7 @@ int main(int argc, char** argv) {
               << " channel=" << channel << "\nPress Ctrl-C to stop.\n";
 
     // ---- Run until Ctrl-C or --frames ---------------------------------------------------------
-    install_stop_handlers();
+    // A Ctrl-C that arrived during build() skips the loop and goes straight to close().
     using Clock = std::chrono::steady_clock;
     auto window_start = Clock::now();
     int total = 0, window = 0;
@@ -152,8 +159,8 @@ int main(int argc, char** argv) {
       ++window;
       const double secs = std::chrono::duration<double>(Clock::now() - window_start).count();
       if (secs >= 5.0) {
-        std::cout << "frames=" << total << " pulled_fps=" << (window / secs)
-                  << " last_frame_id=" << sample.frame_id << "\n";
+        std::cout << "frames=" << total << " pulled_fps=" << std::fixed << std::setprecision(1)
+                  << (window / secs) << " last_frame_id=" << sample.frame_id << "\n";
         window = 0;
         window_start = Clock::now();
       }

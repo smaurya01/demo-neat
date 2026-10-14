@@ -47,7 +47,7 @@ so you can tell the four windows apart.
 - Runtime config: `./config/default.conf` — **shared by both implementations**
 
 Both do exactly the same thing. The C++ build is **about 3x faster end to end** on Neat 0.5.0
-(**~240 fps** aggregate in C++ against **~75–88 fps** in Python), because Python's overlay is
+(**~236 fps** aggregate in C++ against **~75–88 fps** in Python), because Python's overlay is
 serialised by the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
 
 What building this app taught (decode families, normalization, backpressure, the GIL) is written
@@ -91,13 +91,14 @@ sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s_seg
 cd ../..
 ```
 
-The zoo publishes **no YOLO-pose and no YOLOX**, so build those two with the graph-surgery flow in
+The zoo publishes **no `yolo26s-pose`** (only the nano `yolo_26n_pose`) **and no YOLOX**. Take
+those two from the prebuilt
+**📦 [models.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**
+(`models/yolo26s-pose/` and `models/yolox_s/`), or build them with the graph-surgery flow in
 [`model-compilation/`](../../model-compilation/README.md)
 ([`yolo26s-pose`](../../model-compilation/COMPILE-COMMANDS.md#10-yolo26s-pose--pose-surgery-carries-the-209-fix),
-[`yolox_s`](../../model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery)) and copy
-their `*_mpk.tar.gz` into `./assets/models/`. `yolo26s-pose` can also come from the prebuilt
-**📦 [Models-v1.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**,
-but not `yolox_s`: the zip's build has the older packed heads, which `BoxDecodeType.YoloX` cannot decode.
+[`yolox_s`](../../model-compilation/COMPILE-COMMANDS.md#11-yolox_s--detection-different-surgery)). Copy
+their `*_mpk.tar.gz` into `./assets/models/`.
 
 Expected model paths (`assets/models/` is git-ignored — the archives are large and not committed):
 
@@ -131,9 +132,14 @@ Each `stream<i>_rtsp` overrides `rtsp_default` for its slot, and the shipped con
 to the `<rtsp-url>` placeholder. Either set all four (the same URL, or four different cameras), or
 delete those four lines so every slot uses `rtsp_default`.
 
+The app refuses to start, and names the key, while `udp_host` or any RTSP URL it would use is
+still a `<...>` placeholder. Both apps also stop if the config file does not exist.
+
 > **Resolution and frame rate are read from the camera at start.** `width`, `height` and `fps`
 > in the config are used only if that fails; then set them to your camera's values.
-> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`).
+> Reading the camera needs `ffprobe` on the DevKit (`sudo apt install ffmpeg`). If it cannot read
+> a stream, the app prints why (ffprobe not installed, ffprobe's own error, or a frame rate
+> outside 1–240 fps) and falls back to the config values.
 >
 > All 4 cameras must have the same resolution and frame rate.
 
@@ -173,7 +179,9 @@ Point them at four different cameras and stream identity still holds.
 `stream0_task` … `stream3_task`: Task for each slot — `detection` | `segmentation` | `pose` | `yolox`.
 The task also selects the on-device decode family and the input normalization.
 
-`stream0_model` … `stream3_model`: Model archive for each slot. Relative to this app folder.
+`stream0_model` … `stream3_model`: Model archive for each slot. A relative path is resolved
+against this app folder by `main.py` and against the current directory by the C++ app, so run the
+C++ app from this folder (as shown in [How To Run](#how-to-run)).
 
 `model_width`, `model_height`: Model input size used by Neat preprocessing (all four are 640×640).
 
@@ -185,12 +193,32 @@ The task also selects the on-device decode family and the input normalization.
 
 `udp_port_stride`: Port spacing. Stream `i` publishes on `udp_port_base + i * udp_port_stride`.
 
+`stream0_port` … `stream3_port` (Python only): Fixed UDP port for one slot, instead of the
+base + stride rule.
+
 `bitrate_kbps`: H.264 output encoder bitrate.
 
 **On-device decode**
 
 `score_threshold`, `nms_iou`, `top_k`: Passed into the **on-device** BoxDecode stage, so the NMS runs
-on the accelerator and the host never sees a sub-threshold box.
+on the accelerator and the host never sees a sub-threshold box. `nms_iou` has no effect on the pose
+stream: `YoloV26Pose` runs no NMS (YOLO26 heads are one-to-one).
+
+**Decoder and RTSP receive**
+
+`decoder_buffers`, `decoder_input_buffers`: Per-stream decoder output and compressed-input buffer
+pools (defaults 16 and 2). All four decoders share one graph, so these are requested from the
+decoder admission service, not set as plain element properties.
+
+`decoder_tuning`: Hardware decoder profile — `auto` | `default` | `low-memory` |
+`throughput-low-latency`.
+
+`drop_on_latency`: `true` lets the RTSP receiver drop late buffers, which is right for a live
+source.
+
+`skip_rtsp_probe`: `true` pins the parser caps to `width`/`height`/`fps` instead of reading them
+from each stream. Leave it `false` for a 59.94 fps source: it pins a whole-number rate, and 60/1
+against 60000/1001 fails negotiation (every stream at 0 fps).
 
 **Performance**
 
@@ -206,6 +234,12 @@ encode) (C++ only; default 2). Each holds a model output buffer, so keep it smal
 `cvu_pre_target`, `cvu_post_target`: Where the model's pre/post CVU stages run — `AUTO` | `EV74` |
 `A65`. Defaults to `EV74`; `AUTO` measured ~12% slower.
 
+`mode` (C++ only): `pipelined` (default), `split` or `serial` — how each stream's work is spread
+over threads.
+
+`pipeline_depth` (Python only): Frames kept in flight in each model graph (default 2; `1` is
+lock-step push/pull).
+
 **Run control**
 
 `frames`: Frames to process **per stream**. Use `0` to run until interrupted.
@@ -215,11 +249,29 @@ encode) (C++ only; default 2). Each holds a model output buffer, so keep it smal
 `profile_interval`: Seconds between live time-profile prints (default 5). `0` prints only the
 summary at exit.
 
-Every value is also overridable on the command line. Run `dk ./main.py --help`.
+`warmup_frames`: Frames per stream left out of the reported means and FPS (default 20; not in the
+shipped config).
 
-Useful flags: `--num-streams {1..4}`, `--tasks a,b,c` (custom model set), `--task <t>` (run ONE model
-solo), `--no-overlay` (isolate the model rate from the host overlay cost), `--duration <seconds>`,
-`--frames N`, `--rtsp URL` (override all sources), `--pre-target/--post-target`, `--print-backend`.
+`serial`, `no_overlay`, `duration_s`, `pull_timeout_ms` (Python only): The config forms of
+`--serial`, `--no-overlay` and `--duration`, and the model pull timeout (default 20000 ms).
+
+**Command-line flags**
+
+The main values can also be set on the command line. The two builds take **different** flags;
+run either with `--help` for the full list.
+
+C++ (`./build/quad_stream_quad_model`): `--config <path>`, `--duration <s>`, `--frames <n>`,
+`--num-streams <1..4>`, `--warmup-frames <n>`, `--no-overlay`, `--profile-interval <s>`,
+`--model-queue-depth <n>`, `--output-queue-depth <n>`, `--mode serial|split|pipelined`,
+`--pre-target <t>`, `--post-target <t>`, `--print-backend`. An unknown flag stops the app with an
+error.
+
+Python (`./main.py`): `--config <path>`, `--rtsp <url>` (override all sources),
+`--num-streams <1..4>`, `--task <t>` (run ONE model solo), `--tasks a,b,c` (custom model set),
+`--udp-host <ip>`, `--udp-port-base <port>`, `--score <x>`, `--nms <x>`, `--top-k <n>`,
+`--queue-depth <n>`, `--frames <n>`, `--warmup-frames <n>`, `--pipeline-depth <n>`, `--serial`,
+`--no-overlay` (isolate the model rate from the host overlay cost), `--profile-interval <s>`,
+`--duration <s>`, `--pre-target <t>`, `--post-target <t>`, `--rtsp-udp`, `--print-backend`.
 
 </details>
 
@@ -249,7 +301,8 @@ dk ./build/quad_stream_quad_model --duration 20
 dk ./main.py --config ./config/default.conf
 ```
 
-Both read `./config/default.conf` and take the same flags. Bounded smoke test:
+Both read `./config/default.conf`; their command-line flags differ (see
+[Config Parameters](#config-parameters)). Bounded smoke test:
 
 ```bash
 dk ./build/quad_stream_quad_model --frames 30
@@ -299,7 +352,9 @@ off), plus a fuller summary at exit. There is no per-frame log line — one repo
 whole table.
 
 Every number is the mean over **that window**, not a cumulative average — a cumulative mean hides a
-stream that degrades halfway through a run.
+stream that degrades halfway through a run. In the summary at exit, the means cover the whole run
+after warmup and the p95 covers each stream's most recent 16,384 frames (about 4.5 minutes at
+60 fps), so memory use stays flat however long the app runs.
 
 Real output (Modalix DevKit, 4 × RTSP 1280×720 @ 59.94 fps, overlay on):
 
@@ -335,7 +390,8 @@ The columns are named for **what they actually measure**, which is not always wh
 > **Never read `1000 / infer` as a frame rate.** With several frames in flight, `infer` is a frame's
 > in-graph **latency**, not its period — Little's law: `in-flight = throughput × latency`. A stream
 > can show `infer = 32 ms` and still deliver 58 fps. `pull fps` is the honest number, which is why
-> there is no "model fps" column.
+> the C++ table has no "model fps" column. (The Python app's `mdl fps` / `model fps` columns are
+> `1000 / infer`; read them with that in mind.)
 
 ### Why `infer` is ~20–32 ms, and why that is *not* the MLA
 
@@ -439,26 +495,25 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
    was measured on NEAT 0.3.0 over a 3-minute `--duration 180` run (**aggregate 95.64 fps**, zero
    stalls, zero errors, no degradation across the run); read it for where the time goes.
 
-   | stream | model | infer ms | postproc ms | overlay ms | **delivered fps** |
-   | --- | --- | --- | --- | --- | --- |
-   | 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 | ~17 |
-   | 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 | ~10 |
-   | 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 | ~24 |
-   | 3 yolox | `yolox_s` | 24 | 0.4 | ~10 | ~56 |
-   | | | | | | **aggregate ~95 fps** |
+   | stream | model | infer ms | postproc ms | overlay ms |
+   | --- | --- | --- | --- | --- |
+   | 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 |
+   | 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 |
+   | 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 |
+   | 3 yolox | `yolox_s` | 24 | 0.4 | ~10 |
 
 Two things the Python build depends on:
 
 1. **The source sink must drop.** `OutputOptions.every_frame()` leaves `drop=False`, and a
    non-dropping sink back-pressures the *admitted* hardware decoder into a permanent stall (every
    stream reporting `no RTSP frame`) as soon as the Python consumer falls behind. `main.cpp`
-   survives the same setting only because it drains at 61 fps/stream.
+   survives a non-dropping sink only because it drains every frame at the source rate.
 2. **`annotate()` batches its OpenCV calls.** One `cv2.rectangle` per box, the whole skeleton in one
    `cv2.polylines`, and all keypoint dots in one indexed write — 3.5× faster on pose than one call
    per element.
 
-`infer` is at **parity with the C++** (24 ms vs 21.7 ms), so the remaining gap to the C++'s
-~240 fps is entirely the host-side overlay: **58 ms vs 0.51 ms** (detection) and **87 ms vs 10.4 ms**
+`infer` is at **parity with the C++** (24 ms vs 21.8 ms), so the remaining gap to the C++'s
+~236 fps is entirely the host-side overlay: **58 ms vs 0.60 ms** (detection) and **87 ms vs 13.9 ms**
 (segmentation). Python's per-frame drawing serialises on the GIL; the C++ overlay runs on four real
 OS threads with no interpreter lock.
 
@@ -471,7 +526,7 @@ OS threads with no interpreter lock.
 
 **Post-processing is not a cost in either.** Every model box-decodes on-device (decoding
 segmentation, pose and YOLOX in NumPy on the A65 would cost **~340 ms** and **~143 ms** per frame),
-so the host `postproc` stage is only **0.04 – 0.91 ms** in C++ and **0.5 – 6.6 ms** in Python
+so the host `postproc` stage is only **0.05 – 1.5 ms** in C++ and **0.4 – 5.7 ms** in Python
 (there it is just the cost of reshaping the payload through NumPy).
 
 > **`postproc` is not a decode.** It is the *host-side read of the already-decoded payload*. The
@@ -497,14 +552,20 @@ possible place to debug it. `tools/pose_probe.py` strips everything away: ONE mo
 
 ```bash
 # what does this model actually cost, and are its outputs right?
-dk ./tools/pose_probe.py --task pose --iters 20 --save-out /tmp/pose.jpg
+dk ./tools/pose_probe.py --task pose --rtsp <rtsp-url> --iters 20 --save-out /tmp/pose.jpg
 
-# control: the same probe on a different model
-dk ./tools/pose_probe.py --task segmentation --iters 20
+# control: the same probe on a different model, on a synthetic frame (no camera needed)
+dk ./tools/pose_probe.py --task segmentation --synthetic --iters 20
 
 # can ANY runtime option move the number?
-dk ./tools/pose_probe.py --sweep
+dk ./tools/pose_probe.py --rtsp <rtsp-url> --sweep
 ```
+
+Every run needs a frame source: `--rtsp <url>`, `--image <file>` or `--synthetic`. Without one,
+the probe uses the RTSP URL from `config/default.conf`, and stops with a message if that is still
+the `<rtsp-url>` placeholder. The probe builds the model with `main.py`'s own code and settings
+from `config/default.conf` (`--config` picks another file), and reads the stream's size from the
+stream. It prints the shape of every tensor the model delivers.
 
 Because it is lock-step, its `infer` is the real model service time, not graph latency.
 
@@ -517,14 +578,15 @@ Because it is lock-step, its `infer` is the real model service time, not graph l
 
 <br>
 
-1. **The host overlay gates the delivered rate.** See the measured table above.
-   Burning masks and skeletons into the stream requires the frame on the CPU; Neat's in-graph
-   `sima_render` draws boxes only.
+1. **In Python, the host overlay gates the delivered rate** (see the Python table above). The C++
+   build delivers the cameras' rate; its closest thing to a limit is segmentation's overlay
+   (~15.5 ms of a 16.7 ms frame period). Burning masks and skeletons into the stream requires the
+   frame on the CPU; Neat's in-graph `sima_render` draws boxes only.
 
-2. **Teardown heap abort.** The process intermittently dies at exit with
+2. **Teardown heap abort (Python).** The Python process intermittently dies at exit with
    `malloc(): mismatching next->prev_size` (exit 134/139). It fires **after** the profile prints, so
    the numbers are valid, but it is a real defect in the teardown path.
 
-3. Set `QSQM_DEBUG=1` to print the tensor shapes each model delivers.
+3. To see the tensor shapes a model delivers, run `tools/pose_probe.py` on it (see above).
 
 </details>

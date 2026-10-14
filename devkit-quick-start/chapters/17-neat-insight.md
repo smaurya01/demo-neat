@@ -101,8 +101,9 @@ sima-user@sdk:/workspace$ insight-admin status
 | **Video Viewer** | WebRTC output with metadata overlays — detection, classification, pose, segmentation, tracking |
 | **Stats** | System and application metrics |
 
-Before you start a stream, check two things: the **NFS mount** is present on the workspace, and the
-paired **devkit-ip** shows in the top-right corner of the UI.
+Before you start a stream, check two things: the **NFS mount** is present on the workspace (run
+`dk status` in the SDK and check its `NFS mount path` line), and the paired **devkit-ip** shows in
+the top-right corner of the UI.
 
 ---
 
@@ -157,15 +158,19 @@ deployment when you have neither your own footage nor a catalog asset that fits.
 1. Open Insight in a browser and go to **Media Sources**. Import your video by any of the three
    routes above.
 
-2. Go to **Streaming**. Assign files to `src1`, `src2`, … by hand, or use **auto-assign**
-   to spread unique files across the slots. Start one source, or bulk-start all of them.
+2. Go to **Streaming**. Assign files to `src1`, `src2`, … by hand, or use **Auto Assign**
+   to spread unique files across the slots. Start one source, or use **Bulk Start** to start all
+   of them.
 
    <p align="center">
      <img src="../images/insight-rtsp.jpg" alt="Insight Streaming tab with media assigned to source slots" width="720">
    </p>
 
-3. Point your application at the source — `rtsp://<host-ip>:8554/src1`, where `<host-ip>` is the
-   IP on the **Insight (remote)** line of `neat` — and run it.
+3. Point your application at the source — the base URL the Streaming tab shows plus `/src1`,
+   e.g. `rtsp://<host-ip>:8554/src1`. `<host-ip>` is the host IP the DevKit uses: the IP on the
+   **Insight (remote)** line of `neat`, or the output of
+   `curl -sk https://127.0.0.1:9900/api/server-ip`. Never `127.0.0.1` — on the board, that is the
+   board itself. Then run the application.
 
 4. Watch the result in **Video Viewer**, where you can confirm that frames are arriving on the
    channel you expect and that the overlays line up with them.

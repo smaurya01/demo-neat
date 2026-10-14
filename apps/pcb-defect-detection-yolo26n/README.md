@@ -54,6 +54,9 @@ The precompiled BF16 model pack is required before running:
 ./assets/models/latest_plc_yolo26n_mpk.tar.gz
 ```
 
+Besides `pyneat`, the app imports `numpy` and OpenCV (`cv2`), listed in `./requirements.txt`. Both
+must be importable in the DevKit's pyneat environment, as for the other Python apps here.
+
 ## Model Download
 
 The model is custom-trained, so it is not in the SiMa Model Zoo. It is shared from a Google Drive
@@ -63,9 +66,12 @@ folder, which has no command-line download:
    [model folder](https://drive.google.com/drive/folders/13AcEIWG3mBlTmEgNa1IjWlOL_leyjni5?usp=sharing)
    in a browser and download the BF16 model pack `latest_plc_yolo26n_mpk.tar.gz`. Keep it as a
    `.tar.gz`; do not extract it.
-2. Copy it into this app's `./assets/models/` (under `~/workspace` on the host):
+2. Copy it into this app's `./assets/models/`. Run this **on the host**, not in the SDK shell,
+   which may not see your browser's download folder. `<clone>` is your clone of this repo under
+   `~/workspace`:
 
    ```bash
+   cd ~/workspace/<clone>/apps/pcb-defect-detection-yolo26n
    mkdir -p ./assets/models
    cp <download-dir>/latest_plc_yolo26n_mpk.tar.gz ./assets/models/
    ```
@@ -96,7 +102,24 @@ timeout_ms=8000
 labels=missing_hole,mouse_bite,open_circuit,short,spur,spurious_copper
 ```
 
-CLI flags override config values.
+CLI flags override the main config values (`dk ./main.py --help` lists them):
+
+| flag | overrides |
+| --- | --- |
+| `--config <file>` | the config file itself (default `./config/default.conf`) |
+| `--model <path>` | `model` |
+| `--input-dir <dir>` | `input_dir` |
+| `--output-dir <dir>` | `output_dir` |
+| `--score <float>` | `score` |
+| `--nms <float>` | `nms` |
+| `--log-level <level>` | log level (default `INFO`) |
+
+An unknown flag is reported as a warning and ignored; an unknown key in the config file is an
+error.
+
+Images of any size work: the app letterboxes each one to `infer_size`×`infer_size` (scaled to fit,
+padded, not stretched) and maps the boxes back to the original image. `infer_size` must match the
+compiled model input (640).
 
 ## How To Run
 
@@ -185,8 +208,12 @@ python ./compile/compile_yolo26_modelsdk.py \
   --model ./assets/models/yolo26n_einsum_raw.onnx \
   --build-dir ./compile/build/latest_yolo26n_compile \
   --strict-one-mla \
-  --json-output ./compile/latest_compile_report.json
+  --json-output ./compile/compile_report.json
 ```
+
+The compile report goes to `./compile/compile_report.json` (git-ignored, rewritten on every
+compile). `./compile/latest_compile_report.json` is the report from the build of the shipped model
+pack, kept for comparison.
 
 Copy the generated pack to the runtime model path:
 

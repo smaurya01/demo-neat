@@ -143,6 +143,15 @@ The result is `build/16stream4model`, an aarch64 binary that runs on the board.
 ./scripts/start_sources.sh --stop   # stop all sources
 ```
 
+The script runs on the SDK host and needs `curl` and `ffmpeg` there (`sudo apt install ffmpeg`):
+the delivery check reads each source with `ffmpeg`. It talks to Insight at
+`https://127.0.0.1:9900` and checks the sources at `rtsp://127.0.0.1:8554/src<N>`. Override these
+with environment variables when your setup differs:
+
+```bash
+INSIGHT=https://127.0.0.1:9900 RTSP_HOST=127.0.0.1 RTSP_PORT=8554 ./scripts/start_sources.sh --check
+```
+
 The script exits non-zero with a message when Insight is unreachable, a clip is missing, or an
 assign or start call fails. The expected result is that every row reads about 30 fps and says `OK`, followed by
 `all 16 sources delivering -- safe to launch the app`. Do not launch until then.
@@ -222,9 +231,11 @@ The live line shows total fps against the input, then per-stream fps in four gro
 model:
 
 ```
-[t=90  s] 480.0  fps (in 480)  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0
-             total    input      model 0 (26n det)       model 1 (11n det)       model 2 (v8n det)       model 3 (26n pose)
+[t=  90s]  480.0 fps (in 480)  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0
 ```
+
+Reading left to right: the total output fps, the input rate, then streams 0–3 (model 0, YOLO26n
+det), 4–7 (model 1, YOLO11n det), 8–11 (model 2, YOLOv8n det) and 12–15 (model 3, YOLO26n pose).
 
 - The **first window reads above 30 fps**. That is the pipeline catching up on frames the RTSP
   sources buffered while the four graphs were built. It is not a problem.
@@ -259,8 +270,9 @@ viewer only.
 
 ## Measured results
 
-Current config: YOLO26n det / YOLO11n det / YOLOv8n det / YOLO26n pose, 4 streams each, all
-sources 1280×720 @ 30 fps. Measured on the DevKit on NEAT 0.4.0 / SDK 2.1.3 with a 300 s run.
+Config: YOLO26n det / YOLO11n det / YOLOv8n det / YOLO26n pose, 4 streams each, all sources
+1280×720 @ 30 fps. These figures come from a 300 s run on the DevKit with NEAT 0.4.0 and
+SDK 2.1.3.
 
 | model | streams | input fps | output fps | per stream | objects / frame |
 |---|---|---:|---:|---|---|
@@ -290,7 +302,7 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | `model<m>_name` | `yolo26n_pose` | Label used in logs and reports. |
 | `model<m>_archive` | `./assets/models/yolo_26n_pose_mpk.tar.gz` | Compiled model archive. |
 | `model<m>_labels` | `./assets/labels/person.txt` | One label per line. |
-| `model<m>_classes` | `1` | Real class count (required). |
+| `model<m>_classes` | `1` | Real class count (defaults to 80). |
 | `model<m>_task` | `detection` \| `pose` | `pose` selects `YoloV26Pose` and pose metadata. |
 | `model<m>_decode` | `yolo26` \| `yolov8` | Detection decode family (ignored for pose). |
 | `model<m>_score_is_prob` | `false` | `true` for archives whose score head is already sigmoided. |
@@ -314,12 +326,12 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | `insight_host`, `video_port_base`, `metadata_port_base` | `127.0.0.1`, 9000, 9100 | Insight destination: the Insight host's IP as seen from the DevKit (`<insight-host-ip>` in the config). Channel `i` uses base + `i`. |
 | `width`, `height`, `fps` | 1280, 720, 30 | Source contract when a stream cannot be probed. |
 | `probe_source` | `true` | Read every stream's width, height and frame rate with `ffprobe` at start; `false` trusts the values above. |
-| `skip_rtsp_probe` | `true` | Trust the contract instead of probing each URL. This is also what lets Core admit decoders with zero-copy output. |
+| `skip_rtsp_probe` | `true` | Pin each stream's caps (size and whole-number frame rate) on the decoder instead of letting Neat read them from the stream at build time. The pinned values are the probed ones (see `probe_source`), or the values above for a stream that cannot be probed. This is also what lets Core admit decoders with zero-copy output. |
 | `decoder_buffers`, `decoder_input_buffers` | 8, 2 | Core admission raises output buffers to 18 when every decoder has known caps. |
 | `max_inflight_per_stream`, `max_inflight_total` | 2, 8 | Frames admitted into each model, per stream and per model. |
 | `queue_depth`, `internal_queue_depth`, `inference_async` | 16, 1, `true` | Detections queue depth and graph execution options. |
 | `detections_drop` | `false` | With 4 streams per model, back-pressure beats dropping. |
-| `min_score`, `nms_iou`, `max_detections` | 0.30, 0.60, 50 | Decode thresholds, applied to every model. |
+| `min_score`, `nms_iou`, `max_detections` | 0.30, 0.60, 50 | Decode thresholds, applied to every model. `nms_iou` only affects the `yolov8` models: the YOLO26 decoders (`yolo26`, pose) run no NMS, since YOLO26 heads are one-to-one. |
 | `warmup_frames` | 30 | Frames per stream excluded from the fps figure. |
 | `target_ratio` | 0.97 | PASS when every stream reaches this fraction of its source rate. |
 | `report_interval`, `duration`, `stall_warn_s` | 5, 0, 3 | Reporting cadence, run length (0 = until Ctrl-C), and stall warning threshold. |
