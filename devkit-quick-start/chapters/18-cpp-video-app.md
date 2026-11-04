@@ -40,8 +40,9 @@ Insight draw each box on the frame it came from.
 
 Start the SDK from a host terminal, pressing `n` at prompt 6 to reuse your container:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
@@ -58,8 +59,9 @@ open its URL and you are in the same `/workspace`.
 You are now editing files that the host, the SDK and the DevKit all see. Confirm the board is
 there before going further:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 dk status
 ```
 
@@ -73,8 +75,9 @@ dk status
 
 Ask the SDK for the URL rather than assuming the port:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 neat
 ```
 
@@ -145,8 +148,9 @@ URL shows. Leave the stream running.
 
 Create it in the shared workspace, so the SDK builds it and the board can see it:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 mkdir -p /workspace/rtsp-detector && cd /workspace/rtsp-detector
 ```
 
@@ -165,8 +169,9 @@ mkdir -p /workspace/rtsp-detector && cd /workspace/rtsp-detector
 Download the YOLO26 archive into the project folder, from the SDK shell. The workspace is shared,
 so the board sees it at the same path:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 export MODELZOO_VERSION="3.0.0"
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
@@ -276,15 +281,17 @@ same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_l
 folder that holds your `demo-neat` checkout, copy it into the workspace folder you chose at setup
 prompt 4:
 
+*On the host*
+
 ```bash
-# On the host
 cp demo-neat/tutorial/assets/coco_labels.txt ~/workspace/rtsp-detector/
 ```
 
 Check it has 80 lines:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 wc -l coco_labels.txt
 ```
 
@@ -651,8 +658,9 @@ int main(int argc, char** argv) {
 
 From the SDK shell, in the app folder:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 cmake -S . \
     -B ./build \
     -DCMAKE_BUILD_TYPE=Release \
@@ -669,8 +677,9 @@ it, `find_package(SimaNeat)` fails.
 
 Do not run the binary in the container — it was cross-compiled for the board. Hand it to `dk`:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 dk ./build/rtsp_detector --config ./config.yaml
 ```
 
@@ -737,8 +746,9 @@ From here, the packaged examples are the natural next read. The application abov
 version of `single-stream-object-detector`, which adds source probing, MJPEG and H.265 support,
 annotated-frame saving and profiling:
 
+*On the board*
+
 ```bash
-# On the board
 ls /media/nvme/neat/prebuilt-apps/examples/object-detection/
 ```
 

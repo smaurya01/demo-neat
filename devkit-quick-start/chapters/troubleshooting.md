@@ -25,8 +25,9 @@ power problem, and nothing else in this guide will help until it is lit.
 
 Baud rate mismatch. Earlier firmware uses 921600 rather than 115200:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli serial -b 921600
 ```
 
@@ -39,10 +40,15 @@ sima-cli serial -b 921600
 `modalix.local` depends on **mDNS**, which is unreliable on Windows and blocked on many corporate
 networks. Use the IP instead:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli device discover      # from the host
-# On the board
+```
+
+*On the board*
+
+```bash
   ip a | grep inet              # from the serial console
 ```
 
@@ -59,8 +65,9 @@ Then `ssh sima@<devkit-ip>`.
 
 Establish which half is broken first:
 
+*On the board*
+
 ```bash
-# On the board
 ping -c3 8.8.8.8              # routing
 ping -c3 developer.sima.ai    # DNS
 ```
@@ -89,16 +96,18 @@ Most common causes, in order:
 
 Open a new shell, or:
 
+*On the board*
+
 ```bash
-# On the board
 source ~/.bashrc
 which sima-cli
 ```
 
 If `which` still finds nothing, call it by its absolute path on the board:
 
+*On the board*
+
 ```bash
-# On the board
 /data/sima-cli/.venv/bin/sima-cli --version
 ```
 
@@ -119,8 +128,9 @@ Nearly every download failure is one of these three, usually the third.
 
 ### `df -h` shows no NVMe
 
+*On the board*
+
 ```bash
-# On the board
 lsblk | grep nvme       # is the device present at all?
 ```
 
@@ -134,8 +144,9 @@ lsblk | grep nvme       # is the device present at all?
 
 An image update can change the root filesystem and drop the mount. Re-check after every update:
 
+*On the board*
+
 ```bash
-# On the board
 df -h | grep nvme
 sima-cli nvme remount
 ```
@@ -145,8 +156,9 @@ sima-cli nvme remount
 The eMMC (16 GB or 32 GB, see [Chapter 1](01-know-the-hardware.md)) fills fast, and the symptoms
 rarely mention disk space — installs die halfway, logs stop, services misbehave.
 
+*On the board*
+
 ```bash
-# On the board
 df -h /
 du -sh ~/* 2>/dev/null | sort -h | tail
 ```
@@ -160,8 +172,9 @@ Move models, datasets and outputs to `/media/nvme` and point your applications t
 
 ### The board is on 1.7 / Yocto
 
+*On the board*
+
 ```bash
-# On the board
 cat /etc/buildinfo | grep DISTRO
 ```
 
@@ -189,8 +202,9 @@ Almost always a version mismatch between board software, Neat Library and Neat S
 against the [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on) and
 upgrade them as a set.
 
+*On the board*
+
 ```bash
-# On the board
 cat /etc/buildinfo | grep DISTRO_VERSION
 dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
 ```
@@ -209,8 +223,9 @@ At setup prompt 6, `Container '…' already exists. Remove and recreate it? [Y/n
 default `Y` (or pressed `Enter`), so setup removed and recreated the container. Next time, answer
 `n` to reuse the container you already have:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
@@ -218,8 +233,9 @@ sima-cli sdk setup --devkit <devkit-ip>
 
 The host and the board must be on the same network and able to reach each other:
 
+*On the host*
+
 ```bash
-# On the host
 ping -c3 <devkit-ip>
 ```
 
@@ -233,8 +249,9 @@ You are not in the SDK container. Use the terminal in the VS Code window attache
 `sima-neat/sdk` container ([Chapter 15](15-install-neat-sdk.md)). If you are in the container and it
 is still missing, reload your shell:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 source ~/.bashrc
 ```
 
@@ -266,15 +283,17 @@ the board. The next run then hangs while the graph builds, or fails with errors 
 
 Find it from a board shell (`dk shell`):
 
+*On the board*
+
 ```bash
-# On the board
 ps -eo pid,etime,cmd | grep -E 'python|rtsp_detector' | grep -v grep
 ```
 
 Stop only the process you recognise as yours:
 
+*On the board*
+
 ```bash
-# On the board
 kill <pid>
 ```
 
@@ -290,8 +309,9 @@ kill <pid>
 CMake cannot see the SDK's copy of Neat. Configure with the prefix path, after deleting the failed
 build:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 rm -rf build
 cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr

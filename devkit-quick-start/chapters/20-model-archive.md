@@ -47,8 +47,9 @@ You will also see the term **MPK**. It is the name of that inference contract, a
 Use the same YOLO26 archive as [Chapter 12](12-object-detection.md). If you already downloaded it
 there, skip this step.
 
+*On the board*
+
 ```bash
-# On the board
 export MODELZOO_VERSION="3.0.0"
 mkdir -p /media/nvme/example/models
 cd /media/nvme/example/models
@@ -65,8 +66,9 @@ a Model Zoo convention only. The files inside are what count.
 
 You do not need to unpack an archive to see what is in it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar tzvf yolo26m-det-bf16-mla_tess-b1.tar.gz
 ```
 
@@ -141,8 +143,9 @@ code with `decode_type` in `ModelOptions` (see [Chapter 12](12-object-detection.
 The contract is a single JSON document, 20–30 KB for a YOLO model. This short script reads it
 straight out of the archive, without unpacking anything, and prints one line per step:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 cat > inspect_archive.py << 'EOF'
 import json, sys, tarfile
 
@@ -213,16 +216,18 @@ images normalised with ImageNet mean and standard deviation, and it expects the 
 
 To open the contract directly, pull it out of the archive and pretty-print it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | python3 -m json.tool | less
 ```
 
 To pick out a single field — for example the input:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin)['input_nodes'], indent=2))"
 ```
@@ -271,8 +276,9 @@ BF16. The method and full table are in
 Download the INT8 archive of the same model next to the BF16 one, and run the inspection script
 on it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 export MODELZOO_VERSION="3.0.0"
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz"
 python3 inspect_archive.py yolo26m-det-int8-b1.tar.gz
@@ -315,8 +321,9 @@ Model Zoo BF16 archive above, so do not rely on it alone.
 
 The quick test on the board:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | grep -o '"kernel": "[a-z_]*"' | sort | uniq -c
 ```
@@ -345,8 +352,9 @@ and `0_quanttess.json`. Each output has its own pair on its `dequantization_tran
 
 A good archive has **exactly one `.elf` and zero `.so` files**. Count by file extension:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.elf$'
 ```
 
@@ -354,8 +362,9 @@ tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.elf$'
 1
 ```
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.so$'
 ```
 
@@ -397,8 +406,9 @@ the optional Model Compiler extension). The chain is always the same three steps
 You do not have to guess how a particular archive was made: `archived_compile_script.*.py` inside
 it is the script that made it. Open it to see which compiler calls and settings were used:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-# On the board, in /media/nvme/example/models
 tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     archived_compile_script.compile_yolo26_modelsdk.py | head -3
 ```
@@ -465,8 +475,9 @@ When the process exits, the runtime folder is deleted. To keep it for a look, se
 
 `pyneat` can tell you how it read the contract:
 
+*On the board*
+
 ```bash
-# On the board
 source ~/pyneat/bin/activate
 python3 - << 'EOF'
 import pyneat

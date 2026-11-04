@@ -36,22 +36,25 @@ something like `10.42.0.xxx`.
 
 Find the board:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli device discover
 ```
 
 or, if you prefer:
 
+*On the host*
+
 ```bash
-# On the host
 nmap -sn 10.42.0.0/24 | grep report      # sudo apt install nmap
 ```
 
 Then connect:
 
+*On the host*
+
 ```bash
-# On the host
 ssh sima@10.42.0.xxx
 ```
 
@@ -73,8 +76,9 @@ You are changing the network out from under yourself, so an SSH session will dro
 
 Required for this chapter, and for [Chapter 6](06-connect-to-router.md):
 
+*On the board*
+
 ```bash
-# On the board
 sudo nmcli connection up end0-dhcp
 nmcli -f NAME,DEVICE,STATE connection show --active
 networkctl status
@@ -94,8 +98,9 @@ and check the host's sharing setting.
 Once `sima-cli` is installed **on the board**, you can use its interactive menu to switch network
 modes. A host-only install is not enough. Check in the board's shell:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli --version
 ```
 
@@ -105,8 +110,9 @@ this menu whenever you need to change the configuration; it is not required for 
 
 From the board's [serial console](04-serial-console.md), run:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli network
 ```
 
@@ -165,8 +171,9 @@ Command reference: [sima-cli network](https://developer.sima.ai/software/tools/s
 Everything later in this guide — `sima-cli`, updates, package installs — depends on this. Check it
 now rather than debugging it later:
 
+*On the board*
+
 ```bash
-# On the board
 ping -c3 8.8.8.8              # routing works
 ping -c3 developer.sima.ai    # DNS works too
 ```
@@ -179,8 +186,9 @@ If the first succeeds and the second fails, you have a DNS problem, not a routin
 
 On Ubuntu 24.04 this is usually a firewall dropping forwarded traffic. On the **host**:
 
+*On the host*
+
 ```bash
-# On the host
 sysctl net.ipv4.ip_forward                        # expect: = 1
 sudo iptables -t nat -L POSTROUTING -n | grep MASQUERADE
 ```

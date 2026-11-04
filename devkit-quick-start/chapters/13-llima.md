@@ -13,8 +13,9 @@ install.
 
 Check it is there:
 
+*On the board*
+
 ```bash
-# On the board
 llima --help
 ```
 
@@ -39,15 +40,17 @@ usage: llima [-h] {run,search,pull,list,rm,benchmark-server} ...
 
 ## Search
 
+*On the board*
+
 ```bash
-# On the board
 llima search
 ```
 
 Filter by name:
 
+*On the board*
+
 ```bash
-# On the board
 llima search qwen
 ```
 
@@ -59,8 +62,9 @@ memory.
 
 ## Pull
 
+*On the board*
+
 ```bash
-# On the board
 llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
@@ -73,8 +77,9 @@ llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 
 ## List
 
+*On the board*
+
 ```bash
-# On the board
 llima list
 ```
 
@@ -96,8 +101,9 @@ Note the mix: text models, `-VL-` vision-language models, and `whisper-` for spe
 
 ## Run
 
+*On the board*
+
 ```bash
-# On the board
 llima run Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
@@ -109,8 +115,9 @@ First load takes noticeably longer than later ones while the model is unpacked a
 
 Models are large and the NVMe is not infinite:
 
+*On the board*
+
 ```bash
-# On the board
 llima rm <model-name>
 df -h /media/nvme
 ```

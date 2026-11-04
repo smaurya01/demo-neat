@@ -6,10 +6,9 @@
 
 ## Read the current version
 
-On the board:
+*On the board*
 
 ```bash
-# On the board
 cat /etc/buildinfo
 ```
 
@@ -27,15 +26,17 @@ The field that matters most is `DISTRO_VERSION`.
 
 From your host, without logging in interactively:
 
+*On the host*
+
 ```bash
-# On the host
 ssh sima@<devkit-ip> 'uname -m; cat /etc/buildinfo'
 ```
 
 ### Check the distribution first
 
+*On the board*
+
 ```bash
-# On the board
 cat /etc/buildinfo | grep DISTRO
 ```
 
@@ -97,15 +98,17 @@ Sentinel and the Neat Library set up again.
 `sima-cli update` moves the board to the latest published build of its release series — for
 example, an older 2.1.x board to 2.1.3. Log in first — the update downloads from SiMa's servers:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli login
 ```
 
 Then run the update:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli update
 ```
 
@@ -121,15 +124,17 @@ Once it is back, reconnect over serial with `sima-cli serial`, or over SSH with 
 
 ## Confirm, then re-check the NVMe
 
+*On the board*
+
 ```bash
-# On the board
 sudo reboot
 ```
 
 When it comes back:
 
+*On the board*
+
 ```bash
-# On the board
 cat /etc/buildinfo
 ```
 
@@ -137,8 +142,9 @@ cat /etc/buildinfo
 
 Then check the NVMe is still mounted — **an image update can change the root filesystem**:
 
+*On the board*
+
 ```bash
-# On the board
 df -h | grep nvme
 sima-cli nvme remount     # only if the mount is gone
 ```

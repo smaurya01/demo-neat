@@ -33,8 +33,9 @@ loop.
 If `sima-cli` is not already installed on the host, install it — see
 [Chapter 7](07-install-sima-cli.md#install-on-the-host):
 
+*On the host*
+
 ```bash
-# On the host
 curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 ```
 
@@ -45,10 +46,11 @@ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 > Screenshots of every step are in the
 > [full installation guide](../../installation/README.md#detailed-walkthrough-with-screenshots).
 
-One command, on the host:
+One command:
+
+*On the host*
 
 ```bash
-# On the host
 sima-cli neat install sdk@release-3.0
 ```
 
@@ -66,8 +68,9 @@ software **3.0.0** — that is SDK **3.0.0.0**, with Neat Library 0.6.0; check i
 the Neat Library move as a set. To install one exact version instead of the latest patch, use its
 tag — the `v` is required:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli neat install sdk@v3.0.0.0
 ```
 
@@ -116,8 +119,9 @@ Use it after the board's IP address changes, or to pair a board you skipped at i
 
 To just get a shell in the SDK, run:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli sdk neat
 ```
 
@@ -154,8 +158,9 @@ It opens on `/workspace` inside the container. Like Insight, it uses a self-sign
 
 1. Install [VS Code](https://code.visualstudio.com/download) on the host. On Ubuntu:
 
+   *On the host*
+
    ```bash
-   # On the host
    sudo apt update && sudo snap install code --classic
    ```
 
@@ -180,8 +185,9 @@ print("pyneat import successful")
 
 Then:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 dk hello_neat.py
 ```
 

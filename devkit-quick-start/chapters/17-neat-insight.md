@@ -36,8 +36,9 @@ to install.
 
 **Ask the SDK for the URL.** Run `neat` inside the SDK container:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 neat
 ```
 
@@ -87,8 +88,9 @@ For scripting, `neat --json` gives the same information — read `insight.webUiU
 It is **HTTPS with a self-signed certificate**, so accept the browser warning. If the page does not
 load at all:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 insight-admin status
 ```
 

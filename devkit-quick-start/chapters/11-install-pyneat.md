@@ -19,15 +19,17 @@ board:
 
 Log in first if you have not already this session:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli login
 ```
 
 Then install the library, pinned to the version that matches board software 3.0.0:
 
+*On the board*
+
 ```bash
-# On the board
 cd /media/nvme && mkdir -p neat && cd neat
 sima-cli neat install core@v0.6.0
 ```
@@ -47,8 +49,9 @@ If a selection screen appears, the useful extras are:
 
 While you are here, install the example applications too:
 
+*On the board, in `/media/nvme/neat`*
+
 ```bash
-# On the board, in /media/nvme/neat
 sima-cli neat install apps@v0.6.0
 ```
 
@@ -63,8 +66,9 @@ sima-cli neat install apps@v0.6.0
 
 Check the installed packages:
 
+*On the board*
+
 ```bash
-# On the board
 dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
 ```
 
@@ -77,8 +81,9 @@ sima-neat-dev 0.6.0
 
 Every Neat package should read `0.6.0`. The C++ library is ABI 6 — applications built against an older Neat Library must be rebuilt:
 
+*On the board*
+
 ```bash
-# On the board
 ls /usr/lib/libsima_neat.so.*
 ```
 
@@ -89,8 +94,9 @@ ls /usr/lib/libsima_neat.so.*
 
 Then check the Python side:
 
+*On the board*
+
 ```bash
-# On the board
 source ~/pyneat/bin/activate
 python3 -c "import pyneat; print(pyneat.__version__)"
 ```
@@ -105,22 +111,25 @@ python3 -c "import pyneat; print(pyneat.__version__)"
 
 `pyneat` lives in a virtual environment, so **activate it first** in every new shell:
 
+*On the board*
+
 ```bash
-# On the board
 source ~/pyneat/bin/activate
 ```
 
 Or call the interpreter directly, which is more reliable in scripts and over SSH:
 
+*On the board*
+
 ```bash
-# On the board
 /home/sima/pyneat/bin/python my_app.py
 ```
 
 Running a script over SSH without activating the environment is a common trip-up:
 
+*On the host*
+
 ```bash
-# On the host
 ssh sima@<devkit-ip> 'source $HOME/pyneat/bin/activate; python /media/nvme/app.py'
 ```
 
@@ -128,8 +137,9 @@ ssh sima@<devkit-ip> 'source $HOME/pyneat/bin/activate; python /media/nvme/app.p
 
 ## Explore the API
 
+*On the board, with `~/pyneat` activated*
+
 ```bash
-# On the board, with ~/pyneat activated
 python3 -c "import pyneat; print([n for n in dir(pyneat) if not n.startswith('_')])"
 python3 -c "import pyneat; help(pyneat.ModelOptions)"
 ```

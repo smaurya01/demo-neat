@@ -35,8 +35,9 @@ works.
 
 On the host, pressing `n` at prompt 6 to reuse your container:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
@@ -134,8 +135,9 @@ Neat apps is closest to RTSP object detection?
 Put a few images in the folder first — for example the six samples from this repository. Run this
 from the folder that holds your `demo-neat` checkout:
 
+*On the host*
+
 ```bash
-# On the host
 mkdir -p ~/workspace/agent-demo/images
 cp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png ~/workspace/agent-demo/images/
 ```

@@ -121,8 +121,9 @@ sudo modprobe simaai_pcie
 
 **Verify enumeration**
 
+*On the host*
+
 ```bash
-# On the host
 lspci | grep -i sima
 ```
 

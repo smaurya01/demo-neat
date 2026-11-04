@@ -21,22 +21,25 @@ It runs in two places, and they are separate installs:
 
 ## Install on the host
 
+*On the host*
+
 ```bash
-# On the host
 curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 ```
 
 Then open a new terminal, or reload your shell:
 
+*On the host*
+
 ```bash
-# On the host
 source ~/.bashrc
 ```
 
 Check it:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli --version
 ```
 
@@ -49,8 +52,9 @@ The board needs its own copy. Get a shell on it — over SSH if the network is u
 [serial](04-serial-console.md) — and run the **same**
 command:
 
+*On the board*
+
 ```bash
-# On the board
 curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 source ~/.bash_profile
 sima-cli --version
@@ -78,8 +82,9 @@ sima-cli successfully installed.
 Before downloading anything — board updates, SDK images, Neat packages, models — authenticate
 against SiMa's artifact server:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli login
 ```
 
@@ -137,8 +142,9 @@ The installer adds it to your `PATH` through your shell profile. If a new termin
 it, reload the profile the installer wrote to, then look for it — `~/.bash_profile` on the board,
 `~/.bashrc` on a Linux host:
 
+*On the board*
+
 ```bash
-# On the board
 source ~/.bash_profile
 which sima-cli
 ```

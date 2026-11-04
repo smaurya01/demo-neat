@@ -19,15 +19,17 @@ FPS, but no power or temperature.
 
 ## Install
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli neat install sentinel
 ```
 
 ## Run
 
+*On the board*
+
 ```bash
-# On the board
 simaai-sentinel
 ```
 
@@ -36,8 +38,9 @@ terminal while your application runs.
 
 For a single snapshot — useful in scripts, or to capture a number for a bug report:
 
+*On the board*
+
 ```bash
-# On the board
 simaai-sentinel table --once
 ```
 
@@ -83,8 +86,9 @@ is half the machine, not all of it.
 
 Not SiMa-specific, but the standard tool for seeing what is running:
 
+*On the board*
+
 ```bash
-# On the board
 sudo apt update
 sudo apt install -y htop
 htop

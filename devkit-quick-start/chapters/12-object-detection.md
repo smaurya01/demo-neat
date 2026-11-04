@@ -23,15 +23,17 @@ Models for the MLA are distributed as compiled `.tar.gz` archives.
 
 Set the Model Zoo release first — it can differ from your board software version:
 
+*On the board*
+
 ```bash
-# On the board
 export MODELZOO_VERSION="3.0.0"
 ```
 
 Download into the NVMe, not your home directory:
 
+*On the board*
+
 ```bash
-# On the board
 mkdir -p /media/nvme/example/models
 cd /media/nvme/example/models
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
@@ -146,16 +148,18 @@ EOF
 same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_labels.txt). Run
 this from the folder that holds your `demo-neat` checkout:
 
+*On the host*
+
 ```bash
-# On the host
 scp demo-neat/tutorial/assets/coco_labels.txt \
     sima@<devkit-ip>:/media/nvme/example/models/coco_labels.txt
 ```
 
 Check it has 80 lines:
 
+*On the board*
+
 ```bash
-# On the board
 wc -l /media/nvme/example/models/coco_labels.txt
 ```
 
@@ -170,23 +174,26 @@ wc -l /media/nvme/example/models/coco_labels.txt
 This repository ships six sample images for detection at
 [`tutorial/assets/images/`](../../tutorial/assets/images/). Create the folder on the board:
 
+*On the board*
+
 ```bash
-# On the board
 mkdir -p /media/nvme/example/images
 ```
 
 Then copy the images across, from the folder on your host that holds your `demo-neat` checkout:
 
+*On the host*
+
 ```bash
-# On the host
 scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
     sima@<devkit-ip>:/media/nvme/example/images/
 ```
 
 Check they arrived:
 
+*On the board*
+
 ```bash
-# On the board
 ls /media/nvme/example/images
 ```
 
@@ -414,8 +421,9 @@ if __name__ == "__main__":
 
 ## Run it
 
+*On the board*
+
 ```bash
-# On the board
 source ~/pyneat/bin/activate
 cd /media/nvme/example
 python3 detect.py --config config.yaml
@@ -424,8 +432,9 @@ python3 detect.py --config config.yaml
 The pyneat environment includes `numpy` and `cv2`, but not the YAML parser the script uses to read
 `config.yaml`. Install it once, before the first run:
 
+*On the board, in `/media/nvme/example`, with `~/pyneat` activated*
+
 ```bash
-# On the board, in /media/nvme/example, with ~/pyneat activated
 pip install pyyaml
 ```
 

@@ -19,10 +19,9 @@ The board has a **500 GB NVMe** for exactly this. Mount it before you download a
 
 ## Is it already mounted?
 
-On the board:
+*On the board*
 
 ```bash
-# On the board
 df -h
 ```
 
@@ -35,8 +34,9 @@ Filesystem      Size  Used Avail Use% Mounted on
 
 Narrow it down:
 
+*On the board*
+
 ```bash
-# On the board
 df -h | grep nvme      # mounted, and how full?
 lsblk | grep nvme      # is the device even present?
 mount | grep nvme      # mounted with what options?
@@ -51,8 +51,9 @@ See [Troubleshooting](troubleshooting.md#df--h-shows-no-nvme).
 
 ### Try this first — non-destructive
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli nvme remount
 ```
 
@@ -60,8 +61,9 @@ This mounts an existing partition. Nothing is erased.
 
 ### Only if that fails — destructive
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli nvme format
 ```
 
@@ -73,8 +75,9 @@ automatically on every boot. You do not re-run them after a reboot.
 
 Confirm the persistent entry exists:
 
+*On the board*
+
 ```bash
-# On the board
 grep nvme /etc/fstab
 ```
 
@@ -82,16 +85,18 @@ grep nvme /etc/fstab
 
 ## Verify
 
+*On the board*
+
 ```bash
-# On the board
 df -h /media/nvme
 touch /media/nvme/.write-test && rm /media/nvme/.write-test && echo "NVMe is writable"
 ```
 
 Then prove the fstab entry actually took, by rebooting:
 
+*On the board*
+
 ```bash
-# On the board
 sudo reboot
 # reconnect, then:
 df -h | grep nvme
@@ -119,8 +124,9 @@ The rule is simple: **if you created it, it goes on the NVMe.** The eMMC is for 
 
 A larger compatible M.2 NVMe module works. After fitting it:
 
+*On the board*
+
 ```bash
-# On the board
 sima-cli nvme format
 ```
 

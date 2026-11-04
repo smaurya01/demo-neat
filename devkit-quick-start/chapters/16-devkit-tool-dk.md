@@ -29,8 +29,9 @@ correctly on the board even though the paths differ.
 
 Before anything else, ask:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 dk status
 ```
 
@@ -38,8 +39,9 @@ It reports the paired DevKit IP, the mounted path, and which sync method is acti
 as a fallback. If it shows `SSH status : not reachable`, nothing else in this chapter will work;
 pair the board again first:
 
+*On the host*
+
 ```bash
-# On the host
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
@@ -52,8 +54,9 @@ The other quick check is to simply open a shell on the board (below). If that la
 
 ## Running Python
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 dk hello_neat.py
 ```
 
@@ -68,8 +71,9 @@ the board; `print()` lands in your SDK terminal.
 
 Cross-compile in the SDK, then run the ARM64 binary on the board with the same command:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-# In the SDK container, in /workspace/rtsp-detector
 dk ./build/rtsp_detector --config ./config.yaml
 ```
 
@@ -87,8 +91,9 @@ runs one end to end.
 
 ## Opening a shell on the board
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-# In the SDK container, in /workspace
 dk shell
 ```
 
