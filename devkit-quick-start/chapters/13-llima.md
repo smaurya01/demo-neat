@@ -8,12 +8,14 @@
 
 LLiMa is the on-board runtime for generative models — LLMs, VLMs and speech models — compiled for
 the MLA. It is installed on the board together with **Neat core** — the `sima-cli neat install
-core` step in [Chapter 11](11-install-pyneat.md) — so there is nothing extra to install.
+core` step in [Chapter 11](11-install-pyneat.md), or SDK pairing — so there is nothing extra to
+install.
 
 Check it is there:
 
 ```bash
-sima@modalix:~$ llima --help
+# On the board
+llima --help
 ```
 
 ```text
@@ -38,13 +40,15 @@ usage: llima [-h] {run,search,pull,list,rm,benchmark-server} ...
 ## Search
 
 ```bash
-sima@modalix:~$ llima search
+# On the board
+llima search
 ```
 
 Filter by name:
 
 ```bash
-sima@modalix:~$ llima search qwen
+# On the board
+llima search qwen
 ```
 
 Model names encode their quantisation — `a16w4` means 16-bit activations with 4-bit weights, which
@@ -56,7 +60,8 @@ memory.
 ## Pull
 
 ```bash
-sima@modalix:~$ llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
+# On the board
+llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 > **Check where it lands.** Models are large. The default location is
@@ -69,7 +74,8 @@ sima@modalix:~$ llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ## List
 
 ```bash
-sima@modalix:~$ llima list
+# On the board
+llima list
 ```
 
 A board with a few models pulled looks like:
@@ -91,7 +97,8 @@ Note the mix: text models, `-VL-` vision-language models, and `whisper-` for spe
 ## Run
 
 ```bash
-sima@modalix:~$ llima run Qwen3-4B-Instruct-2507-GPTQ-a16w4
+# On the board
+llima run Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 First load takes noticeably longer than later ones while the model is unpacked and staged.
@@ -103,17 +110,17 @@ First load takes noticeably longer than later ones while the model is unpacked a
 Models are large and the NVMe is not infinite:
 
 ```bash
-sima@modalix:~$ llima rm <model-name>
-sima@modalix:~$ df -h /media/nvme
+# On the board
+llima rm <model-name>
+df -h /media/nvme
 ```
 
 ---
 
 ## Watch it work
 
-Run `simaai-sentinel` ([Chapter 10](10-install-simaai-sentinel.md)) in a second terminal. Generative
-models show a very different profile from vision models — memory-bound rather than compute-bound,
-with MLA utilisation that rises and falls per token rather than sitting flat.
+Run `simaai-sentinel` ([Chapter 10](10-install-simaai-sentinel.md)) in a second terminal to watch
+board power, temperatures, CPU load and memory while the model loads and generates.
 
 ---
 

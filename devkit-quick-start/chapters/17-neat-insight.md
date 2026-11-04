@@ -37,13 +37,14 @@ to install.
 **Ask the SDK for the URL.** Run `neat` inside the SDK container:
 
 ```bash
-sima-user@sdk:/workspace$ neat
+# In the SDK container, in /workspace
+neat
 ```
 
 ```text
 Components
   ...
-  neat-insight           0.0.8              channel=main (assumed) latest=bedca8f560ca status=Running venv=/opt/neat-insight/venv
+  neat-insight           0.0.10             channel=main (assumed) latest=<build> status=Running venv=/opt/neat-insight/venv
   ...
 
 Web Access
@@ -58,11 +59,11 @@ Exposed Ports
   ------------------ -------- ----------------- ---------------
   ...
   mainUI             tcp      9900              -
-  metadataUDP        udp      9100              9123
+  metadataUDP        udp      9100              9103
   rtsp.tcp           tcp      8554              -
-  videoUDP           udp      9000              9023
+  videoUDP           udp      9000              9003
   ...
-  webRTC             udp      40000             40047
+  webRTC             udp      40000             40007
   ...
 ```
 
@@ -72,7 +73,8 @@ picks another host port if 9900 is already taken, and this output is the only pl
 which one it used.
 
 The `Exposed Ports` table gives you the ports your application will send to: `videoUDP` from 9000 and
-`metadataUDP` from 9100, one port per channel. [Chapter 18](18-cpp-video-app.md) uses both.
+`metadataUDP` from 9100, one port per channel — the range end tells you how many channels this SDK
+exposes (four, in the output above). [Chapter 18](18-cpp-video-app.md) uses both.
 
 For scripting, `neat --json` gives the same information — read `insight.webUiUrl` and the
 `exposedPorts` array.
@@ -86,7 +88,8 @@ It is **HTTPS with a self-signed certificate**, so accept the browser warning. I
 load at all:
 
 ```bash
-sima-user@sdk:/workspace$ insight-admin status
+# In the SDK container, in /workspace
+insight-admin status
 ```
 
 ---

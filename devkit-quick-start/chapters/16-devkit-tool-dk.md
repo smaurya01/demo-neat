@@ -30,7 +30,8 @@ correctly on the board even though the paths differ.
 Before anything else, ask:
 
 ```bash
-sima-user@sdk:/workspace$ dk status
+# In the SDK container, in /workspace
+dk status
 ```
 
 It reports the paired DevKit IP, the mounted path, and which sync method is active — NFS, or rsync
@@ -38,7 +39,8 @@ as a fallback. If it shows `SSH status : not reachable`, nothing else in this ch
 pair the board again first:
 
 ```bash
-sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+# On the host
+sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 …pressing `n` at prompt 6 so you reuse the container you already built.
@@ -51,7 +53,8 @@ The other quick check is to simply open a shell on the board (below). If that la
 ## Running Python
 
 ```bash
-sima-user@sdk:/workspace$ dk hello_neat.py
+# In the SDK container, in /workspace
+dk hello_neat.py
 ```
 
 `dk` runs the script on the DevKit using the **DevKit's pyneat environment** — the one
@@ -66,7 +69,8 @@ the board; `print()` lands in your SDK terminal.
 Cross-compile in the SDK, then run the ARM64 binary on the board with the same command:
 
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ dk ./build/rtsp_detector --config ./config.yaml
+# In the SDK container, in /workspace/rtsp-detector
+dk ./build/rtsp_detector --config ./config.yaml
 ```
 
 Arguments after the binary are passed straight through, including file paths — `dk` translates
@@ -84,7 +88,11 @@ runs one end to end.
 ## Opening a shell on the board
 
 ```bash
-sima-user@sdk:/workspace$ dk shell
+# In the SDK container, in /workspace
+dk shell
+```
+
+```text
 sima@modalix:~$
 ```
 

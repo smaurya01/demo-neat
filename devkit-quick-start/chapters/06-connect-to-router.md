@@ -26,19 +26,22 @@ laptop, and it stays reachable when you close your laptop lid.
 4. Find the board's IP address from that serial session:
 
    ```bash
-   sima@modalix:~$ ip a | grep inet
+   # On the board
+   ip a | grep inet
    ```
 
    Look for the address on `end0`. Alternatively, from your host:
 
    ```bash
-   sima-user@host:~$ sima-cli device discover
+   # On the host
+   sima-cli device discover
    ```
 
 5. Connect:
 
    ```bash
-   sima-user@host:~$ ssh sima@<board-ip>
+   # On the host
+   ssh sima@<board-ip>
    ```
 
 That is the whole procedure.
@@ -50,7 +53,8 @@ That is the whole procedure.
 The board advertises itself over mDNS as `modalix.local`:
 
 ```bash
-sima-user@host:~$ ssh sima@modalix.local
+# On the host
+ssh sima@modalix.local
 ```
 
 Convenient when the IP changes. It relies on mDNS working on your network — many corporate networks
@@ -64,8 +68,9 @@ block it, and it is unreliable across VLANs. If it doesn't resolve, fall back to
 Do this now. Every later chapter depends on it:
 
 ```bash
-sima@modalix:~$ ping -c3 8.8.8.8              # routing works
-sima@modalix:~$ ping -c3 developer.sima.ai    # DNS works too
+# On the board
+ping -c3 8.8.8.8              # routing works
+ping -c3 developer.sima.ai    # DNS works too
 ```
 
 If the address ping succeeds and the name ping fails, your DNS is wrong, not your routing.
@@ -81,7 +86,8 @@ IP. The fix: **a DHCP reservation on your router**, tied to the board's MAC addr
 Find the MAC address with:
 
 ```bash
-sima@modalix:~$ ip link show end0
+# On the board
+ip link show end0
 ```
 
 To switch the board itself between DHCP and its default static profile, see

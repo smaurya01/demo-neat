@@ -39,7 +39,8 @@ Work through these in order:
 3. **Was the cable connected before power-on?** HDMI is detected during boot. If you plugged it in
    afterwards, reboot:
    ```bash
-   sima@modalix:~$ sudo reboot
+   # On the board
+   sudo reboot
    ```
 4. **Try a different cable or monitor.** HDMI 1.4 is undemanding, but marginal cables do fail.
 5. **Confirm the board is alive over serial** — see [Chapter 4 · The serial console](04-serial-console.md).

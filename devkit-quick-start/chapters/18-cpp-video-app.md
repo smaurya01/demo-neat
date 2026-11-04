@@ -27,7 +27,7 @@ Insight draw each box on the frame it came from.
 
 | Requirement | Chapter |
 |---|---|
-| Board on the network, software 2.1.3 | [6](06-connect-to-router.md) · [9](09-check-and-update-image.md) |
+| Board on the network, software 3.0.0 | [6](06-connect-to-router.md) · [9](09-check-and-update-image.md) |
 | NVMe mounted at `/media/nvme` | [8](08-mount-nvme.md) |
 | Neat SDK installed and paired | [15](15-install-neat-sdk.md) |
 | `dk status` names your DevKit | [16](16-devkit-tool-dk.md) |
@@ -41,7 +41,8 @@ Insight draw each box on the frame it came from.
 Start the SDK from a host terminal, pressing `n` at prompt 6 to reuse your container:
 
 ```bash
-sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+# On the host
+sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 Then attach the editor to the SDK container:
@@ -51,11 +52,15 @@ Then attach the editor to the SDK container:
 3. Pick the `sima-neat/sdk` container.
 4. In the attached window, open `/workspace`.
 
+The browser VS Code from [Chapter 15](15-install-neat-sdk.md#in-the-browser) works just as well —
+open its URL and you are in the same `/workspace`.
+
 You are now editing files that the host, the SDK and the DevKit all see. Confirm the board is
 there before going further:
 
 ```bash
-sima-user@sdk:/workspace$ dk status
+# In the SDK container, in /workspace
+dk status
 ```
 
 <p align="center">
@@ -69,7 +74,8 @@ sima-user@sdk:/workspace$ dk status
 Ask the SDK for the URL rather than assuming the port:
 
 ```bash
-sima-user@sdk:/workspace$ neat
+# In the SDK container, in /workspace
+neat
 ```
 
 Open the **Insight (local)** address from the `Web Access` block in a browser (use **Insight
@@ -140,7 +146,8 @@ URL shows. Leave the stream running.
 Create it in the shared workspace, so the SDK builds it and the board can see it:
 
 ```bash
-sima-user@sdk:/workspace$ mkdir -p /workspace/rtsp-detector && cd /workspace/rtsp-detector
+# In the SDK container, in /workspace
+mkdir -p /workspace/rtsp-detector && cd /workspace/rtsp-detector
 ```
 
 ```text
@@ -159,8 +166,9 @@ Download the YOLO26 archive into the project folder, from the SDK shell. The wor
 so the board sees it at the same path:
 
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ export MODELZOO_VERSION="2.1.3"
-sima-user@sdk:/workspace/rtsp-detector$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+# In the SDK container, in /workspace/rtsp-detector
+export MODELZOO_VERSION="3.0.0"
+sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
 If the download asks you to log in, run `sima-cli login` in the SDK shell first. To see what is
@@ -269,13 +277,18 @@ folder that holds your `demo-neat` checkout, copy it into the workspace folder y
 prompt 4:
 
 ```bash
-sima-user@host:~$ cp demo-neat/tutorial/assets/coco_labels.txt ~/workspace/rtsp-detector/
+# On the host
+cp demo-neat/tutorial/assets/coco_labels.txt ~/workspace/rtsp-detector/
 ```
 
 Check it has 80 lines:
 
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ wc -l coco_labels.txt
+# In the SDK container, in /workspace/rtsp-detector
+wc -l coco_labels.txt
+```
+
+```text
 80 coco_labels.txt
 ```
 
@@ -639,11 +652,12 @@ int main(int argc, char** argv) {
 From the SDK shell, in the app folder:
 
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ cmake -S . \
+# In the SDK container, in /workspace/rtsp-detector
+cmake -S . \
     -B ./build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
-sima-user@sdk:/workspace/rtsp-detector$ cmake --build ./build --parallel
+cmake --build ./build --parallel
 ```
 
 `CMAKE_PREFIX_PATH` points CMake at the SDK sysroot, where the aarch64 Neat package lives. Without
@@ -656,7 +670,8 @@ it, `find_package(SimaNeat)` fails.
 Do not run the binary in the container — it was cross-compiled for the board. Hand it to `dk`:
 
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ dk ./build/rtsp_detector --config ./config.yaml
+# In the SDK container, in /workspace/rtsp-detector
+dk ./build/rtsp_detector --config ./config.yaml
 ```
 
 The binary executes on the DevKit and its output comes back to your SDK terminal. `dk` tags each
@@ -664,24 +679,31 @@ line `[DEVKIT][STDOUT]` or `[DEVKIT][STDERR]`; without the tags it reads:
 
 ```text
 Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: ...)
-[WARN] Model preprocess planner produced 39 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
+[WARN] Model preprocess planner produced 2 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
 [1/4] Initializing runtime...
-...
-[4/4] Graph ready (114 ms)
+[2/4] Building graph...
+[3/4] Starting pipeline...
 Pipeline:
-rtspsrc name=n0_rtspsrc_1 location="rtsp://<host-ip>:8554/src1" ...
+rtspsrc name=n0_rtspsrc_1 location="rtsp://<host-ip>:8554/src1" latency=100 protocols=tcp ...
+Pipeline:
+appsrc name=mysrc_1 is-live=true format=time ...
 source=rtsp://<host-ip>:8554/src1 stream=1280x720@30 insight=<host-ip> video=9000 metadata=9100
 Ctrl-C to stop.
-Pipeline:
-appsrc name=mysrc_1 ...
-Configuring for the decoding type: 8:yolo26
-...
+[4/4] Graph ready (123 ms)
+WARN:kernel-driver implies arch: Modalix
 frames=50
 frames=100
+...
+frames=550
+stopping after 599 frames
 ```
 
-The `[WARN]` line is advisory and safe to ignore. `Pipeline:` prints the GStreamer pipeline Neat
-built for each graph.
+That is a 30-second run against the `720p30` H.264 catalog stream, stopped with Ctrl-C, on Neat
+Library 0.6.0. The first seconds go on loading the model and starting the pipeline; after that a
+`frames=` line arrives every 1.7 seconds or so — about 29–30 frames per second, the stream's own
+rate. The `[WARN]` lines are advisory
+and safe to ignore. `Pipeline:` prints the GStreamer pipeline Neat built for each graph. Lines from
+the library and from the app can interleave in a slightly different order from run to run.
 
 `Ctrl-C` stops it cleanly — the signal handler closes the `Run` so the encoder, decoder and model
 release properly.
@@ -716,7 +738,8 @@ version of `single-stream-object-detector`, which adds source probing, MJPEG and
 annotated-frame saving and profiling:
 
 ```bash
-sima@modalix:~$ ls /media/nvme/neat/prebuilt-apps/examples/object-detection/
+# On the board
+ls /media/nvme/neat/prebuilt-apps/examples/object-detection/
 ```
 
 | Next | Where |

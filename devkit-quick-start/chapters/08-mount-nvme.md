@@ -22,7 +22,8 @@ The board has a **500 GB NVMe** for exactly this. Mount it before you download a
 On the board:
 
 ```bash
-sima@modalix:~$ df -h
+# On the board
+df -h
 ```
 
 You want a line like:
@@ -35,9 +36,10 @@ Filesystem      Size  Used Avail Use% Mounted on
 Narrow it down:
 
 ```bash
-sima@modalix:~$ df -h | grep nvme      # mounted, and how full?
-sima@modalix:~$ lsblk | grep nvme      # is the device even present?
-sima@modalix:~$ mount | grep nvme      # mounted with what options?
+# On the board
+df -h | grep nvme      # mounted, and how full?
+lsblk | grep nvme      # is the device even present?
+mount | grep nvme      # mounted with what options?
 ```
 
 If `lsblk` shows nothing, the drive is not detected at all — that is hardware, not configuration.
@@ -50,7 +52,8 @@ See [Troubleshooting](troubleshooting.md#df--h-shows-no-nvme).
 ### Try this first — non-destructive
 
 ```bash
-sima@modalix:~$ sima-cli nvme remount
+# On the board
+sima-cli nvme remount
 ```
 
 This mounts an existing partition. Nothing is erased.
@@ -58,7 +61,8 @@ This mounts an existing partition. Nothing is erased.
 ### Only if that fails — destructive
 
 ```bash
-sima@modalix:~$ sima-cli nvme format
+# On the board
+sima-cli nvme format
 ```
 
 > **This erases everything on the NVMe.** Use it only when the drive is new, unpartitioned, or its
@@ -70,7 +74,8 @@ automatically on every boot. You do not re-run them after a reboot.
 Confirm the persistent entry exists:
 
 ```bash
-sima@modalix:~$ grep nvme /etc/fstab
+# On the board
+grep nvme /etc/fstab
 ```
 
 ---
@@ -78,16 +83,18 @@ sima@modalix:~$ grep nvme /etc/fstab
 ## Verify
 
 ```bash
-sima@modalix:~$ df -h /media/nvme
-sima@modalix:~$ touch /media/nvme/.write-test && rm /media/nvme/.write-test && echo "NVMe is writable"
+# On the board
+df -h /media/nvme
+touch /media/nvme/.write-test && rm /media/nvme/.write-test && echo "NVMe is writable"
 ```
 
 Then prove the fstab entry actually took, by rebooting:
 
 ```bash
-sima@modalix:~$ sudo reboot
+# On the board
+sudo reboot
 # reconnect, then:
-sima@modalix:~$ df -h | grep nvme
+df -h | grep nvme
 ```
 
 Worth doing once. A drive that mounts now but not after reboot is a problem you want to find today,
@@ -113,7 +120,8 @@ The rule is simple: **if you created it, it goes on the NVMe.** The eMMC is for 
 A larger compatible M.2 NVMe module works. After fitting it:
 
 ```bash
-sima@modalix:~$ sima-cli nvme format
+# On the board
+sima-cli nvme format
 ```
 
 ---

@@ -11,7 +11,7 @@
 | Board on the network with internet | [5](05-internet-sharing.md) · [6](06-connect-to-router.md) |
 | `sima-cli` installed and logged in | [7](07-install-sima-cli.md) |
 | NVMe mounted at `/media/nvme` | [8](08-mount-nvme.md) |
-| Board software 2.1.3 | [9](09-check-and-update-image.md) |
+| Board software 3.0.0 | [9](09-check-and-update-image.md) |
 | `pyneat` installed | [11](11-install-pyneat.md) |
 
 ---
@@ -24,15 +24,17 @@ Models for the MLA are distributed as compiled `.tar.gz` archives.
 Set the Model Zoo release first — it can differ from your board software version:
 
 ```bash
-sima@modalix:~$ export MODELZOO_VERSION="2.1.3"
+# On the board
+export MODELZOO_VERSION="3.0.0"
 ```
 
 Download into the NVMe, not your home directory:
 
 ```bash
-sima@modalix:~$ mkdir -p /media/nvme/example/models
-sima@modalix:~$ cd /media/nvme/example/models
-sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+# On the board
+mkdir -p /media/nvme/example/models
+cd /media/nvme/example/models
+sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
 `yolo26m-det-bf16-mla_tess-b1` is a good default: BF16 weights with MLA tessellation, which is what
@@ -145,14 +147,19 @@ same list is at [`tutorial/assets/coco_labels.txt`](../../tutorial/assets/coco_l
 this from the folder that holds your `demo-neat` checkout:
 
 ```bash
-sima-user@host:~$ scp demo-neat/tutorial/assets/coco_labels.txt \
-                      sima@<devkit-ip>:/media/nvme/example/models/coco_labels.txt
+# On the host
+scp demo-neat/tutorial/assets/coco_labels.txt \
+    sima@<devkit-ip>:/media/nvme/example/models/coco_labels.txt
 ```
 
 Check it has 80 lines:
 
 ```bash
-sima@modalix:~$ wc -l /media/nvme/example/models/coco_labels.txt
+# On the board
+wc -l /media/nvme/example/models/coco_labels.txt
+```
+
+```text
 80 /media/nvme/example/models/coco_labels.txt
 ```
 
@@ -164,20 +171,26 @@ This repository ships six sample images for detection at
 [`tutorial/assets/images/`](../../tutorial/assets/images/). Create the folder on the board:
 
 ```bash
-sima@modalix:~$ mkdir -p /media/nvme/example/images
+# On the board
+mkdir -p /media/nvme/example/images
 ```
 
 Then copy the images across, from the folder on your host that holds your `demo-neat` checkout:
 
 ```bash
-sima-user@host:~$ scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
-                      sima@<devkit-ip>:/media/nvme/example/images/
+# On the host
+scp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png \
+    sima@<devkit-ip>:/media/nvme/example/images/
 ```
 
 Check they arrived:
 
 ```bash
-sima@modalix:~$ ls /media/nvme/example/images
+# On the board
+ls /media/nvme/example/images
+```
+
+```text
 image.png  image1.png  image2.png  image3.png  image4.png  image5.png
 ```
 
@@ -402,17 +415,21 @@ if __name__ == "__main__":
 ## Run it
 
 ```bash
-sima@modalix:~$ source ~/pyneat/bin/activate
-(pyneat) sima@modalix:~$ cd /media/nvme/example
-(pyneat) sima@modalix:/media/nvme/example$ python3 detect.py --config config.yaml
+# On the board
+source ~/pyneat/bin/activate
+cd /media/nvme/example
+python3 detect.py --config config.yaml
 ```
 
-The pyneat environment already includes everything the script imports. If you do get an import
-error, install the missing packages:
+The pyneat environment includes `numpy` and `cv2`, but not the YAML parser the script uses to read
+`config.yaml`. Install it once, before the first run:
 
 ```bash
-(pyneat) sima@modalix:/media/nvme/example$ pip install numpy opencv-python pyyaml
+# On the board, in /media/nvme/example, with ~/pyneat activated
+pip install pyyaml
 ```
+
+Without it the script stops at once with `ModuleNotFoundError: No module named 'yaml'`.
 
 ---
 
@@ -421,22 +438,27 @@ error, install the missing packages:
 Neat's start-up lines first, then one line per image, and one annotated image written per input:
 
 ```text
-Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/...)
-[WARN] Model preprocess planner produced 39 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/proc_run_<id>/pkg_<hash>/p)
+[WARN] Model preprocess planner produced 2 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
 [1/4] Initializing runtime...
 [2/4] Preparing input stream...
 [3/4] Building graph...
-[4/4] Graph ready (433 ms)
+[4/4] Graph ready (3211 ms)
 Found 6 images
 [1/6] image.png -> image.png (10 detections)
-...
+[2/6] image1.png -> image1.png (26 detections)
+[3/6] image2.png -> image2.png (23 detections)
+[4/6] image3.png -> image3.png (5 detections)
+[5/6] image4.png -> image4.png (12 detections)
+[6/6] image5.png -> image5.png (5 detections)
 Done: 6/6 images
-Configuring for the decoding type: 8:yolo26
-...
+WARN:kernel-driver implies arch: Modalix
 ```
 
-The `[WARN]` line is advisory and safe to ignore. The `Configuring for the decoding type` lines
-come from the box decoder and can print before or after the image lines.
+That run used the six sample images, `yolo26m-det-bf16-mla_tess-b1` and the `config.yaml` above,
+on Neat Library 0.6.0. The `[WARN]` line and the final `WARN:kernel-driver` line are advisory and
+safe to ignore. `package storage: NVMe` confirms the archive was unpacked on the NVMe
+([Chapter 8](08-mount-nvme.md)); `tmpfs` there means the NVMe is not mounted.
 
 Open the output images in `/media/nvme/example/output` to confirm the boxes land on the right objects.
 
@@ -452,9 +474,9 @@ is pushed.
 ## If it is slower than you expect
 
 Run `simaai-sentinel` ([Chapter 10](10-install-simaai-sentinel.md)) in a second terminal while it
-works. For single-image inference the usual finding is that the MLA is barely busy and the time
-goes on image decode and PNG encode — inference itself is often a small fraction of wall-clock time.
-That is normal and not a problem to fix.
+works. Its per-core CPU rows (`c0`, `c1` …) show when a core is pinned: for single images, reading
+the PNG, letterboxing and writing the annotated PNG run on the CPU and can take longer than the
+inference itself. That is normal for a script like this, not a problem to fix.
 
 ---
 
@@ -463,7 +485,7 @@ That is normal and not a problem to fix.
 | Next step | Where |
 |---|---|
 | The same detector as a packaged app, with C++ source and profiling | `/media/nvme/neat/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
-| Other ready-to-run examples | `sima-cli neat install apps@v0.5.1` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
+| Other ready-to-run examples | `sima-cli neat install apps@v0.6.0` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
 | Run a language model on the board | [Chapter 13](13-llima.md) |
 | The full tutorial series | [Tutorials](https://developer.sima.ai/software/tutorials) |
 | Compile your own ONNX model | [Model Compiler](https://developer.sima.ai/software/getting-started/) |

@@ -39,7 +39,8 @@ The other end goes into a USB-A port on your computer. A hub is fine.
 With `sima-cli` installed on your host ([Chapter 7](07-install-sima-cli.md)):
 
 ```bash
-sima-user@host:~$ sima-cli serial
+# On the host
+sima-cli serial
 ```
 
 That is the whole thing — it finds the port and sets the baud rate for you.
@@ -54,7 +55,8 @@ Unreadable characters mean the baud rate is wrong. Earlier firmware runs at 9216
 115200:
 
 ```bash
-sima-user@host:~$ sima-cli serial -b 921600
+# On the host
+sima-cli serial -b 921600
 ```
 
 ### Without sima-cli
@@ -63,13 +65,15 @@ Any serial terminal works. The port is usually `/dev/ttyUSB0` on Linux or `/dev/
 macOS, at **115200 8N1**:
 
 ```bash
-sima-user@host:~$ sudo screen /dev/ttyUSB0 115200
+# On the host
+sudo screen /dev/ttyUSB0 115200
 ```
 
 If you get a permissions error on Linux, add yourself to the `dialout` group and log out and back in:
 
 ```bash
-sima-user@host:~$ sudo usermod -aG dialout $USER
+# On the host
+sudo usermod -aG dialout $USER
 ```
 
 ---
@@ -123,8 +127,9 @@ This is the quickest option on a locked-down machine where you cannot install Pu
 ## First things to do once you are in
 
 ```bash
-sima@modalix:~$ ip a | grep inet          # what address does it have?
-sima@modalix:~$ cat /etc/buildinfo        # what software is it running?
+# On the board
+ip a | grep inet          # what address does it have?
+cat /etc/buildinfo        # what software is it running?
 ```
 
 Those two answers determine which chapter you go to next.

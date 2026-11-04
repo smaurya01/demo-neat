@@ -1,38 +1,67 @@
 # Chapter 10 — Install simaai-sentinel
 
-*See what the chip is actually doing: temperature, power, CPU, memory and MLA usage.*
+*See what the chip is actually doing: temperature, power, CPU and memory, including MLA memory.*
 
 ---
 
 ## Why bother
 
 Without it you are guessing. When an application runs slower than expected, the useful question is
-whether the MLA is saturated, the CPU is pinned, or the board is thermally throttling —
+whether a CPU core is pinned, the board is thermally throttling, or memory is running out —
 `simaai-sentinel` answers that in one screen. It is the first thing to install after the board is
 on the network.
+
+Neat uses it too: from Neat Library 0.6.0, `Model::benchmark()` and the board telemetry APIs read
+power, temperature, CPU and memory from Sentinel. Without it, benchmarks still report latency and
+FPS, but no power or temperature.
 
 ---
 
 ## Install
 
 ```bash
-sima@modalix:~$ sima-cli neat install sentinel
+# On the board
+sima-cli neat install sentinel
 ```
 
 ## Run
 
 ```bash
-sima@modalix:~$ simaai-sentinel
+# On the board
+simaai-sentinel
 ```
 
-A live view of temperature, power draw, CPU load, memory and MLA utilisation. Leave it in a second
+A live view of temperature, power draw, CPU load and memory, including the memory the MLA holds. Leave it in a second
 terminal while your application runs.
 
 For a single snapshot — useful in scripts, or to capture a number for a bug report:
 
 ```bash
-sima@modalix:~$ simaai-sentinel table --once
+# On the board
+simaai-sentinel table --once
 ```
+
+```text
+Metric             Group          Value  Unit   Status
+-----------------------------------------------------------
+MLA-0              MLA            56.15  C      normal
+...
+CVU-5              CVU            54.27  C      normal
+...
+LM96-1             Board          49.00  C      normal
+CPU%               CPU              5.7  %      normal
+Load1              CPU             0.39  load   normal
+Mem%               Memory           2.9  %      normal
+MLAMB              MLA            105.8  MB     normal
+EV74MB             EV74            14.1  MB     normal
+CMAFree            Memory       17951.3  MB     normal
+...
+c0                 CPU              2.0  %      normal
+...
+```
+
+A trimmed snapshot, taken with no application running. Temperatures are per block (MLA, CVU, APU, board sensors), `MLAMB` and
+`EV74MB` are memory held by the accelerators, and `c0`, `c1` … are the individual CPU threads.
 
 ---
 
@@ -40,7 +69,7 @@ sima@modalix:~$ simaai-sentinel table --once
 
 | Reading | What it tells you |
 |---|---|
-| **MLA** | The MLA row shows the accelerator's activity. If it barely moves while your app runs, the bottleneck is elsewhere — pre-processing, decode, or the CPU. |
+| **MLA** | The `MLA-*` rows are temperatures and `MLAMB` is the memory the MLA holds. Sentinel does not show an MLA busy percentage; to see how much of each frame the MLA works, time it with `Model.benchmark()` and `include_mla_stage_stats` (see the [Neat measurement docs](https://developer.sima.ai/software/develop-apps/development-workflow/model)). |
 | **CPU load** | A pinned core usually means CPU-side work that could move to the CVU or a hardware codec. |
 | **Temperature** | Sustained high temperature leads to throttling, and throughput that drifts down over minutes. |
 | **Power** | Typical draw is 8–12 W. |
@@ -55,9 +84,10 @@ is half the machine, not all of it.
 Not SiMa-specific, but the standard tool for seeing what is running:
 
 ```bash
-sima@modalix:~$ sudo apt update
-sima@modalix:~$ sudo apt install -y htop
-sima@modalix:~$ htop
+# On the board
+sudo apt update
+sudo apt install -y htop
+htop
 ```
 
 `htop` shows **16 bars** for the reason above. Nothing is wrong.

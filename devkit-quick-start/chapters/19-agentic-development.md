@@ -36,7 +36,8 @@ works.
 On the host, pressing `n` at prompt 6 to reuse your container:
 
 ```bash
-sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+# On the host
+sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 ---
@@ -104,6 +105,8 @@ The answer should include the SiMa skills:
 | `sima-use-neat-insight` | Insight: media sources, streams, viewer, metrics |
 | `sima-model-quantize-compile` | Quantising and compiling ONNX models for Modalix |
 | `sima-model-surgery` | Changing a model graph so it runs on the MLA |
+| `sima-model-optimization` | Making a compiled model faster or smaller without changing what it computes |
+| `sima-model-compiler-issue-triage` | Diagnosing Model Compiler install, quantise and compile failures |
 | `sima-llima-compile-run` | Compiling and running LLMs and VLMs with LLiMa |
 
 <p align="center">
@@ -132,8 +135,9 @@ Put a few images in the folder first — for example the six samples from this r
 from the folder that holds your `demo-neat` checkout:
 
 ```bash
-sima-user@host:~$ mkdir -p ~/workspace/agent-demo/images
-sima-user@host:~$ cp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png ~/workspace/agent-demo/images/
+# On the host
+mkdir -p ~/workspace/agent-demo/images
+cp demo-neat/tutorial/assets/images/image{,1,2,3,4,5}.png ~/workspace/agent-demo/images/
 ```
 
 
@@ -143,7 +147,7 @@ Using the neat-application-builder skill, write a pyneat script at
 /workspace/agent-demo/images and saves annotated images to /workspace/agent-demo/output.
 First download the model yolo26m-det-bf16-mla_tess-b1.tar.gz into /workspace/agent-demo
 with sima-cli download from
-https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 Run the script on the DevKit with dk and show me the detections for each image.
 ```
 
@@ -155,7 +159,7 @@ Using the neat-application-builder skill, build a C++ Neat application in
 runs YOLO26 on the MLA, and sends the video and object-detection metadata to Insight
 at <host-ip> (video UDP 9000, metadata UDP 9100). First download the model
 yolo26m-det-bf16-mla_tess-b1.tar.gz into /workspace/agent-rtsp with sima-cli download from
-https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 Build the app in the SDK with cmake, run it on the DevKit with dk, and confirm the boxes
 appear in Insight.
 ```
@@ -204,7 +208,7 @@ Put in what the agent would otherwise have to rediscover:
 ## Environment
 - DevKit: <devkit-ip>, user sima
 - Insight host: <host-ip> — video UDP 9000, metadata UDP 9100
-- Board software 2.1.3, SDK 2.1.3.1, Neat Library 0.5.0
+- Board software 3.0.0, SDK 3.0.0.0, Neat Library 0.6.0
 
 ## Build and run
 - Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
