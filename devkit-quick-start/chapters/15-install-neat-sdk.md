@@ -33,8 +33,10 @@ loop.
 If `sima-cli` is not already installed on the host, install it — see
 [Chapter 7](07-install-sima-cli.md#install-on-the-host):
 
+*On the host*
+
 ```bash
-sima-user@host:~$ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
+curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 ```
 
 ---
@@ -44,10 +46,12 @@ sima-user@host:~$ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.s
 > Screenshots of every step are in the
 > [full installation guide](../../installation/README.md#detailed-walkthrough-with-screenshots).
 
-One command, on the host:
+One command:
+
+*On the host*
 
 ```bash
-sima-user@host:~$ sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@release-3.0
 ```
 
 There is no separate setup step afterwards — it is one continuous flow that:
@@ -58,10 +62,20 @@ There is no separate setup step afterwards — it is one continuous flow that:
 4. Shares one workspace folder between host, container and board.
 5. Installs Neat Core into the container, and onto the paired DevKit.
 
-`release-2.1` tracks the latest patch in the 2.1 series. For the set this guide uses — board
-software **2.1.3** — that is SDK **2.1.3.1**; check it against the table in
+`release-3.0` tracks the latest patch in the 3.0 series. For the set this guide uses — board
+software **3.0.0** — that is SDK **3.0.0.0**, with Neat Library 0.6.0; check it against the table in
 [Chapter 9](09-check-and-update-image.md#which-version-should-you-be-on). The board, the SDK and
-the Neat Library move as a set.
+the Neat Library move as a set. To install one exact version instead of the latest patch, use its
+tag — the `v` is required:
+
+*On the host*
+
+```bash
+sima-cli neat install sdk@v3.0.0.0
+```
+
+A board still on 2.1.3 needs SDK 2.1.3.1 (`sdk@v2.1.3.1`) and the `neat@0.5.0` tag of this
+repository — or upgrade the board first ([Chapter 9](09-check-and-update-image.md#upgrade-from-213-to-300)).
 
 The first install takes several minutes.
 
@@ -101,19 +115,53 @@ except prompt 6 on a repeat run.
 > the container you already have. It re-pulls nothing. `Enter` accepts the default `Y` and
 > recreates the container.
 
-Use it every time you come back to the SDK, and after the board's IP address changes.
+Use it after the board's IP address changes, or to pair a board you skipped at install time.
 
-Every `sima-user@sdk` command in the rest of this guide runs in the SDK container — use the
-VS Code terminal once you have attached, below.
+To just get a shell in the SDK, run:
+
+*On the host*
+
+```bash
+sima-cli sdk neat
+```
+
+It opens a login shell in the running SDK container, and starts the container first if it is
+stopped.
+
+Every command block marked `# In the SDK container` in the rest of this guide runs there — use the
+VS Code terminal once you have attached, below, or the `sima-cli sdk neat` shell.
 
 ---
 
-## Attach VS Code
+## Open VS Code
+
+The SDK gives you VS Code two ways. Either works; the rest of this guide shows the attached
+desktop editor.
+
+### In the browser
+
+The SDK serves VS Code itself. Run `neat` in the SDK shell and open the **VS Code (local)** URL
+from its `Web Access` block — **VS Code (remote)** from another machine — then sign in with the
+**VS Code password** that `neat` prints:
+
+```text
+Web Access
+  ...
+  VS Code (local)    https://127.0.0.1:10000/?folder=/workspace
+  VS Code (remote)   https://<host-ip>:10000/?folder=/workspace
+  VS Code password   <password shown by neat>
+```
+
+It opens on `/workspace` inside the container. Like Insight, it uses a self-signed certificate.
+
+### Attached desktop VS Code
 
 1. Install [VS Code](https://code.visualstudio.com/download) on the host. On Ubuntu:
 
+   *On the host*
+
    ```bash
-   sima-user@host:~$ sudo apt update && sudo snap install code --classic
+   sudo apt update && sudo snap install code --classic
    ```
 
 2. Install Microsoft's **Dev Containers** extension.
@@ -137,8 +185,10 @@ print("pyneat import successful")
 
 Then:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-sima-user@sdk:/workspace$ dk hello_neat.py
+dk hello_neat.py
 ```
 
 It should end with:
@@ -167,7 +217,7 @@ compiled C++ binaries the same way — [Chapter 18](18-cpp-video-app.md) builds 
 
 | Thing | Where |
 |---|---|
-| Model Compiler, added later | `sima-cli install -v 2.1.3 tools/model-compiler/amd64` |
+| Model Compiler, added later | `sima-cli neat install model-compiler/amd64@v3.0.0` (`model-compiler/arm64@v3.0.0` on an ARM host) |
 | Neat Insight, already bundled with the SDK | [Chapter 17](17-neat-insight.md) |
 | The long-form install guide, with screenshots | [installation/README.md](../../installation/README.md) |
 | Compatibility matrix | [developer.sima.ai](https://developer.sima.ai/software/getting-started/compatibility/) |
