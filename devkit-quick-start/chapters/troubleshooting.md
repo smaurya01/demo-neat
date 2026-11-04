@@ -25,8 +25,10 @@ power problem, and nothing else in this guide will help until it is lit.
 
 Baud rate mismatch. Earlier firmware uses 921600 rather than 115200:
 
+*On the host*
+
 ```bash
-sima-user@host:~$ sima-cli serial -b 921600
+sima-cli serial -b 921600
 ```
 
 ---
@@ -38,9 +40,16 @@ sima-user@host:~$ sima-cli serial -b 921600
 `modalix.local` depends on **mDNS**, which is unreliable on Windows and blocked on many corporate
 networks. Use the IP instead:
 
+*On the host*
+
 ```bash
-sima-user@host:~$ sima-cli device discover      # from the host
-sima@modalix:~$   ip a | grep inet              # from the serial console
+sima-cli device discover      # from the host
+```
+
+*On the board*
+
+```bash
+  ip a | grep inet              # from the serial console
 ```
 
 Then `ssh sima@<devkit-ip>`.
@@ -56,9 +65,11 @@ Then `ssh sima@<devkit-ip>`.
 
 Establish which half is broken first:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ ping -c3 8.8.8.8              # routing
-sima@modalix:~$ ping -c3 developer.sima.ai    # DNS
+ping -c3 8.8.8.8              # routing
+ping -c3 developer.sima.ai    # DNS
 ```
 
 Address works, name fails → **DNS**. Both fail → **routing**.
@@ -85,15 +96,19 @@ Most common causes, in order:
 
 Open a new shell, or:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ source ~/.bashrc
-sima@modalix:~$ which sima-cli
+source ~/.bashrc
+which sima-cli
 ```
 
 If `which` still finds nothing, call it by its absolute path on the board:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ /data/sima-cli/.venv/bin/sima-cli --version
+/data/sima-cli/.venv/bin/sima-cli --version
 ```
 
 ### `sima-cli update` or an install fails to download
@@ -113,8 +128,10 @@ Nearly every download failure is one of these three, usually the third.
 
 ### `df -h` shows no NVMe
 
+*On the board*
+
 ```bash
-sima@modalix:~$ lsblk | grep nvme       # is the device present at all?
+lsblk | grep nvme       # is the device present at all?
 ```
 
 | Result | Action |
@@ -127,9 +144,11 @@ sima@modalix:~$ lsblk | grep nvme       # is the device present at all?
 
 An image update can change the root filesystem and drop the mount. Re-check after every update:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ df -h | grep nvme
-sima@modalix:~$ sima-cli nvme remount
+df -h | grep nvme
+sima-cli nvme remount
 ```
 
 ### The root filesystem is full
@@ -137,9 +156,11 @@ sima@modalix:~$ sima-cli nvme remount
 The eMMC (16 GB or 32 GB, see [Chapter 1](01-know-the-hardware.md)) fills fast, and the symptoms
 rarely mention disk space — installs die halfway, logs stop, services misbehave.
 
+*On the board*
+
 ```bash
-sima@modalix:~$ df -h /
-sima@modalix:~$ du -sh ~/* 2>/dev/null | sort -h | tail
+df -h /
+du -sh ~/* 2>/dev/null | sort -h | tail
 ```
 
 Move models, datasets and outputs to `/media/nvme` and point your applications there
@@ -151,13 +172,29 @@ Move models, datasets and outputs to `/media/nvme` and point your applications t
 
 ### The board is on 1.7 / Yocto
 
+*On the board*
+
 ```bash
-sima@modalix:~$ cat /etc/buildinfo | grep DISTRO
+cat /etc/buildinfo | grep DISTRO
 ```
 
 `DISTRO = poky` means a legacy Yocto image. `sima-cli update` **cannot** cross to eLxr — follow the
 [eLxr Conversion Guide](https://developer.sima.ai/hardware/reference/tech-notes/elxr-conversion)
 first. Units shipped before mid-December 2025 are typically Yocto.
+
+### The board is on 2.1.3 and `sima-cli update` will not reach 3.0.0
+
+Expected: 3.0.0 is a new Debian 13 image that `sima-cli update` cannot install over 2.1. Write it
+over the network instead — follow
+[Chapter 9 · Upgrade from 2.1.3 to 3.0.0](09-check-and-update-image.md#upgrade-from-213-to-300).
+To stay on 2.1.3, use the [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0)
+tag of this repository with SDK 2.1.3.1 and Neat Library 0.5.0.
+
+### An application built on Neat 0.5.0 fails to start
+
+Neat Library 0.6.0 is ABI 6 (`libsima_neat.so.6`). A binary built against 0.5.0 looks for
+`libsima_neat.so.5`, which a 3.0.0 board does not have. Delete its `build/` folder and rebuild it in
+the 3.0.0 SDK.
 
 ### "It built but it won't run"
 
@@ -165,9 +202,11 @@ Almost always a version mismatch between board software, Neat Library and Neat S
 against the [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on) and
 upgrade them as a set.
 
+*On the board*
+
 ```bash
-sima@modalix:~$ cat /etc/buildinfo | grep DISTRO_VERSION
-sima@modalix:~$ dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
+cat /etc/buildinfo | grep DISTRO_VERSION
+dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
 ```
 
 ### Forgotten credentials
@@ -184,16 +223,20 @@ At setup prompt 6, `Container '…' already exists. Remove and recreate it? [Y/n
 default `Y` (or pressed `Enter`), so setup removed and recreated the container. Next time, answer
 `n` to reuse the container you already have:
 
+*On the host*
+
 ```bash
-sima-user@host:~$ sima-cli sdk setup --devkit <devkit-ip>
+sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 ### Pairing fails
 
 The host and the board must be on the same network and able to reach each other:
 
+*On the host*
+
 ```bash
-sima-user@host:~$ ping -c3 <devkit-ip>
+ping -c3 <devkit-ip>
 ```
 
 If the ping fails, fix the network first ([Chapter 5](05-internet-sharing.md) or
@@ -206,8 +249,10 @@ You are not in the SDK container. Use the terminal in the VS Code window attache
 `sima-neat/sdk` container ([Chapter 15](15-install-neat-sdk.md)). If you are in the container and it
 is still missing, reload your shell:
 
+*In the SDK container, in `/workspace`*
+
 ```bash
-sima-user@sdk:/workspace$ source ~/.bashrc
+source ~/.bashrc
 ```
 
 ### `dk status` shows `SSH status : not reachable`
@@ -238,14 +283,18 @@ the board. The next run then hangs while the graph builds, or fails with errors 
 
 Find it from a board shell (`dk shell`):
 
+*On the board*
+
 ```bash
-sima@modalix:~$ ps -eo pid,etime,cmd | grep -E 'python|rtsp_detector' | grep -v grep
+ps -eo pid,etime,cmd | grep -E 'python|rtsp_detector' | grep -v grep
 ```
 
 Stop only the process you recognise as yours:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ kill <pid>
+kill <pid>
 ```
 
 **Never kill `mla_rt_service` or `mlashmcomplex`** — they are system daemons that run the MLA
@@ -260,9 +309,11 @@ sima@modalix:~$ kill <pid>
 CMake cannot see the SDK's copy of Neat. Configure with the prefix path, after deleting the failed
 build:
 
+*In the SDK container, in `/workspace/rtsp-detector`*
+
 ```bash
-sima-user@sdk:/workspace/rtsp-detector$ rm -rf build
-sima-user@sdk:/workspace/rtsp-detector$ cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Release \
+rm -rf build
+cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
 ```
 

@@ -18,6 +18,26 @@ below.
 | [`custom-plugin/`](custom-plugin/README.md) | Write your own GStreamer plugin, build it with the SDK, and run it inside Neat pipelines, with and without AI detection. |
 | [`troubleshooting`](#7-insight-and-troubleshooting) | Neat Insight for RTSP test sources and viewing app output, DevKit recovery, a command reference, and a symptom-first troubleshooting guide. |
 
+## Pick the version that matches your DevKit
+
+Check the board with `cat /etc/buildinfo` (`DISTRO_VERSION`), then use the matching branch or tag
+of this repository:
+
+| DevKit software | Neat SDK | Neat Library | Use this repository at |
+| --- | --- | --- | --- |
+| **3.0.0** (latest) | 3.0.0.0 | 0.6.0 | [`main`](https://github.com/smaurya01/demo-neat/tree/main) |
+| 2.1.3 | 2.1.3.1 | 0.5.0 | tag [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) |
+
+```bash
+git clone https://github.com/smaurya01/demo-neat.git
+cd demo-neat
+git checkout neat@0.5.0      # only for DevKit software 2.1.3 / Neat Library 0.5.0
+```
+
+Moving a 2.1.3 board to 3.0.0 is a re-image, not a `sima-cli update` — see
+[Convert 2.1.3 to 3.0.0](https://developer.sima.ai/hardware/reference/tech-notes/convert-2-1-3-to-3-0-0)
+and [Quick Start Chapter 9](devkit-quick-start/chapters/09-check-and-update-image.md#upgrade-from-213-to-300).
+
 ## Prerequisites
 
 - **A Modalix DevKit**, plus an Ethernet cable to put it on your network.
@@ -154,19 +174,24 @@ From the Quick Start Guide:
 
 ---
 
-## Tested on Neat 0.5.0
+## Tested versions
 
-The apps, the 14 tutorial notebooks and the LLiMa notebooks target **Neat Library 0.5.0 / SDK
-2.1.3.1** (DevKit software 2.1.3) on a Modalix DevKit. Most apps read a 1280x720 H.264 60 fps RTSP
+The [Quick Start Guide](devkit-quick-start/README.md) targets **Neat Library 0.6.0 / SDK 3.0.0.0**
+(DevKit software 3.0.0, `libsima_neat.so.6`, ABI 6).
+
+The apps, the 14 tutorial notebooks and the LLiMa notebooks were tested on **Neat Library 0.5.0 /
+SDK 2.1.3.1** (DevKit software 2.1.3) and are being brought to 0.6.0. Until then, on 2.1.3 use them
+from the [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) tag. C++ apps
+built against 0.5.0 must be rebuilt for 0.6.0 (ABI 6). Most apps read a 1280x720 H.264 60 fps RTSP
 source (the other sources are listed in [`apps/README.md`](apps/README.md#test-source)). The
 [accuracy study](model-compilation/ACCURACY.md) figures were measured on Neat 0.4.0.
 
-| | Version |
-| --- | --- |
-| Neat Library | **0.5.0** (`libsima_neat.so.5`, ABI 5) |
-| pyneat | **0.5.0** |
-| SDK container | **2.1.3.1** |
-| Board interpreter | `/home/sima/pyneat/bin/python` |
+| | Quick Start Guide | Apps, tutorials, LLiMa notebooks |
+| --- | --- | --- |
+| DevKit software | **3.0.0** | 2.1.3 |
+| Neat Library | **0.6.0** (ABI 6) | 0.5.0 (ABI 5) |
+| SDK container | **3.0.0.0** | 2.1.3.1 |
+| Board interpreter | `/home/sima/pyneat/bin/python` | `/home/sima/pyneat/bin/python` |
 
 ---
 

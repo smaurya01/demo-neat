@@ -47,11 +47,13 @@ You will also see the term **MPK**. It is the name of that inference contract, a
 Use the same YOLO26 archive as [Chapter 12](12-object-detection.md). If you already downloaded it
 there, skip this step.
 
+*On the board*
+
 ```bash
-sima@modalix:~$ export MODELZOO_VERSION="2.1.3"
-sima@modalix:~$ mkdir -p /media/nvme/example/models
-sima@modalix:~$ cd /media/nvme/example/models
-sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
+export MODELZOO_VERSION="3.0.0"
+mkdir -p /media/nvme/example/models
+cd /media/nvme/example/models
+sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
 ```
 
 The name already tells you a lot: `yolo26m` model, `det` (detection), `bf16` precision,
@@ -64,8 +66,10 @@ a Model Zoo convention only. The files inside are what count.
 
 You do not need to unpack an archive to see what is in it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar tzvf yolo26m-det-bf16-mla_tess-b1.tar.gz
+tar tzvf yolo26m-det-bf16-mla_tess-b1.tar.gz
 ```
 
 ```text
@@ -139,8 +143,10 @@ code with `decode_type` in `ModelOptions` (see [Chapter 12](12-object-detection.
 The contract is a single JSON document, 20–30 KB for a YOLO model. This short script reads it
 straight out of the archive, without unpacking anything, and prints one line per step:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ cat > inspect_archive.py << 'EOF'
+cat > inspect_archive.py << 'EOF'
 import json, sys, tarfile
 
 with tarfile.open(sys.argv[1]) as tar:
@@ -162,7 +168,7 @@ for p in mpk["plugins"]:
     shape = str(shapes[0]) if len(shapes) == 1 else ""
     print(f'{p["sequence"]:>3}  {p["processor"]:<4}  ' + "  ".join(x for x in (step, dtype, shape) if x))
 EOF
-sima@modalix:/media/nvme/example/models$ python3 inspect_archive.py yolo26m-det-bf16-mla_tess-b1.tar.gz
+python3 inspect_archive.py yolo26m-det-bf16-mla_tess-b1.tar.gz
 ```
 
 ```text
@@ -184,7 +190,7 @@ input: images 4915200 bytes, range [6.556510925292969e-07, 0.9999999403953552]
  13  EV74  pass_through
 ```
 
-`Model SDK` is the compiler version that built the archive. A Model Zoo 2.1.3 archive can report an
+`Model SDK` is the compiler version that built the archive. A Model Zoo 3.0.0 archive can report an
 older one, as this one does.
 
 Read it top to bottom — it is the model's whole data path:
@@ -210,15 +216,19 @@ images normalised with ImageNet mean and standard deviation, and it expects the 
 
 To open the contract directly, pull it out of the archive and pretty-print it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
+tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | python3 -m json.tool | less
 ```
 
 To pick out a single field — for example the input:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
+tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin)['input_nodes'], indent=2))"
 ```
 
@@ -266,10 +276,12 @@ BF16. The method and full table are in
 Download the INT8 archive of the same model next to the BF16 one, and run the inspection script
 on it:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ export MODELZOO_VERSION="2.1.3"
-sima@modalix:/media/nvme/example/models$ sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz"
-sima@modalix:/media/nvme/example/models$ python3 inspect_archive.py yolo26m-det-int8-b1.tar.gz
+export MODELZOO_VERSION="3.0.0"
+sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz"
+python3 inspect_archive.py yolo26m-det-int8-b1.tar.gz
 ```
 
 The difference is plain:
@@ -309,8 +321,10 @@ Model Zoo BF16 archive above, so do not rely on it alone.
 
 The quick test on the board:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
+tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     yolo26m_raw_supported_einsum_mpk.json | grep -o '"kernel": "[a-z_]*"' | sort | uniq -c
 ```
 
@@ -338,10 +352,23 @@ and `0_quanttess.json`. Each output has its own pair on its `dequantization_tran
 
 A good archive has **exactly one `.elf` and zero `.so` files**. Count by file extension:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.elf$'
+tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.elf$'
+```
+
+```text
 1
-sima@modalix:/media/nvme/example/models$ tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.so$'
+```
+
+*On the board, in `/media/nvme/example/models`*
+
+```bash
+tar tzf yolo26m-det-bf16-mla_tess-b1.tar.gz | grep -c '\.so$'
+```
+
+```text
 0
 ```
 
@@ -379,8 +406,10 @@ the optional Model Compiler extension). The chain is always the same three steps
 You do not have to guess how a particular archive was made: `archived_compile_script.*.py` inside
 it is the script that made it. Open it to see which compiler calls and settings were used:
 
+*On the board, in `/media/nvme/example/models`*
+
 ```bash
-sima@modalix:/media/nvme/example/models$ tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
+tar xzf yolo26m-det-bf16-mla_tess-b1.tar.gz -O \
     archived_compile_script.compile_yolo26_modelsdk.py | head -3
 ```
 
@@ -412,7 +441,7 @@ a stock YOLO export produces `.so` files and how to get to one `.elf`.
 2. **Extract it** into a private runtime folder, sorted by type:
 
    ```text
-   <extract root>/proc_<pid>/pkg_<hash>/p/
+   <extract root>/proc_run_<id>/pkg_<hash>/p/
    ├── etc/     every .json, plus the _mla_stats.yaml
    ├── lib/     any .so
    └── share/   the .elf
@@ -421,9 +450,10 @@ a stock YOLO export produces `.so` files and how to get to one `.elf`.
    The package folder is always named `p` (the sample output below shows `.../pkg_<hash>/p/`); the
    archive name is not used. The compile script is not extracted. The extract root is the first writable one of: a mounted
    NVMe (`/media/nvme/simaai/coprocessing/models` on a board set up as in
-   [Chapter 8](08-mount-nvme.md)), `/data/simaai/coprocessing/models`, then
-   `simaai/coprocessing/models` under `$TMPDIR` (or `/tmp`). Set `SIMA_MPK_EXTRACT_ROOT` to choose
-   it yourself.
+   [Chapter 8](08-mount-nvme.md)), `/data`, `$TMPDIR` (or `/tmp`), then the working directory —
+   each with `simaai/coprocessing/models` under it. On a 3.0.0 board `/data` is not writable by
+   the `sima` user, so without the NVMe the archive lands in `/tmp`, which is memory. Set
+   `SIMA_MPK_EXTRACT_ROOT` to choose it yourself.
 3. **Parse the contract** (`etc/*_mpk.json`) — input, steps, outputs, dtypes and quantisation
    values.
 4. **Plan the route.** The planner compares what the MLA needs with what your input is, then
@@ -445,9 +475,11 @@ When the process exits, the runtime folder is deleted. To keep it for a look, se
 
 `pyneat` can tell you how it read the contract:
 
+*On the board*
+
 ```bash
-sima@modalix:~$ source ~/pyneat/bin/activate
-(pyneat) sima@modalix:~$ python3 - << 'EOF'
+source ~/pyneat/bin/activate
+python3 - << 'EOF'
 import pyneat
 
 model = pyneat.Model("/media/nvme/example/models/yolo26m-det-bf16-mla_tess-b1.tar.gz")
@@ -462,10 +494,8 @@ EOF
 ```
 
 ```text
-Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/proc_12930/pkg_75eae96f7e182166/p)
-[WARN] Model preprocess planner produced 41 advisory messages; set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true to inspect details.
 Model: yolo26m_raw_supported_einsum
-  mpk: /media/nvme/simaai/coprocessing/models/proc_12930/pkg_75eae96f7e182166/p/etc/yolo26m_raw_supported_einsum_mpk.json
+  mpk: /media/nvme/simaai/coprocessing/models/proc_run_<id>/pkg_59427d2b406ece38/p/etc/yolo26m_raw_supported_einsum_mpk.json
   preprocess: disabled
   postprocess: cast
   outputs: 1 logical / 1 physical
@@ -473,12 +503,15 @@ MLA wants INT8 input:    False
 MLA wants a dtype cast:  True
 pre-MLA kernels:   ['cast']
 post-MLA kernels:  ['unknown', 'cast']
+Model loaded: yolo26m-det-bf16-mla_tess-b1 (package storage: NVMe, runtime package path: /media/nvme/simaai/coprocessing/models/proc_run_<id>/pkg_59427d2b406ece38/p)
 ```
 
 `summary()` prints the model name, the path of the extracted `*_mpk.json`, the chosen preprocess
 and postprocess, and the number of outputs. Here preprocess is `disabled` because no
 `ModelOptions` were given; the planner adds resize and colour conversion when you ask for them, as
-Chapter 12 does. The first line also shows where the archive was extracted; the `proc_…/pkg_…` part changes on every run. The `[WARN]` line is advisory and safe to ignore. `info().needs` shows
+Chapter 12 does. The `Model loaded` line, which Neat prints on its own output stream and so can appear before or
+after the rest, shows where the archive was extracted; the `proc_run_<id>` part changes on every
+run. `info().needs` shows
 what the planner read from the contract's dtypes: `pre_quantization` means the MLA expects INT8
 input, `pre_cast` means a floating-point conversion such as `float32` to `bfloat16` is needed.
 

@@ -21,11 +21,15 @@
 
 | Component | Version |
 |---|---|
-| DevKit software | 2.1.3 |
-| Neat SDK | 2.1.3.1 |
-| Neat Library | 0.5.0 |
-| Neat Apps | 0.5.1 |
-| Model Zoo | 2.1.3 |
+| DevKit software | 3.0.0 |
+| Neat SDK | 3.0.0.0 |
+| Neat Library | 0.6.0 |
+| Neat Apps | 0.6.0 |
+| Model Compiler | 3.0.0 |
+| Model Zoo | 3.0.0 |
+
+On 2.1.3 / Neat Library 0.5.0, use the
+[`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) tag of this repository.
 
 Confirm against the live
 [compatibility matrix](https://developer.sima.ai/software/getting-started/compatibility) — this is
@@ -43,7 +47,9 @@ the fastest-moving information in the guide.
 | `sima-cli serial -b 921600` | …at the older baud rate |
 | `sima-cli device discover` | Find boards on the network |
 | `sima-cli login` | Authenticate against SiMa's artifact server |
-| `sima-cli neat install sdk@release-2.1` | Install the SDK and pair it with a board |
+| `sima-cli neat install sdk@release-3.0` | Install the SDK and pair it with a board |
+| `sima-cli sdk neat` | Open a shell in the SDK container (starts it if stopped) |
+| `sima-cli bootimg -v 3.0.0 --netboot --devkit <ip> --autoflash` | Write the 3.0.0 image to a 2.1.3 board — follow the [conversion guide](https://developer.sima.ai/hardware/reference/tech-notes/convert-2-1-3-to-3-0-0) |
 | `sima-cli sdk setup --devkit <ip>` | Start the SDK (and re-pair after an IP change) |
 | `ssh sima@modalix.local` | Connect by hostname |
 
@@ -53,12 +59,12 @@ the fastest-moving information in the guide.
 |---|---|
 | `cat /etc/buildinfo` | What software the board is running |
 | `sima-cli login` | Authenticate for downloads |
-| `sima-cli update` | Update the board software |
+| `sima-cli update` | Update the board within its release series |
 | `sima-cli network` | Guided network configuration |
 | `sima-cli nvme remount` | Mount an existing NVMe partition |
 | `sima-cli nvme format` | Partition and format the NVMe — **erases it** |
-| `sima-cli neat install core@v0.5.0` | Install the Neat Library |
-| `sima-cli neat install apps@v0.5.1` | Install the example applications |
+| `sima-cli neat install core@v0.6.0` | Install the Neat Library |
+| `sima-cli neat install apps@v0.6.0` | Install the example applications |
 | `sima-cli neat install sentinel` | Install the monitoring tool |
 | `sima-cli modelzoo` | Browse pre-compiled models |
 | `simaai-sentinel` | Live temperature / power / CPU / MLA view |
@@ -77,7 +83,7 @@ Run these on the board. All five should succeed before you consider the setup do
 sima-cli --version
 
 # 2. the board is on the expected software version
-cat /etc/buildinfo | grep DISTRO_VERSION      # expect 2.1.3
+cat /etc/buildinfo | grep DISTRO_VERSION      # expect 3.0.0
 
 # 3. the NVMe is mounted
 df -h | grep nvme                             # expect /media/nvme
@@ -115,8 +121,10 @@ sudo modprobe simaai_pcie
 
 **Verify enumeration**
 
+*On the host*
+
 ```bash
-sima-user@host:~$ lspci | grep -i sima
+lspci | grep -i sima
 ```
 
 Once enumerated, the software chapters ([7](07-install-sima-cli.md) onward) apply as written.
@@ -134,6 +142,7 @@ Once enumerated, the software chapters ([7](07-install-sima-cli.md) onward) appl
 | Compatibility matrix | <https://developer.sima.ai/software/getting-started/compatibility> |
 | Firmware update | <https://developer.sima.ai/hardware/getting-started/firmware-update> |
 | eLxr conversion | <https://developer.sima.ai/hardware/reference/tech-notes/elxr-conversion> |
+| Convert 2.1.3 to 3.0.0 | <https://developer.sima.ai/hardware/reference/tech-notes/convert-2-1-3-to-3-0-0> |
 | Tutorials | <https://developer.sima.ai/software/tutorials> |
 | Python API | <https://developer.sima.ai/software/reference/pythonapi/> |
 | C++ API | <https://developer.sima.ai/software/reference/cppapi/> |

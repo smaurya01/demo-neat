@@ -11,8 +11,12 @@ the way.
 Work through it in order the first time. After that, each chapter stands on its own — jump
 straight to the one you need.
 
-> **Versions referenced throughout:** DevKit software **2.1.3** · Neat SDK **2.1.3.1** ·
-> Neat Library **0.5.0** · Neat Apps **0.5.1**
+> **Versions referenced throughout:** DevKit software **3.0.0** · Neat SDK (Palette SDK) **3.0.0.0** ·
+> Neat Library **0.6.0** · Neat Apps **0.6.0** · Model Compiler **3.0.0**
+>
+> On DevKit software 2.1.3 with Neat Library 0.5.0? Use the
+> [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) tag of this repository, or
+> move the board to 3.0.0 with [Chapter 9](chapters/09-check-and-update-image.md#upgrade-from-213-to-300).
 >
 > **Default login:** Username: `sima` / Password: `edgeai`
 
@@ -45,7 +49,7 @@ Pick **one** of these two. They are alternatives, not steps.
 | 7 | [Install sima-cli](chapters/07-install-sima-cli.md) | The tool everything else depends on |
 | 8 | [Mount the NVMe](chapters/08-mount-nvme.md) | Somewhere to actually put models and data |
 | 9 | [Check and update the board image](chapters/09-check-and-update-image.md) | Get onto a known-good software version |
-| 10 | [Install simaai-sentinel](chapters/10-install-simaai-sentinel.md) | See temperature, power, CPU and MLA usage |
+| 10 | [Install simaai-sentinel](chapters/10-install-simaai-sentinel.md) | See temperature, power, CPU and memory, including MLA memory |
 | 11 | [Install pyneat](chapters/11-install-pyneat.md) | The Python API for the accelerator |
 
 ### Part 4 — Running something
