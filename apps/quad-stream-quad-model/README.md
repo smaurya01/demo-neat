@@ -12,7 +12,7 @@
 - [How To Run](#how-to-run)
 - [How To See The Output](#how-to-see-the-output)
 - [Time Profile](#time-profile)
-  - [Why `infer` is ~20–32 ms, and why that is *not* the MLA](#why-infer-is-2032-ms-and-why-that-is-not-the-mla)
+  - [Why `infer` is ~10–12 ms, and why that is *not* the MLA](#why-infer-is-1012-ms-and-why-that-is-not-the-mla)
   - [The backpressure bound is the app's own, not Neat's](#the-backpressure-bound-is-the-apps-own-not-neats)
   - [Where the remaining cost is](#where-the-remaining-cost-is)
 - [Appendix](#appendix)
@@ -46,8 +46,8 @@ so you can tell the four windows apart.
 - Output: 4x UDP/RTP H.264 streams, one port per stream
 - Runtime config: `./config/default.conf` — **shared by both implementations**
 
-Both do exactly the same thing. The C++ build is **about 3x faster end to end** on Neat 0.5.0
-(**~236 fps** aggregate in C++ against **~75–88 fps** in Python), because Python's overlay is
+Both do exactly the same thing. The C++ build is **about 2.8x faster end to end**
+(**240 fps** aggregate in C++ against **86 fps** in Python), because Python's overlay is
 serialised by the GIL. Prefer C++ for throughput; the Python version is the more readable reference.
 
 What building this app taught (decode families, normalization, backpressure, the GIL) is written
@@ -86,12 +86,12 @@ Two of the four are published in the SiMa model zoo. Download them:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11s_seg
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11s
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11s_seg
 cd ../..
 ```
 
-The zoo publishes **no `yolo26s-pose`** (only the nano `yolo_26n_pose`) **and no YOLOX**. Take
+The zoo publishes **no `yolo26s-pose`** (only the nano pose model, `yolo_26n`) **and no YOLOX**. Take
 those two from the prebuilt
 **📦 [models.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)**
 (`models/yolo26s-pose/` and `models/yolox_s/`), or build them with the graph-surgery flow in
@@ -207,8 +207,7 @@ stream: `YoloV26Pose` runs no NMS (YOLO26 heads are one-to-one).
 **Decoder and RTSP receive**
 
 `decoder_buffers`, `decoder_input_buffers`: Per-stream decoder output and compressed-input buffer
-pools (defaults 16 and 2). All four decoders share one graph, so these are requested from the
-decoder admission service, not set as plain element properties.
+pools (defaults 16 and 2).
 
 `decoder_tuning`: Hardware decoder profile — `auto` | `default` | `low-memory` |
 `throughput-low-latency`.
@@ -356,19 +355,19 @@ stream that degrades halfway through a run. In the summary at exit, the means co
 after warmup and the p95 covers each stream's most recent 16,384 frames (about 4.5 minutes at
 60 fps), so memory use stays flat however long the app runs.
 
-Real output (Modalix DevKit, 4 × RTSP 1280×720 @ 59.94 fps, overlay on):
+Real output (Modalix DevKit, Neat 0.6.0, 4 × RTSP 1280×720 @ 60 fps, overlay on):
 
 ```text
-── t=155.3s ─── ms/frame, mean over this window ───
+── t=25.0s ─── ms/frame, mean over this window ───
 stream task            decode   infer  postproc  overlay  encode  latency   dec fps  pull fps  deliv fps  inflt   objs
-0      detection         1.51   21.83      0.05     0.60    0.10    22.64      59.9      59.1       59.1      1     15
-1      segmentation      1.46   32.33      1.50    13.89    0.11    69.23      59.9      57.9       58.3      2     12
-2      pose              1.30   21.57      0.09     1.03    0.10    22.84      59.9      59.5       59.3      1      9
-3      yolox             1.29   20.09      0.05     0.26    0.09    20.54      59.9      59.3       59.3      1      3
-                                                       aggregate delivered 235.9 fps
+0      detection         2.12    9.67      0.07     0.37    0.09    10.25      59.9      59.9       59.9      1      9
+1      segmentation      2.40   11.49      0.92     0.82    0.11    13.40      60.1      59.9       60.1      1      3
+2      pose              2.34   10.11      0.08     0.38    0.10    10.73      59.9      59.9       59.9      1      1
+3      yolox             2.27   12.03      0.06     0.25    0.10    12.49      60.1      60.1       60.1      1      5
+                                                    aggregate delivered 240.0 fps
 ```
 
-**~236 fps aggregate against a hard ceiling of 239.8 (4 × 59.94).** `dec fps ≈ pull fps ≈ deliv fps`
+**240 fps aggregate against a hard ceiling of 240 (4 × 60).** `dec fps ≈ pull fps ≈ deliv fps`
 on every stream: every frame the decoder produces is inferred and delivered. The pipeline is no
 longer the bottleneck — the cameras are.
 
@@ -393,9 +392,9 @@ The columns are named for **what they actually measure**, which is not always wh
 > the C++ table has no "model fps" column. (The Python app's `mdl fps` / `model fps` columns are
 > `1000 / infer`; read them with that in mind.)
 
-### Why `infer` is ~20–32 ms, and why that is *not* the MLA
+### Why `infer` is ~10–12 ms, and why that is *not* the MLA
 
-The models are small, so 20–32 ms looks alarming. **Almost none of it is MLA compute.**
+The models are small, so 10–12 ms is more than they need. **Most of it is not MLA compute.**
 
 `infer` brackets `push` → `pull`, and that window contains the whole model graph:
 
@@ -416,14 +415,14 @@ exact per-frame cycle counts:
 
 | model | MLA cycles/frame | rel. | `infer` | rel. |
 | --- | --- | --- | --- | --- |
-| `yolo_11s` (detection) | 1,222,587 | 1.00× | 21.8 ms | 1.00× |
-| `yolo_11s_seg` | 1,661,007 | 1.36× | 32.3 ms | 1.48× |
-| `yolo26s-pose` | 1,444,005 | **1.18×** | 21.6 ms | **0.99×** |
-| `yolox_s` | 1,080,648 | 0.88× | 20.1 ms | 0.92× |
+| `yolo_11s` (detection) | 1,104,896 | 1.00× | 9.7 ms | 1.00× |
+| `yolo_11s_seg` | 1,445,454 | 1.31× | 11.5 ms | 1.19× |
+| `yolo26s-pose` | 1,444,005 | **1.31×** | 10.1 ms | **1.05×** |
+| `yolox_s` | 1,080,648 | **0.98×** | 12.0 ms | **1.24×** |
 
-**Pose does 18% *more* MLA work than detection yet finishes no slower.** If `infer` tracked MLA
-compute, that could not happen. Per-frame MLA time is on the order of **1–2 ms** — under 10% of
-`infer`. **The MLA has headroom; the EV74 and the A65 do not.**
+**Pose does 31% *more* MLA work than detection yet is only 5% slower, and YOLOX does slightly
+*less* yet is 24% slower.** If `infer` tracked MLA compute, that could not happen. Per-frame MLA
+time is on the order of **1–2 ms**. **The MLA has headroom; the EV74 and the A65 set the pace.**
 
 ### The backpressure bound is the app's own, not Neat's
 
@@ -442,9 +441,10 @@ made visible: if it ever exceeds `model_queue_depth`, the gate is broken.
 
 ### Where the remaining cost is
 
-Segmentation's **host overlay** is the closest thing to a bottleneck: `postproc + overlay + encode`
-= ~15.5 ms against a 16.7 ms frame period (~93% utilised), almost all of it the mask blend on the
-A65. The other three streams are under 1.7 ms. If seg dips below 60 fps, that is why — not the model.
+Segmentation's **host overlay** is the most expensive host stage: `postproc + overlay + encode`
+is about 2–3 ms per frame, most of it the mask blend on the A65, and it grows with the number of
+masks. The other three streams are under 0.6 ms. With a 16.7 ms frame period there is headroom; if
+seg dips below 60 fps on a busy scene, look there first, not at the model.
 
 The structural cost is the **host round-trip**: every frame is copied out of the zero-copy pool to
 the A65 (`decode`), then copied back CPU→EV74 inside `push`. The official
@@ -469,38 +469,38 @@ That is the real fork: **burned-in overlay for all four tasks costs you the host
 
    <br>
 
-   Modalix DevKit, RTSP 1280×720 H.264 @ 59.94 fps, all four streams concurrent, `cvu_*_target=EV74`,
-   overlay on.
+   Modalix DevKit, Neat 0.6.0, RTSP 1280×720 H.264 @ 60 fps, all four streams concurrent,
+   `cvu_*_target=EV74`, overlay on.
 
    ### C++ (`./build/quad_stream_quad_model`)
 
-   **~236 fps against a 239.8 fps ceiling (4 × 59.94) — 98% of what the cameras can supply.** All four
+   **240 fps against a 240 fps ceiling (4 × 60) — all the cameras can supply.** All four
    streams deliver at the source rate; the pipeline is not the bottleneck. The per-stream
    numbers are the [Time Profile](#time-profile) live table above — the same run, not repeated here.
 
    Two design choices get it there, and neither touches a model:
 
    1. **postproc + overlay + encode run on their own thread**, so a stream's frame period is
-      `max(infer, rest)`, not the *sum* of every stage. Segmentation gains most: its 14 ms mask blend
+      `max(infer, rest)`, not the *sum* of every stage. Segmentation gains most: its mask blend
       is not charged against its frame rate.
    2. **`push` and `pull` run on two threads**, so the model graph holds several frames at once
       instead of exactly one. Frame *i+1*'s EV74 preprocess overlaps frame *i*'s MLA.
 
-   With frames in flight, `infer` is a **latency**, not a period, so it can be 20–32 ms while each
-   stream still delivers ~59 fps. See the Time Profile section.
+   With frames in flight, `infer` is a **latency**, not a period, so it can exceed the 16.7 ms
+   frame period while each stream still delivers ~60 fps. See the Time Profile section.
 
    ### Python (`./main.py`) — same models, same config, threaded per stream
 
-   On Neat 0.5.0 the Python build delivers **~75–88 fps aggregate**. The per-stage breakdown below
-   was measured on NEAT 0.3.0 over a 3-minute `--duration 180` run (**aggregate 95.64 fps**, zero
-   stalls, zero errors, no degradation across the run); read it for where the time goes.
+   The Python build delivers **86 fps aggregate** (a 30 s `--duration 30` run: 13.3 / 13.6 /
+   33.5 / 25.8 fps per stream, zero pull timeouts). The per-stage means from that run show where the
+   time goes:
 
    | stream | model | infer ms | postproc ms | overlay ms |
    | --- | --- | --- | --- | --- |
-   | 0 detection | `yolo_11s` (zoo) | 24 | 0.7 | ~58 |
-   | 1 segmentation | `yolo_11s_seg` (zoo) | 24 | 5.7 | ~87 |
-   | 2 pose | `yolo26s-pose` | 24 | 0.6 | ~40 |
-   | 3 yolox | `yolox_s` | 24 | 0.4 | ~10 |
+   | 0 detection | `yolo_11s` (zoo) | 27.7 | 0.5 | 70.4 |
+   | 1 segmentation | `yolo_11s_seg` (zoo) | 28.2 | 4.9 | 64.1 |
+   | 2 pose | `yolo26s-pose` | 27.4 | 0.5 | 24.8 |
+   | 3 yolox | `yolox_s` | 28.1 | 0.4 | 34.0 |
 
 Two things the Python build depends on:
 
@@ -512,9 +512,9 @@ Two things the Python build depends on:
    `cv2.polylines`, and all keypoint dots in one indexed write — 3.5× faster on pose than one call
    per element.
 
-`infer` is at **parity with the C++** (24 ms vs 21.8 ms), so the remaining gap to the C++'s
-~236 fps is entirely the host-side overlay: **58 ms vs 0.60 ms** (detection) and **87 ms vs 13.9 ms**
-(segmentation). Python's per-frame drawing serialises on the GIL; the C++ overlay runs on four real
+`infer` is about 28 ms in Python against 10–12 ms in C++ (the GIL also delays the push/pull
+threads), but most of the gap to the C++'s 240 fps is the host-side overlay: **70 ms vs 0.37 ms**
+(detection) and **64 ms vs 0.8–2.2 ms** (segmentation). Python's per-frame drawing serialises on the GIL; the C++ overlay runs on four real
 OS threads with no interpreter lock.
 
 > **Do not raise the Python pipeline depth to chase this.** The Python app's `--pipeline-depth`

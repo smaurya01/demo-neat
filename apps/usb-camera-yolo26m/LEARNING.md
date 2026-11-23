@@ -7,9 +7,9 @@ dead ends.
 
 > **Historical design log.** It was written while building the app on an older Neat runtime
 > (0.2.2, `libsima_neat.so.2.1.2`, SDK 2.1.2). Runtime versions, library names, timings and
-> download paths below are from that time. The app now runs on Neat 0.5.0: for current
+> download paths below are from that time. The app now runs on Neat 0.6.2: for current
 > instructions, model download links and how to check your runtime for `neatcamerabridge`
-> (`libsima_neat.so.5`), see [README.md](README.md).
+> (`libsima_neat.so.7`), see [README.md](README.md).
 
 Environment at the time: Modalix DevKit, Neat runtime **0.2.2** (`libsima_neat.so.2.1.2`),
 SDK 2.1.2, Logitech Brio 100 USB camera.
@@ -143,7 +143,7 @@ The resolution is in the reference app's README
 yolo26 is published as a **direct download, outside the zoo index**:
 
 ```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 ```
 
 **Lesson: "not in the model zoo" does not mean "not available".** Check the example apps'
@@ -527,7 +527,7 @@ answer actually was.
 1. Plug in the camera. `v4l2-ctl --list-devices` → find the *Video Capture* node (not the
    metadata one). `v4l2-ctl -d /dev/videoN --list-formats-ext` → confirm MJPEG 1080p30.
 2. Download the model (it is **not** in `sima-cli modelzoo list`):
-   `sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz`
+   `sima-cli download https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz`
 3. Build the camera fragment with `nodes::Custom(..., InputRole::Source)`. Pin
    `image/jpeg` in the caps. Use `jpegdec`, **not** `SimaDecode`/`neatdecoder`. End the
    fragment on a real element, never on a bare caps string.

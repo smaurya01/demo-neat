@@ -210,7 +210,7 @@ Put in what the agent would otherwise have to rediscover:
 ## Environment
 - DevKit: <devkit-ip>, user sima
 - Insight host: <host-ip> — video UDP 9000, metadata UDP 9100
-- Board software 3.0.0, SDK 3.0.0.0, Neat Library 0.6.0
+- Board software 3.0.1, SDK 3.0.0.2, Neat Library 0.6.2
 
 ## Build and run
 - Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr

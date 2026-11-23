@@ -148,7 +148,8 @@ struct Profile {
   }
 };
 
-void print_profile_summary(const Profile& p, int frames, double elapsed_s) {
+void print_profile_summary(const Profile& p, int frames, double elapsed_s, int width,
+                           int height) {
   if (frames < 2 || elapsed_s <= 0.0) return;
 
   const double fps = static_cast<double>(frames - 1) / elapsed_s;
@@ -169,25 +170,8 @@ void print_profile_summary(const Profile& p, int frames, double elapsed_s) {
   row("total", p.total);
 
   std::cout << "\nframes " << frames << "   elapsed " << std::fixed << std::setprecision(1)
-            << elapsed_s << "s   steady-state " << std::setprecision(2) << fps << " fps\n";
-
-  // Say plainly what is holding the pipeline back. `infer` is the only stage that runs on
-  // the accelerator, so its mean is the MLA's ceiling. If we are delivering well under
-  // that, something upstream (the camera) is the constraint -- not the SoC.
-  const double infer_ms = p.infer.mean();
-  if (infer_ms > 0.0) {
-    const double mla_ceiling = 1000.0 / infer_ms;
-    if (mla_ceiling > fps * 1.05) {
-      std::cout << "bottleneck: THE CAMERA. Inference takes " << std::setprecision(1)
-                << infer_ms << " ms, so the MLA could sustain ~" << mla_ceiling
-                << " fps; you are getting " << fps
-                << ". A smaller/faster model will not help.\n";
-    } else {
-      std::cout << "bottleneck: INFERENCE. The MLA tops out near " << std::setprecision(1)
-                << mla_ceiling << " fps and you are delivering " << fps
-                << ". A smaller model would raise this.\n";
-    }
-  }
+            << elapsed_s << "s   resolution " << width << "x" << height << "   steady-state "
+            << std::setprecision(2) << fps << " fps\n";
 }
 
 std::string trim(std::string v) {
@@ -375,9 +359,10 @@ neat::InputOptions make_nv12_input_options(const Config& cfg) {
   opt.caps_override = "video/x-raw,format=NV12,width=" + std::to_string(cfg.width) +
                       ",height=" + std::to_string(cfg.height) +
                       ",framerate=" + std::to_string(cfg.fps) + "/1";
-  // Was `use_simaai_pool = false`, deprecated in NEAT 0.4.0. Input.h documents the exact
-  // mapping: false -> InputMemoryPolicy::SystemMemory. Behaviour-identical.
-  opt.memory_policy = neat::InputMemoryPolicy::SystemMemory;
+  // Auto, not SystemMemory: the camera frames are CPU buffers, and Neat 0.6.0's on-device
+  // preprocess rejects a system-memory input (neatkernelrunner.invalid_binding).
+  // Auto lets Neat move each frame into device memory before the model.
+  opt.memory_policy = neat::InputMemoryPolicy::Auto;
   return opt;
 }
 
@@ -874,7 +859,7 @@ int run_push(const Config& cfg) {
 
   print_profile_summary(
       prof, processed,
-      std::chrono::duration<double>(Clock::now() - steady_start).count());
+      std::chrono::duration<double>(Clock::now() - steady_start).count(), cfg.width, cfg.height);
 
   udp_run.close();
   model_run.close();
@@ -1000,7 +985,7 @@ int run_graph(const Config& cfg) {
 
   print_profile_summary(
       prof, processed,
-      std::chrono::duration<double>(Clock::now() - steady_start).count());
+      std::chrono::duration<double>(Clock::now() - steady_start).count(), cfg.width, cfg.height);
 
   run.close();
   return g_stop.load() ? 130 : 0;

@@ -190,11 +190,11 @@ over the network instead — follow
 To stay on 2.1.3, use the [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0)
 tag of this repository with SDK 2.1.3.1 and Neat Library 0.5.0.
 
-### An application built on Neat 0.5.0 fails to start
+### An application built on an older Neat fails to start
 
-Neat Library 0.6.0 is ABI 6 (`libsima_neat.so.6`). A binary built against 0.5.0 looks for
-`libsima_neat.so.5`, which a 3.0.0 board does not have. Delete its `build/` folder and rebuild it in
-the 3.0.0 SDK.
+Neat Library 0.6.2 is ABI 7 (`libsima_neat.so.7`). A binary built against 0.6.0 or 0.6.1 looks for
+`libsima_neat.so.6` (0.5.0: `libsima_neat.so.5`), which a 3.0.1 board does not have. Delete its
+`build/` folder and rebuild it in the 3.0.0.2 SDK.
 
 ### "It built but it won't run"
 

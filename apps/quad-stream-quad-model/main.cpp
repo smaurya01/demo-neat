@@ -210,9 +210,8 @@ struct Config {
   std::string cvu_pre_target = "EV74";
   std::string cvu_post_target = "EV74";
 
-  // ── decoder admission ────────────────────────────────────────────────────
-  // LEASE fields, not GStreamer properties. They only apply because all four decoders live in
-  // ONE graph/Run -- Neat skips admission for a graph holding a single decoder.
+  // ── hardware decoder ─────────────────────────────────────────────────────
+  // Set on each stream's SimaDecode (see make_rtsp_encoded_graph).
   int decoder_buffers = 16;        // per-stream decoder OUTPUT pool  -> SimaDecodeOptions::num_buffers
   int decoder_input_buffers = 2;   // per-stream compressed-INPUT pool -> ::input_buffers
   // auto | default | low-memory | throughput-low-latency
@@ -399,9 +398,9 @@ std::unique_ptr<neat::Model> make_model(const Config& cfg, const StreamSpec& spe
   return std::make_unique<neat::Model>(spec.model_path, opt);
 }
 
-// (The all-in-one groups::RtspDecodedInput helper that used to live here is gone. The source
-// layer now builds RtspEncodedInput + an explicit SimaDecode so the decoder can carry the
-// admission-lease fields -- see make_combined_source_graph below.)
+// (The source layer builds RtspEncodedInput + an explicit SimaDecode, not the all-in-one
+// groups::RtspDecodedInput helper, so the decoder buffer and tuning options can be set -- see
+// make_combined_source_graph below.)
 
 neat::InputOptions make_nv12_input_options(const Config& cfg) {
   neat::InputOptions opt;
@@ -430,10 +429,8 @@ std::string source_endpoint(int stream_id) {
 }
 
 // ── the source layer: ONE Graph, ONE Run, ALL decoders ──────────────────────
-// Not optional on 0.3.0+: Neat requests a decoder-admission lease only when a single graph
-// holds more than one H.264 decoder. One Run per stream (the old layout) never asked and
-// collectively saturated at ~43 fps each. Uses RtspEncodedInput + explicit SimaDecode so the
-// decoder can carry the lease fields.
+// All four RTSP -> decode chains share one graph and one build(); each stream pulls its own
+// endpoint. Uses RtspEncodedInput + explicit SimaDecode so the decoder options can be set.
 neat::Graph make_rtsp_encoded_graph(const Config& cfg, const StreamSpec& spec) {
   groups::RtspEncodedInputOptions enc;
   enc.url = spec.rtsp_url;
@@ -442,7 +439,7 @@ neat::Graph make_rtsp_encoded_graph(const Config& cfg, const StreamSpec& spec) {
   enc.tcp = cfg.tcp;
   enc.drop_on_latency = cfg.rtsp_drop_on_latency;
   enc.insert_queue = true;
-  enc.h264_payload_type = 96;
+  enc.payload_type = 96;
   // With skip_rtsp_probe the configured caps ARE the source contract: pin them on the
   // parser instead of probing each stream at startup.
   enc.auto_caps_from_stream = !cfg.skip_rtsp_probe;
@@ -1064,9 +1061,9 @@ struct StreamRuntime {
   std::unique_ptr<neat::Model> model;
   neat::Graph model_graph, video_graph;
   neat::Run model_run, video_run;
-  // The source Run is SHARED by every stream (one Graph, one build(), all decoders) so
-  // Neat requests a decoder-admission lease. Each stream still pulls only its own
-  // endpoint, `source_endpoint(spec.id)`. Non-owning: main() owns the Run.
+  // The source Run is SHARED by every stream (one Graph, one build(), all decoders). Each
+  // stream still pulls only its own endpoint, `source_endpoint(spec.id)`. Non-owning: main()
+  // owns the Run.
   neat::Run* source_run = nullptr;
   std::string source_endpoint_name;
   FrameMailbox mailbox;

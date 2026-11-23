@@ -10,7 +10,8 @@ Video and results go to Neat Insight. The encoded video is forwarded untouched, 
 draws boxes and skeletons from JSON metadata. The host never decodes a frame to draw on it or
 re-encodes one.
 
-**Result:** the output rate equals the input rate, 480 / 480 fps, with every stream at 30 fps.
+**Result:** the output rate matches the input rate (478–480 of 480 fps), with every stream at
+the 30 fps source rate.
 See [Measured results](#measured-results).
 
 ![16stream4model in Neat Insight](docs/insight.jpg)
@@ -93,22 +94,23 @@ and every clip is 1280×720, 30/1 fps, H.264 Constrained Baseline (no B-frames).
 
 | model | streams | archive (`assets/models/`) | source | decode | classes |
 |---|---|---|---|---|---:|
-| 0 `yolo26n_det`  | 0–3   | `yolo26n-det-int8-b1.tar.gz` | SDK 2.1.3 direct artifact | `yolo26` | 80 (COCO) |
+| 0 `yolo26n_det`  | 0–3   | `yolo26n-det-int8-b1.tar.gz` | SDK 3.0.0 direct artifact | `yolo26` | 80 (COCO) |
 | 1 `yolo11n_det`  | 4–7   | `yolo_11n_mpk.tar.gz`        | model zoo `yolo_11n`      | `yolov8` | 80 (COCO) |
 | 2 `yolov8n_det`  | 8–11  | `yolo_v8n_mpk.tar.gz`        | model zoo `yolo_v8n`      | `yolov8` | 80 (COCO) |
-| 3 `yolo26n_pose` | 12–15 | `yolo_26n_pose_mpk.tar.gz`   | model zoo `yolo_26n_pose` | `YoloV26Pose`, `score_is_prob=true` | 1 (person), 17 keypoints |
+| 3 `yolo26n_pose` | 12–15 | `yolo_26n_mpk.tar.gz`        | model zoo `yolo_26n`      | `YoloV26Pose`, `score_is_prob=true` | 1 (person), 17 keypoints |
 
 - The zoo YOLO11n and YOLOv8n keep the raw DFL head, so they use the `yolov8` decode family.
-- The zoo `yolo_26n_pose` score head is already sigmoided, so it needs `score_is_prob=true`.
+- The zoo `yolo_26n` is the YOLO26n **pose** model. Its score head is already sigmoided, so it
+  needs `score_is_prob=true`.
   Without it, every background anchor scores about 0.5 and floods the output with false poses.
 
 Download commands, run from `assets/models/`:
 
 ```bash
-sima-cli download "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz"
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_26n_pose
+sima-cli download "https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz"
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8n
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_26n        # the YOLO26n pose model
 ```
 
 Model archives are gitignored, so download them after cloning.
@@ -126,8 +128,7 @@ Metadata sent to Insight:
 ```bash
 cd /workspace/demo-neat/apps/16stream4model   # your clone under /workspace
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr \
-      -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-gnu-g++-12
+      -DCMAKE_PREFIX_PATH=/opt/toolchain/aarch64/modalix/usr
 cmake --build build -- -j1
 ```
 
@@ -231,7 +232,7 @@ The live line shows total fps against the input, then per-stream fps in four gro
 model:
 
 ```
-[t=  90s]  480.0 fps (in 480)  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0  | 30.0 30.0 30.0 30.0
+[t=  30s]  479.9 fps (in 480)  | 30.0 30.1 29.9 30.0  | 29.9 30.0 30.0 30.0  | 30.0 30.0 30.1 30.2  | 30.1 30.1 29.9 30.0
 ```
 
 Reading left to right: the total output fps, the input rate, then streams 0–3 (model 0, YOLO26n
@@ -242,8 +243,8 @@ det), 4–7 (model 1, YOLO11n det), 8–11 (model 2, YOLOv8n det) and 12–15 (m
 - The **final summary** lists each stream's frames, fps, ratio to source, objects per frame,
   metadata sent/failed, and host-side parse and metadata time. It ends with:
   ```
-  aggregate: 479.5 fps of 480.0 input (99.9%) across 16 streams, 145156 frames
-  slowest stream: 99.1% of source rate  ->  PASS (target >= 97.0% per stream)
+  aggregate: 477.9 fps of 480.0 input (99.6%) across 16 streams, 30015 frames
+  slowest stream: 99.3% of source rate  ->  PASS (target >= 97.0% per stream)
   ```
 - **Exit code:**
   - 0 on PASS.
@@ -271,22 +272,21 @@ viewer only.
 ## Measured results
 
 Config: YOLO26n det / YOLO11n det / YOLOv8n det / YOLO26n pose, 4 streams each, all sources
-1280×720 @ 30 fps. These figures come from a 300 s run on the DevKit with NEAT 0.4.0 and
-SDK 2.1.3.
+1280×720 @ 30 fps, with the models from [Models](#models). These figures come from a 60 s run
+(`--duration 60 --report-interval 10`) on the DevKit with Neat 0.6.0 and SDK 3.0.0.
 
 | model | streams | input fps | output fps | per stream | objects / frame |
 |---|---|---:|---:|---|---|
-| YOLO26n det  | 0–3   | 120 | 120.0 | 30.00 | 4.6–7.3 |
-| YOLO11n det  | 4–7   | 120 | 119.8 | 29.85–30.00 | 3.3–6.6 |
-| YOLOv8n det  | 8–11  | 120 | 119.7 | 29.73–30.00 | 2.2–6.6 |
-| YOLO26n pose | 12–15 | 120 | 120.0 | 29.97–30.00 | 1.0–1.5 persons |
-| **total** | 16 | **480** | **479.5 (99.9%)** | every 30 s window from t=60 s: 30.0 on all 16 | |
+| YOLO26n det  | 0–3   | 120 | 119.5 | 29.84–29.89 | 4.6–7.2 |
+| YOLO11n det  | 4–7   | 120 | 119.5 | 29.84–29.91 | 3.0–7.1 |
+| YOLOv8n det  | 8–11  | 120 | 119.5 | 29.78–29.93 | 2.2–6.1 |
+| YOLO26n pose | 12–15 | 120 | 119.5 | 29.84–29.89 | 1.0–1.6 persons |
+| **total** | 16 | **480** | **477.9 (99.6%)** | 29.8–30.2 on all 16 in every 10 s window from t=20 s | |
 
 - **Result:** PASS, with no stalls and no metadata send failures.
-- **Host work per frame:** parse takes about 0.05 ms for detection and 0.13 ms for pose.
-  Building and sending the metadata JSON takes 0.1–0.2 ms for detection and 0.3–0.45 ms for
+- **Host work per frame:** parse takes about 0.15 ms for detection and 0.21 ms for pose.
+  Building and sending the metadata JSON takes 0.1–0.2 ms for detection and 0.3–0.42 ms for
   pose.
-- **Board load:** the app used about 3.6 A65 cores, and the board stayed about 60% idle.
 - **Headroom:** the four models together keep the MLA close to full. A heavier model or a 60 fps
   source in any group pulls every group below the source rate.
 
@@ -300,7 +300,7 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | key | example | meaning |
 |---|---|---|
 | `model<m>_name` | `yolo26n_pose` | Label used in logs and reports. |
-| `model<m>_archive` | `./assets/models/yolo_26n_pose_mpk.tar.gz` | Compiled model archive. |
+| `model<m>_archive` | `./assets/models/yolo_26n_mpk.tar.gz` | Compiled model archive. |
 | `model<m>_labels` | `./assets/labels/person.txt` | One label per line. |
 | `model<m>_classes` | `1` | Real class count (defaults to 80). |
 | `model<m>_task` | `detection` \| `pose` | `pose` selects `YoloV26Pose` and pose metadata. |
@@ -326,8 +326,8 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | `insight_host`, `video_port_base`, `metadata_port_base` | `127.0.0.1`, 9000, 9100 | Insight destination: the Insight host's IP as seen from the DevKit (`<insight-host-ip>` in the config). Channel `i` uses base + `i`. |
 | `width`, `height`, `fps` | 1280, 720, 30 | Source contract when a stream cannot be probed. |
 | `probe_source` | `true` | Read every stream's width, height and frame rate with `ffprobe` at start; `false` trusts the values above. |
-| `skip_rtsp_probe` | `true` | Pin each stream's caps (size and whole-number frame rate) on the decoder instead of letting Neat read them from the stream at build time. The pinned values are the probed ones (see `probe_source`), or the values above for a stream that cannot be probed. This is also what lets Core admit decoders with zero-copy output. |
-| `decoder_buffers`, `decoder_input_buffers` | 8, 2 | Core admission raises output buffers to 18 when every decoder has known caps. |
+| `skip_rtsp_probe` | `true` | Pin each stream's caps (size and whole-number frame rate) on the decoder instead of letting Neat read them from the stream at build time. The pinned values are the probed ones (see `probe_source`), or the values above for a stream that cannot be probed. |
+| `decoder_buffers`, `decoder_input_buffers` | 8, 2 | Per-stream decoder output and compressed-input buffer pools. |
 | `max_inflight_per_stream`, `max_inflight_total` | 2, 8 | Frames admitted into each model, per stream and per model. |
 | `queue_depth`, `internal_queue_depth`, `inference_async` | 16, 1, `true` | Detections queue depth and graph execution options. |
 | `detections_drop` | `false` | With 4 streams per model, back-pressure beats dropping. |
@@ -350,7 +350,7 @@ Everything is in `config/default.conf`, in `key=value` form. Numeric values are 
 | `--source-only` | Receive and decode every stream, run no model. This measures the source path ceiling. |
 | `--inflight <per>,<total>` | Override `max_inflight_per_stream` and `max_inflight_total`. |
 | `--internal-queue <n>` | Override `internal_queue_depth` (-1 = framework default). |
-| `--measure [m]` | Neat in-graph timing, with the plugin trace on model m. |
+| `--measure [m]` | Print Neat's measured-window report for every model, with per-stage detail on model m. |
 | `--verbose` | Unmute the Neat model planner. |
 | `--print-backend` | Dump each model's generated GStreamer pipeline. |
 | `--help` | Print usage. |

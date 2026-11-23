@@ -25,7 +25,7 @@ of this repository:
 
 | DevKit software | Neat SDK | Neat Library | Use this repository at |
 | --- | --- | --- | --- |
-| **3.0.0** (latest) | 3.0.0.0 | 0.6.0 | [`main`](https://github.com/smaurya01/demo-neat/tree/main) |
+| **3.0.1** (latest) | 3.0.0.2 | 0.6.2 | [`main`](https://github.com/smaurya01/demo-neat/tree/main) |
 | 2.1.3 | 2.1.3.1 | 0.5.0 | tag [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) |
 
 ```bash
@@ -176,22 +176,25 @@ From the Quick Start Guide:
 
 ## Tested versions
 
-The [Quick Start Guide](devkit-quick-start/README.md) targets **Neat Library 0.6.0 / SDK 3.0.0.0**
-(DevKit software 3.0.0, `libsima_neat.so.6`, ABI 6).
+The [Quick Start Guide](devkit-quick-start/README.md) targets **Neat Library 0.6.2 / SDK 3.0.0.2**
+(DevKit software 3.0.1, `libsima_neat.so.7`, ABI 7).
 
-The apps, the 14 tutorial notebooks and the LLiMa notebooks were tested on **Neat Library 0.5.0 /
-SDK 2.1.3.1** (DevKit software 2.1.3) and are being brought to 0.6.0. Until then, on 2.1.3 use them
-from the [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) tag. C++ apps
-built against 0.5.0 must be rebuilt for 0.6.0 (ABI 6). Most apps read a 1280x720 H.264 60 fps RTSP
-source (the other sources are listed in [`apps/README.md`](apps/README.md#test-source)). The
-[accuracy study](model-compilation/ACCURACY.md) figures were measured on Neat 0.4.0.
+The apps, the custom-plugin example and the model-compilation flow are tested on **Neat Library
+0.6.2 / SDK 3.0.0.2** (DevKit software 3.0.1, Model Compiler 3.0.0). C++ apps built for an older
+Neat must be rebuilt (ABI 7). Most apps read a 1280x720 H.264 60 fps RTSP source (the other
+sources are listed in [`apps/README.md`](apps/README.md#test-source)). The
+[accuracy study](model-compilation/ACCURACY.md) figures come from an earlier release.
 
-| | Quick Start Guide | Apps, tutorials, LLiMa notebooks |
-| --- | --- | --- |
-| DevKit software | **3.0.0** | 2.1.3 |
-| Neat Library | **0.6.0** (ABI 6) | 0.5.0 (ABI 5) |
-| SDK container | **3.0.0.0** | 2.1.3.1 |
-| Board interpreter | `/home/sima/pyneat/bin/python` | `/home/sima/pyneat/bin/python` |
+The 14 tutorial notebooks and the LLiMa notebooks run on 0.6.2 too (the two LLiMa compilation
+notebooks only print the compile commands; compiling itself is not part of that check).
+
+| | |
+| --- | --- |
+| DevKit software | **3.0.1** |
+| Neat Library | **0.6.2** (ABI 7) |
+| SDK container | **3.0.0.2** |
+| Model Compiler | **3.0.0** |
+| Board interpreter | `/home/sima/pyneat/bin/python` |
 
 ---
 

@@ -117,9 +117,8 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
         "--model_path", str(onnx_path),
         "--model_format", "onnx",
         "--model_layout", project.get("default_layout", "NCHW"),
-        "--input_names", cfg["input_name"],
+        # No --input_names: the driver takes ONNX inputs in graph order and rejects the flag.
         "--input_shapes", ",".join(str(x) for x in cfg["input_shape"]),
-        "--device", project.get("default_device", "modalix"),
         "--build_dir", str(p["compile_dir"]),
         "--calib_method", project.get("default_calib_method", "mse"),
         "--requant_mode", project.get("default_requant_mode", "sima"),
@@ -129,8 +128,8 @@ def run(model_id: str, calib_dir: Path | None, num_calib: int | None, precision:
         "--dataset_images", str(calib),
         "--num_calib_samples", str(n),
     ]
-    if cfg.get("output_names"):
-        cmd += ["--output_names", *cfg["output_names"]]
+    # The driver always targets Modalix and keeps the ONNX graph's outputs, which surgery has
+    # already cut to `output_names`; test_model.py checks the archive exposes exactly those.
     if prec == "bf16":
         cmd += BF16_FLAGS
     if batch > 1:

@@ -111,7 +111,7 @@ struct ModelCfg {
   // Follows the archive's HEAD SHAPE, not the model's name: zoo YOLO11/YOLOv8 keep the raw
   // 64-channel DFL head (YoloV8); YOLO26 exports 4-channel l/t/r/b (YoloV26).
   neat::BoxDecodeType decode = neat::BoxDecodeType::YoloV26;
-  // The archive's score head already ends in a sigmoid (the zoo yolo_26n_pose does: its score
+  // The archive's score head already ends in a sigmoid (the zoo yolo_26n pose model does: its score
   // tensors dequantize to [0, x] with zp=-128). BoxDecode applies a second sigmoid, which puts
   // every background anchor at ~0.5, so a 0.30 threshold passes everything. When set, the
   // threshold is mapped through sigmoid() and decoded scores back through logit().
@@ -947,32 +947,9 @@ void print_measure(int m, const std::string& name, const neat::MeasureReport& re
   std::cout << "\n##### model " << m << " (" << name << ") in-graph profile, window "
             << std::fixed << std::setprecision(1) << rep.elapsed_s << "s, outputs=" << rep.outputs
             << "\n";
-  if (!rep.plugin_latency.empty()) {
-    struct Agg { std::uint64_t calls = 0; double total = 0, max = 0; std::string backend; };
-    std::map<std::string, Agg> by_stage;
-    for (const auto& p : rep.plugin_latency) {
-      const std::string key = p.stage_name.empty() ? (p.name.empty() ? p.kernel_name : p.name)
-                                                   : p.stage_name;
-      auto& a = by_stage[key];
-      a.calls += p.calls;
-      a.total += p.total_ms;
-      a.max = std::max(a.max, p.max_ms);
-      if (a.backend.empty()) a.backend = p.backend;
-    }
-    std::cout << std::left << std::setw(34) << "stage" << std::setw(10) << "backend" << std::right
-              << std::setw(10) << "calls" << std::setw(10) << "avg ms" << std::setw(10)
-              << "max ms" << "\n";
-    for (const auto& [k, a] : by_stage) {
-      std::cout << std::left << std::setw(34) << k.substr(0, 33) << std::setw(10)
-                << a.backend.substr(0, 9) << std::right << std::setw(10) << a.calls
-                << std::setw(10) << std::setprecision(3)
-                << (a.calls ? a.total / static_cast<double>(a.calls) : 0.0) << std::setw(10)
-                << a.max << "\n";
-    }
-  }
-  std::cout << "end-to-end avg " << std::setprecision(2) << rep.end_to_end.avg_ms << " ms  p50 "
-            << rep.end_to_end.p50_ms << "  p95 " << rep.end_to_end.p95_ms << "  max "
-            << rep.end_to_end.max_ms << " ms\n";
+  // Neat's own measured-window report: throughput, latency when samples were collected, and
+  // per-stage timing for the model picked with --measure.
+  std::cout << rep.to_text() << "\n";
 }
 
 void print_usage() {
@@ -987,7 +964,7 @@ void print_usage() {
             << "  --source-only            decode every stream, run no model\n"
             << "  --inflight <per>,<total> override max_inflight_per_stream/_total\n"
             << "  --internal-queue <n>     GraphOptions internal_queue_depth (-1 = default)\n"
-            << "  --measure [m]            Neat in-graph timing; plugin trace on model m\n"
+            << "  --measure [m]            Neat in-graph timing; stage detail on model m\n"
             << "  --verbose                unmute the Neat model planner\n"
             << "  --print-backend          dump the generated GStreamer backend\n";
 }
@@ -1353,8 +1330,7 @@ int main(int argc, char** argv) {
             ? start + std::chrono::milliseconds(static_cast<long>(cfg.report_interval_s * 1000.0))
             : Clock::time_point::max();
 
-    // Only one LTTng collector may be active per process, so plugin tracing goes on one model;
-    // the others report end-to-end only.
+    // Every model reports its measured window; stage diagnostics go on the --measure model only.
     std::array<std::optional<neat::MeasureScope>, kNumModels> scopes;
     if (cfg.measure && !cfg.source_only) {
       for (int m = 0; m < kNumModels; ++m) {
@@ -1363,8 +1339,8 @@ int main(int argc, char** argv) {
         neat::MeasureOptions mo;
         mo.duration_ms = static_cast<int>(cfg.duration_s > 0 ? cfg.duration_s * 1000.0 : 30000.0);
         mo.warmup_ms = 3000;
-        mo.include_plugin_latency = (m == cfg.measure_model);
-        mo.include_edge_latency = false;
+        // Per-stage diagnostics on the chosen model only. (Plugin latency is deprecated in Neat.)
+        mo.include_edge_latency = (m == cfg.measure_model);
         mo.title = "16stream4model / " + cfg.models[static_cast<std::size_t>(m)].name;
         mo.input = std::to_string(mr.stream_count) + " RTSP streams";
         scopes[static_cast<std::size_t>(m)].emplace(mr.run.start_measurement(mo));

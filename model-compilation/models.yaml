@@ -28,7 +28,6 @@
 # valid-looking archive with meaningless activation ranges -- see MODEL-COMPILATION.md.
 
 project:
-  default_device: modalix
   default_opset: 17
   default_calib_method: mse
   default_requant_mode: sima
@@ -88,8 +87,8 @@ models:
     input_shape: [1, 3, 224, 224]
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
-    # bf16, not INT8: with Model Compiler 2.1.3 the INT8 build compiles cleanly but loses most of
-    # its accuracy (e.g. COCO 000000000885: racket 0.20 INT8 vs 0.73 FP32); bf16 matches FP32 (0.75).
+    # bf16 matches FP32 (COCO 000000000885: racket 0.75 vs 0.73). With Model Compiler 3.0.0 INT8 is
+    # close as well (0.78); earlier compiler releases lost most of it in INT8 (0.20).
     precision: bf16
     enabled: true
 
@@ -118,24 +117,6 @@ models:
     task: detection
     family: ultralytics
     arch: yolov8s.pt
-    source: https://docs.ultralytics.com/models/yolov8/
-    license_note: Ultralytics license must be reviewed before redistribution.
-    surgery: yolo_ultralytics
-    decode: yolo_raw_heads
-    box_decode: YoloV8
-    box_decode_option: GroupedByRoleLogit
-    input_name: images
-    output_names: [bbox_0, bbox_1, bbox_2, class_logit_0, class_logit_1, class_logit_2]
-    input_shape: [1, 3, 640, 640]
-    mean: [0.0, 0.0, 0.0]
-    std: [1.0, 1.0, 1.0]
-    precision: int8
-    enabled: true
-
-  - id: yolov8l
-    task: detection
-    family: ultralytics
-    arch: yolov8l.pt
     source: https://docs.ultralytics.com/models/yolov8/
     license_note: Ultralytics license must be reviewed before redistribution.
     surgery: yolo_ultralytics

@@ -51,7 +51,7 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8m
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8m
 cd ../..
 ```
 

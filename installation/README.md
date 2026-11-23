@@ -46,7 +46,7 @@ curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 **On the host**, run:
 
 ```bash
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@release-3.0
 ```
 
 This is the default install for current boards. It is one continuous flow — there is no separate
@@ -61,8 +61,8 @@ setup command to run afterwards.
    copy files by hand.
 5. Installs Neat Core on the SDK container, and on the paired DevKit if you paired one.
 
-`release-2.1` tracks the latest patch in the 2.1 series: **SDK 2.1.3.1** (Neat Library 0.5.0), which
-pairs with **DevKit software 2.1.3**. The first install takes several minutes.
+`release-3.0` tracks the latest patch in the 3.0 series: **SDK 3.0.0.2** (Neat Library 0.6.2), which
+pairs with **DevKit software 3.0.1**. The first install takes several minutes.
 
 **Not sure which SDK your board needs?** Check what it's running with `cat /etc/buildinfo` on the
 DevKit, then look it up in the
@@ -169,10 +169,10 @@ files, and runtime logs. See [neat_insight.md](neat_insight.md).
 
 Every prompt from Section 3, in order, as it actually appears.
 
-**Install starts.** `sima-cli neat install sdk@release-2.1` validates the release metadata and
+**Install starts.** `sima-cli neat install sdk@release-3.0` validates the release metadata and
 downloads the SDK image.
 
-<img src="images/linux/neat-install.png" alt="Terminal running sima-cli neat install sdk@release-2.1" width="600">
+<img src="images/linux/neat-install.png" alt="Terminal running sima-cli neat install sdk@release-3.0" width="600">
 
 **Prompt 1 — pair with a DevKit.** Setup starts automatically once the image is local. Press `y`,
 then type the DevKit IP inline.
@@ -249,12 +249,14 @@ Confirm the SiMa skills are picked up ("List available skills").
 
 <br>
 
-Only needed to compile or quantize ONNX / GenAI models for Modalix. Match the architecture
-(amd64/arm64) and version to your board and SDK.
+Only needed to compile or quantize ONNX / GenAI models for Modalix. SDK setup offers to install
+it; if you skipped that, install it later **inside the SDK shell** (`uname -m`: `x86_64` → `amd64`,
+`aarch64` → `arm64`). It downloads about 5 GB and needs about 9 GB of disk:
 
 ```bash
-# amd64, v2.1.3 (matches DevKit software 2.1.3)
-sima-cli install -v 2.1.3 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v3.0.0
+source ~/.bashrc
+activate-model-compiler
 ```
 
 References:

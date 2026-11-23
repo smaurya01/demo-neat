@@ -174,7 +174,7 @@ so the INT8 calibration is sound.
 
 An earlier surgery rebuilt the YOLOv8/YOLO11 DFL in-graph as `Split(64→16×4)→Softmax→Conv(arange)→Concat`,
 so every detector exposed 4-channel l/t/r/b heads and decoded as `YoloV26`. It compiled cleanly and
-decoded correctly on Neat 0.4.0. On **Neat 0.5.0** the `YoloV26` decoder skips NMS (YOLO26 heads are
+decoded correctly on an earlier Neat release. The current `YoloV26` decoder skips NMS (YOLO26 heads are
 one-to-one by design), and a YOLO11 head is one-to-many: `yolo11n` returned 67 / 38 / 100 boxes on three
 COCO images where 9 / 5 / 16 are correct, mostly stacks of near-identical copies. A check
 that only counts boxes still reports PASS. The fix is to keep the

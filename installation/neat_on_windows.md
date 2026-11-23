@@ -35,9 +35,7 @@ Primary references:
   - [9.3 Run guided setup](#93-run-guided-setup)
 - [10. (Optional) Install the Model Compiler](#10-optional-install-the-model-compiler)
   - [10.1 Install](#101-install)
-  - [10.2 Authorize the device login](#102-authorize-the-device-login)
-  - [10.3 If it reports missing system packages](#103-if-it-reports-missing-system-packages)
-  - [10.4 Activate](#104-activate)
+  - [10.2 Activate it](#102-activate-it)
 - [11. Open the SDK in VS Code, then build and run](#11-open-the-sdk-in-vs-code-then-build-and-run)
 - [12. Troubleshooting (Windows-specific)](#12-troubleshooting-windows-specific)
 - [References](#references)
@@ -305,19 +303,19 @@ Authenticate with your **SiMa Developer Portal** credentials when prompted.
 
 ## 8. Install the NEAT SDK
 
-Install the current NEAT SDK 2.1 release channel. From the **Ubuntu terminal**, this **single command** downloads the SDK container image and then automatically starts SDK setup, including the DevKit pairing prompt covered in [Step 9](#9-pair-with-the-modalix-devkit):
+Install the current NEAT SDK 3.0 release channel. From the **Ubuntu terminal**, this **single command** downloads the SDK container image and then automatically starts SDK setup, including the DevKit pairing prompt covered in [Step 9](#9-pair-with-the-modalix-devkit):
 
 ```bash
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@release-3.0
 ```
 
-`release-2.1` tracks the latest NEAT SDK patch release in the 2.1 series. The current release is **Neat SDK 2.1.3.1** (Neat Library 0.5.0), which is compatible with **DevKit software 2.1.3**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
+`release-3.0` tracks the latest NEAT SDK patch release in the 3.0 series. The current release is **Neat SDK 3.0.0.2** (Neat Library 0.6.2), which is compatible with **DevKit software 3.0.1**. Confirm your board software first with `cat /etc/buildinfo` on the DevKit.
 
 > **If this fails with a Docker permission error** — `Docker daemon is running, but this user lacks permission to access it` (cannot access `/var/run/docker.sock`) — your shell has not picked up `docker` group membership yet. `sima-cli` prints the exact fix: run `newgrp docker` (or log out and back in), then re-run the install:
 >
 > ```bash
 > newgrp docker
-> sima-cli neat install sdk@release-2.1
+> sima-cli neat install sdk@release-3.0
 > ```
 >
 > If `newgrp` itself is missing (`Command 'newgrp' not found`, common on newer Ubuntu), install it first, then retry:
@@ -325,7 +323,7 @@ sima-cli neat install sdk@release-2.1
 > ```bash
 > sudo apt install util-linux-extra
 > newgrp docker
-> sima-cli neat install sdk@release-2.1
+> sima-cli neat install sdk@release-3.0
 > ```
 >
 > ![sima-cli install — Docker permission error and the newgrp docker fix](images/windows/docker-permission-newgrp.png)
@@ -389,7 +387,7 @@ ssh sima@<devkit-ip>   # optional connectivity check
 
 ### 9.3 Run guided setup
 
-The `sima-cli neat install sdk@release-2.1` command in [Step 8](#8-install-the-neat-sdk) starts this guided setup automatically once the image is downloaded. It asks whether you want to pair with a DevKit and takes the **DevKit IP inline** at the prompt — you do not pass it as a flag:
+The `sima-cli neat install sdk@release-3.0` command in [Step 8](#8-install-the-neat-sdk) starts this guided setup automatically once the image is downloaded. It asks whether you want to pair with a DevKit and takes the **DevKit IP inline** at the prompt — you do not pass it as a flag:
 
 ```text
 Do you want to pair this SDK with a DevKit now? [y/N]: y
@@ -414,7 +412,7 @@ Walk through the prompts (your DevKit IP, workspace path, and container name wil
 
    ![System requirements report](images/windows/Install_2.png)
 
-3. **Select the SDK image.** The detected image (e.g. `ghcr.io-sima-neat-sdk-v2.1-latest`) is already marked `[x]`. Use `Space` to toggle if needed, then press `Enter` to confirm.
+3. **Select the SDK image.** The detected SDK image is already marked `[x]`. Use `Space` to toggle if needed, then press `Enter` to confirm.
 
    ![SDK image selection](images/windows/Install_3.png)
 
@@ -447,41 +445,20 @@ Install only if you need to compile/quantize ONNX or GenAI models for Modalix.
 
 ### 10.1 Install
 
-From the Ubuntu terminal (version `2.1.3` shown — match it to your board/SDK):
+SDK setup offers to install the Model Compiler. If you skipped it, install it later **inside the
+SDK shell** (not in the Ubuntu terminal: Model Compiler 3.0.0 runs standalone only on Ubuntu 24.04,
+and the SDK container provides that environment). This guide targets x86_64, so the build is
+`amd64`. It downloads about 5 GB and needs about 9 GB of disk:
 
 ```bash
-sima-cli install -v 2.1.3 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v3.0.0
 ```
 
-This guide targets Windows 11 on x86_64 (section 1.2), so the build is always `amd64`.
-
-### 10.2 Authorize the device login
-
-The installer needs a one-time device login. It tries to open a browser, but in WSL the auto-open usually fails with `gio: ... : Operation not supported`. **Copy the printed `https://auth.sima.ai/activate?user_code=XXXX-XXXX` link into a browser on Windows, sign in, and return to the terminal** — `sima-cli` continues automatically once authorized.
-
-![Model Compiler install — device login link](images/windows/model-compiler-device-login.png)
-
-After you sign in, the terminal greets you and downloads the package (~180 MB download; the installer needs about 20 GB of disk):
-
-![Model Compiler install — signed in and downloading](images/windows/model-compiler-download.png)
-
-### 10.3 If it reports missing system packages
-
-If the installer stops with `Missing required system packages` and `Installation failed with return code: 1`, it prints the exact command to fix it. **Run the recommended command, then rerun the installer:**
+### 10.2 Activate it
 
 ```bash
-sudo apt-get update && sudo apt-get install -y cmake libbz2-dev libffi-dev libllvm18 liblzma-dev libopenblas0-pthread libreadline-dev libsqlite3-dev libssl-dev tk-dev
-sima-cli install -v 2.1.3 tools/model-compiler/amd64   # rerun the same install command
-```
-
-![Model Compiler install — missing packages and the recommended apt command](images/windows/model-compiler-missing-packages.png)
-
-> Copy the package list from your own terminal output rather than relying on this snippet — it can change between SDK versions.
-
-### 10.4 Activate
-
-```bash
-activate-model-compiler
+source ~/.bashrc
+activate-model-compiler      # deactivate-model-compiler returns to the default SDK shell
 ```
 
 Reference: https://developer.sima.ai/software/compile-a-model/
