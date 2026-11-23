@@ -11,7 +11,7 @@
 | Board on the network with internet | [5](05-internet-sharing.md) · [6](06-connect-to-router.md) |
 | `sima-cli` installed and logged in | [7](07-install-sima-cli.md) |
 | NVMe mounted at `/media/nvme` | [8](08-mount-nvme.md) |
-| Board software 3.0.0 | [9](09-check-and-update-image.md) |
+| Board software 3.0.1 | [9](09-check-and-update-image.md) |
 | `pyneat` installed | [11](11-install-pyneat.md) |
 
 ---
@@ -494,7 +494,7 @@ inference itself. That is normal for a script like this, not a problem to fix.
 | Next step | Where |
 |---|---|
 | The same detector as a packaged app, with C++ source and profiling | `/media/nvme/neat/prebuilt-apps/examples/object-detection/yolo26-object-detector/` |
-| Other ready-to-run examples | `sima-cli neat install apps@v0.6.0` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
+| Other ready-to-run examples | `sima-cli neat install apps@v0.6.2` ([Chapter 11](11-install-pyneat.md)), then browse `/media/nvme/neat/prebuilt-apps/examples/` |
 | Run a language model on the board | [Chapter 13](13-llima.md) |
 | The full tutorial series | [Tutorials](https://developer.sima.ai/software/tutorials) |
 | Compile your own ONNX model | [Model Compiler](https://developer.sima.ai/software/getting-started/) |

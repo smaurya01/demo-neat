@@ -87,8 +87,7 @@ class Config:
     # summary at exit.
     profile_interval: float = 5.0
     print_backend: bool = False
-    # Decoder-admission lease inputs (Neat 0.3.0). Only take effect because every
-    # decoder can carry them. Inert unless a lease is granted (2 streams do not need one).
+    # Per-stream hardware decoder buffer pools and tuning profile.
     decoder_buffers: int = 16
     decoder_input_buffers: int = 2
     decoder_tuning: str = "auto"
@@ -504,11 +503,8 @@ def make_source_graph(cfg: Config, stream_id: int, url: str, width: int, height:
 
     Deliberately one graph (and one Run) PER STREAM rather than one combined graph.
 
-    A combined graph is what unlocks decoder admission, and that matters at high stream
-    counts -- but only at high stream counts. Measured on this board with bare
-    gst-launch: un-admitted 720p decode runs at 60 fps each for 1 OR 2 concurrent
-    streams, and only collapses at 4 (43 fps each). This app runs two streams, so it
-    sits comfortably inside the un-admitted budget.
+    Two 720p60 streams decode at the full rate this way, so a combined graph buys nothing
+    here.
 
     Combining them here actively breaks it: both streams use structurally identical
     rtsp -> decode chains, and two `graph.connect(source_i, decoder_i)` calls inside one
@@ -528,7 +524,7 @@ def make_source_graph(cfg: Config, stream_id: int, url: str, width: int, height:
     enc.tcp = cfg.tcp
     enc.drop_on_latency = True
     enc.insert_queue = True
-    enc.h264_payload_type = 96
+    enc.payload_type = 96
     # Derive caps from the stream. Do NOT pin an integer framerate: the reference source
     # is 59.94 fps (60000/1001) and pinning 60/1 makes rtspsrc fail negotiation outright
     # ("streaming stopped, reason not-negotiated (-4)").

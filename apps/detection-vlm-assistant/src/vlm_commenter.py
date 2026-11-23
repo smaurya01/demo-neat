@@ -7,9 +7,10 @@ called. Two modes:
 * ``dry_run=True``  -- log the selected crop (bbox, shape, class, score) and the exact
   prompt that WOULD be sent to the VLM. Nothing is loaded, nothing is inferred. This is
   how the detection leg is validated on the DevKit without touching the VLM.
-* ``dry_run=False`` -- lazily construct ``pyneat.genai.VisionLanguageModel`` and run a
-  ``GenerationRequest`` per selected crop, from a bounded background worker so the
-  detection loop never blocks on multi-second VLM latency.
+* ``dry_run=False`` -- load ``pyneat.genai.VisionLanguageModel`` in a separate process and
+  run a ``GenerationRequest`` per selected crop, fed by a bounded background worker so the
+  detection loop never blocks on multi-second VLM latency. The VLM cannot share a
+  process with the detector's Neat model graph (see ``_vlm_server``).
 
 Why trigger-based multimodal: the detector is cheap and always-on (~37 fps on the
 2-stream YOLO11 app); the VLM is expensive (seconds per call). Running the VLM per frame
@@ -36,6 +37,45 @@ from typing import Callable
 # imports cleanly off-board (for py_compile / --help) where those packages are absent.
 
 
+def _vlm_server(conn, model_dir: str) -> None:
+    """Child-process entry point: own the VLM and answer requests sent over ``conn``.
+
+    The VLM must live in its own process. On Neat 0.6.0 a ``VisionLanguageModel`` and a
+    Neat model graph cannot share one process: whichever starts second fails in the MLA
+    runtime (``Failed to connect MLA-RT``, or a fatal ``cannot respecify argc/argv``).
+    Requests are ``(crop_rgb, prompt, max_new_tokens)``; ``None`` stops the server.
+    """
+    import pyneat as neat
+
+    try:
+        started = time.monotonic()
+        model = neat.genai.VisionLanguageModel(model_dir)
+        conn.send(("ready", f"loaded {model.model_id()} accepts_image={model.accepts_image()} "
+                            f"({time.monotonic() - started:.1f}s)"))
+    except Exception as exc:  # noqa: BLE001 - reported to the parent
+        conn.send(("error", f"{type(exc).__name__}: {exc}"))
+        return
+    while True:
+        try:
+            item = conn.recv()
+        except EOFError:
+            break
+        if item is None:
+            break
+        crop_rgb, prompt, max_new_tokens = item
+        try:
+            request = neat.genai.GenerationRequest()
+            request.prompt = prompt
+            request.images = [crop_rgb]
+            request.max_new_tokens = max_new_tokens
+            result = model.run(request)
+            m = result.metrics
+            conn.send(("ok", (result.text, m.generated_tokens, m.tokens_per_second,
+                              m.time_to_first_token_s)))
+        except Exception as exc:  # noqa: BLE001 - keep the server alive
+            conn.send(("error", f"{type(exc).__name__}: {exc}"))
+
+
 @dataclass
 class _Trigger:
     """One crop selected for a VLM call."""
@@ -58,24 +98,57 @@ class VlmCommenter:
         # Dedup memory: for each recently-triggered object we remember its class,
         # normalized-center box, and when it last fired.
         self._recent: list[dict] = []
-        self._model = None   # VisionLanguageModel (real mode only); see preload()
+        self._proc = None    # child process that owns the VLM (real mode only); see preload()
+        self._conn = None    # parent end of the pipe to that process
         self.completed = 0   # captions actually produced (for the run summary)
 
     # -- lifecycle ---------------------------------------------------------- #
     def preload(self) -> None:
-        """Construct the VLM now, on the caller's thread, before streaming starts.
+        """Start the VLM process and wait for the model to load, before streaming starts.
 
-        This is not an optimisation, it is a correctness fix. ``run()`` and
-        ``stream()`` are bound with ``nb::call_guard<nb::gil_scoped_release>``, but
-        the ``VisionLanguageModel`` **constructor** is not -- so building it holds
-        the GIL for the whole ~10 s weight load. Doing that lazily from the worker
-        thread froze the frame loop mid-stream, which back-pressured the RTSP
-        pipeline until the session died. Pay the 10 s at startup instead, where
-        blocking is free.
+        The VLM runs in a separate process (see ``_vlm_server``), started with ``spawn`` so
+        it inherits nothing from this one. Waiting here pays the ~10 s weight load at
+        startup, where blocking is free, instead of mid-stream.
         """
-        if self.dry_run or self._model is not None:
+        if self.dry_run or self._proc is not None:
             return
-        self._ensure_model()
+        import multiprocessing as mp
+
+        ctx = mp.get_context("spawn")
+        self._conn, child = ctx.Pipe()
+        self._proc = ctx.Process(target=_vlm_server, args=(child, self.cfg.vlm_model_dir),
+                                 name="vlm", daemon=True)
+        self._proc.start()
+        child.close()
+        if not self._conn.poll(self._load_timeout_s):
+            self._stop_process()
+            raise RuntimeError(f"VLM did not load within {self._load_timeout_s:.0f} s: "
+                               f"{self.cfg.vlm_model_dir}")
+        try:
+            status, detail = self._conn.recv()
+        except EOFError:
+            status, detail = "error", "the VLM process exited while loading"
+        if status != "ready":
+            self._stop_process()
+            raise RuntimeError(f"VLM failed to load from {self.cfg.vlm_model_dir}: {detail}")
+        print(f"vlm: {detail}", flush=True)
+
+    _load_timeout_s = 180.0
+
+    def _stop_process(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            self._conn.send(None)
+        except (BrokenPipeError, OSError):
+            pass
+        self._proc.join(timeout=10.0)
+        if self._proc.is_alive():
+            self._proc.terminate()
+            self._proc.join(timeout=5.0)
+        self._conn.close()
+        self._proc = None
+        self._conn = None
 
     def start(self) -> None:
         if not self.started:
@@ -90,8 +163,9 @@ class VlmCommenter:
             # still inside a C++ MLA call.
             self.worker.join(timeout=self._join_timeout_s())
             if self.worker.is_alive():
-                print("vlm: worker still busy at shutdown; leaving it to the daemon exit",
+                print("vlm: worker still busy at shutdown; stopping the VLM process",
                       flush=True)
+        self._stop_process()
 
     def _join_timeout_s(self) -> float:
         if self.dry_run:
@@ -258,44 +332,35 @@ class VlmCommenter:
             flush=True,
         )
 
-    def _ensure_model(self):
-        import pyneat as neat
-
-        if self._model is None:
-            # One VLM handle for the process; holds LM weights + vision encoder resident.
-            started = time.monotonic()
-            self._model = neat.genai.VisionLanguageModel(self.cfg.vlm_model_dir)
-            print(f"vlm: loaded {self._model.model_id()} "
-                  f"accepts_image={self._model.accepts_image()} "
-                  f"({time.monotonic() - started:.1f}s)", flush=True)
-        return self._model
-
     def _call_vlm(self, trigger: _Trigger) -> None:
         # Lazy imports so dry-run / off-board use never needs these.
         import cv2
         import numpy as np
-        import pyneat as neat
 
-        model = self._ensure_model()
+        if self._proc is None:
+            self.preload()
+        if not self._proc.is_alive():
+            raise RuntimeError("the VLM process has exited")
 
         # CRITICAL colour correctness: VLM images must be uint8 HWC *RGB*. Our crop is
         # OpenCV-native BGR, so convert here. Skipping this silently feeds the VLM
         # channel-swapped images and quietly degrades every answer.
         crop_rgb = np.ascontiguousarray(cv2.cvtColor(trigger.crop_bgr, cv2.COLOR_BGR2RGB))
 
-        request = neat.genai.GenerationRequest()
-        request.prompt = self._prompt_for(trigger.label)
-        request.images = [crop_rgb]
-        request.max_new_tokens = self.cfg.vlm_max_new_tokens
-
-        result = model.run(request)
+        self._conn.send((crop_rgb, self._prompt_for(trigger.label), self.cfg.vlm_max_new_tokens))
+        timeout = self._join_timeout_s() + 30.0
+        if not self._conn.poll(timeout):
+            raise RuntimeError(f"no VLM answer within {timeout:.0f} s")
+        status, payload = self._conn.recv()
+        if status != "ok":
+            raise RuntimeError(payload)
+        text, tokens, tok_per_s, ttft = payload
         self.completed += 1
-        metrics = result.metrics
         print(
             f"vlm[{trigger.label} score={trigger.score:.2f} bbox={trigger.bbox}]: "
-            f"{result.text.strip()}  "
-            f"({metrics.generated_tokens} tok, "
-            f"{metrics.tokens_per_second:.1f} tok/s, "
-            f"ttft={metrics.time_to_first_token_s:.2f}s)",
+            f"{text.strip()}  "
+            f"({tokens} tok, "
+            f"{tok_per_s:.1f} tok/s, "
+            f"ttft={ttft:.2f}s)",
             flush=True,
         )

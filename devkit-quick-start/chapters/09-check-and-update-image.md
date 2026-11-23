@@ -42,7 +42,8 @@ cat /etc/buildinfo | grep DISTRO
 
 | Output | Meaning |
 |---|---|
-| `DISTRO = eLxr`, `DISTRO_VERSION = 3.0.0` | Current Debian 13-based runtime. Everything in this guide applies. |
+| `DISTRO = eLxr`, `DISTRO_VERSION = 3.0.1` | Current Debian 13-based runtime. Everything in this guide applies. |
+| `DISTRO = eLxr`, `DISTRO_VERSION = 3.0.0` | Same runtime, previous patch. Bring it to 3.0.1 with `sima-cli update` — see [Update the board within a release](#update-the-board-within-a-release). |
 | `DISTRO = eLxr`, `DISTRO_VERSION = 2.1.x` | Previous Debian 12-based runtime. Move it to 3.0.0 — see [Upgrade from 2.1.3 to 3.0.0](#upgrade-from-213-to-300). |
 | `DISTRO = poky` | Legacy **Yocto** image. `sima-cli update` will **not** carry you across to eLxr — see [Special cases](#special-cases). |
 
@@ -54,7 +55,8 @@ Units shipped before mid-December 2025 are typically Yocto.
 
 | DevKit software | Neat SDK | Neat Library | Neat Apps | Model Compiler |
 |---|---|---|---|---|
-| **3.0.0** ← this guide | 3.0.0.0 | 0.6.0 | 0.6.0 | 3.0.0 |
+| **3.0.1** ← this guide | 3.0.0.2 | 0.6.2 | 0.6.2 | 3.0.0 |
+| 3.0.0 | 3.0.0.0 | 0.6.0 | 0.6.0 | 3.0.0 |
 | 2.1.3 | 2.1.3.1 | 0.5.0 | 0.5.1 | 2.1.3.1 |
 | 2.1.3 | 2.1.3.0 | 0.4.0 | 0.5.0 | 2.1.3 |
 | 2.1.2 | 2.1.2.3 | — | — | 2.1.2 |

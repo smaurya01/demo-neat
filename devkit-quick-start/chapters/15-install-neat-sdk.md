@@ -63,7 +63,7 @@ There is no separate setup step afterwards — it is one continuous flow that:
 5. Installs Neat Core into the container, and onto the paired DevKit.
 
 `release-3.0` tracks the latest patch in the 3.0 series. For the set this guide uses — board
-software **3.0.0** — that is SDK **3.0.0.0**, with Neat Library 0.6.0; check it against the table in
+software **3.0.1** — that is SDK **3.0.0.2**, with Neat Library 0.6.2; check it against the table in
 [Chapter 9](09-check-and-update-image.md#which-version-should-you-be-on). The board, the SDK and
 the Neat Library move as a set. To install one exact version instead of the latest patch, use its
 tag — the `v` is required:
@@ -71,7 +71,7 @@ tag — the `v` is required:
 *On the host*
 
 ```bash
-sima-cli neat install sdk@v3.0.0.0
+sima-cli neat install sdk@v3.0.0.2
 ```
 
 A board still on 2.1.3 needs SDK 2.1.3.1 (`sdk@v2.1.3.1`) and the `neat@0.5.0` tag of this

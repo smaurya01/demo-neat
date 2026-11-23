@@ -673,9 +673,10 @@ def make_nv12_input_options(width: int, height: int, fps: int):
     input_opt.caps_override = (
         f"video/x-raw,format=NV12,width={width},height={height},framerate={max(1, fps)}/1"
     )
-    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
-    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
-    input_opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
+    # Auto, not SystemMemory: the frames are CPU copies, and Neat 0.6.0's on-device
+    # preprocess rejects a system-memory input (neatkernelrunner.invalid_binding).
+    # Auto lets Neat move each frame into device memory before the model.
+    input_opt.memory_policy = pyneat.InputMemoryPolicy.Auto
     return input_opt
 
 

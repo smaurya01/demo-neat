@@ -2,12 +2,15 @@
 
 How to compile a model so one MLA call processes **N images**, check it, and profile it on the
 DevKit against the batch-1 build on 50+ real images. The worked example is `yolo26m` in INT8 at
-batch 6, measured on Neat 0.5.0 / SDK 2.1.3.1.
+batch 6. The headline numbers below were checked on Neat 0.6.2 / SDK 3.0.0.2; the detailed profile
+and accuracy tables in sections 7 and 8 come from an earlier Neat release and were not re-measured.
 
 **Read the result before you start:**
-- For `yolo26m`, batch 6 was **slower per image and less accurate** than batch 1. For `yolo11n` it
-  was slower too (accuracy not measured).
-- Neat 0.5.0 cannot box-decode a batched archive on the device.
+- For `yolo26m`, batch 6 is **slower per image and less accurate** than batch 1. On Neat 0.6.2,
+  `Model.benchmark()` gives 220 img/s at batch 1 (7.8 ms per call) against 167 img/s at batch 6
+  (48.5 ms per 6-image call). For `yolo11n` batch 6 was slower too (accuracy not measured).
+- Neat 0.6.2 cannot box-decode a batched archive on the device: the image route (Neat preprocess +
+  box decode) is rejected when the model is built.
 
 The flow below is the way to find out whether batching pays off for *your* model.
 
@@ -20,7 +23,7 @@ The flow below is the way to find out whether batching pays off for *your* model
 - [5. Profile on 50+ images](#5-profile-on-50-images)
 - [6. Benchmark with `model-benchmark`](#6-benchmark-with-model-benchmark)
 - [7. Results: `yolo26m` INT8, batch 1 vs batch 6](#7-results-yolo26m-int8-batch-1-vs-batch-6)
-- [8. What Neat 0.5.0 can do with a batched archive](#8-what-neat-050-can-do-with-a-batched-archive)
+- [8. What Neat can do with a batched archive](#8-what-neat-can-do-with-a-batched-archive)
 
 ---
 
@@ -139,7 +142,7 @@ all archives: one .elf, zero .so
   | `000000001268` | 9/9 | 9/9 |
   | `000000001296` | 6/6 | **3/6** |
 
-`test_box_decode.py` cannot check a batched build (see [section 8](#8-what-neat-050-can-do-with-a-batched-archive)) and
+`test_box_decode.py` cannot check a batched build (see [section 8](#8-what-neat-can-do-with-a-batched-archive)) and
 says so instead of failing.
 
 ## 5. Profile on 50+ images
@@ -211,7 +214,7 @@ dk /workspace/apps/examples/benchmarking/model-benchmark/src/python/main.py \
 ## 7. Results: `yolo26m` INT8, batch 1 vs batch 6
 
 **Setup:**
-- Board: DevKit (Modalix), Neat 0.5.0.
+- Board: DevKit (Modalix), an earlier Neat release (see the note at the top).
 - Images: 60 real 1280×720 frames, 15 from each of four clips: street, highway, parking garage, gym.
 - Settings: score > 0.25, top 100.
 
@@ -258,24 +261,24 @@ call (section 8).
 1. **Batch 6 lowers device throughput.** Pipelined, batch 6 reaches 155 frames/s against 188–191
    for batch 1, and every frame waits for five others.
 2. **The image route is the fastest way in.** The EV74 does resize, letterbox and quantize in
-   2.55 ms; numpy on the A65 needs 29 ms to letterbox and normalize, and the EV74 still quantizes. Batch N cannot use this route on
-   Neat 0.5.0.
+   2.55 ms; numpy on the A65 needs 29 ms to letterbox and normalize, and the EV74 still quantizes.
+   Batch N cannot use this route (section 8).
 3. **The host, not the device, limits a single stream.** JPEG decode and encode take 43 ms of the
    56 ms. A camera app replaces both with the hardware video decoder and encoder.
 4. **Batch 6 is less accurate** (section 4).
 
-**Recommendation for Neat 0.5.0:**
+**Recommendation:**
 - Use **batch 1** on the image route, with several frames in flight (`runner.push` / `runner.pull`).
 - Re-measure a batched build when Neat supports batched preprocessing and box decode, using
   sections 4 and 5.
 
-## 8. What Neat 0.5.0 can do with a batched archive
+## 8. What Neat can do with a batched archive
 
 | | batch 1 | batch N |
 |---|---|---|
 | `Model.compiled_batch_size()` | 1 | N |
 | Tensor route (raw heads, `Model.benchmark()`) | works | works. Input is one `[N,H,W,3]` tensor with `tensor.axis_semantics = [N, H, W, C]`, otherwise it is rejected ("batched packed video must use HWC layout or N/H/W/C axis semantics"). Heads come back `[N, …]`. |
-| Image route (Neat preprocess + box decode) | works | **times out** in the preprocess stage at build |
+| Image route (Neat preprocess + box decode) | works | **rejected at build** on Neat 0.6.2 (`model-managed preproc absorption`) |
 | On-device box decode | one result per image | **one result per call**: the other N−1 images are lost |
 
 `yolo11n` INT8 shows the same speed pattern (`Model.benchmark()`; throughput with frames kept in

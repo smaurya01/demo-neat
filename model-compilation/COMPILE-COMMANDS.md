@@ -214,8 +214,6 @@ dk compile/test_box_decode.py --model-id yolov8s
    ...
 ```
 
-**`yolov8l`:** run the same commands with `--model-id yolov8l`.
-
 > The surgery differs from YOLO11 in two ways that `graph_surgery.py` already handles: the head is
 > at `model.22`, and there is no attention block
 > ([details](MODEL-COMPILATION.md#-yolov8-head-at-model22-no-attention)).
@@ -535,7 +533,7 @@ dk compile/test_box_decode.py --model-id yolo26m
 yolo26m              YoloV26/Auto                 PASS
 ```
 
-(Neat 0.5.0: 17 / 8 / 17 boxes on the three images, with one or two isolated `[WARN]` pairs.)
+(Neat 0.6.2: 17 / 7 / 15 boxes on the three images; an isolated `[WARN]` pair is possible.)
 
 To confirm the archive really is bf16, see [Check which precision you built](PRECISION.md#check-which-precision-you-built).
 For an INT8 build at batch 6, see [`MULTI-BATCH.md`](MULTI-BATCH.md).
@@ -617,10 +615,9 @@ yolox_s              YoloX/Split3Interleaved      PASS
 every archive decodes on-device with its own BoxDecodeType
 ```
 
-(Neat 0.5.0 / SDK 2.1.3.1, all models built in their `models.yaml` precision. `--all` also checks
-`yolov8l`, which is not shown here. Each block above it prints per-image box counts and duplicate
-pairs; a `[WARN]` line for an isolated overlapping pair on a YOLO26 model is expected, see
-[`BOX-DECODE.md`](BOX-DECODE.md).)
+(Neat 0.6.2 / SDK 3.0.0.2, all models built in their `models.yaml` precision. Each block above
+prints per-image box counts and duplicate pairs; a `[WARN]` line for an isolated overlapping pair
+on a YOLO26 model is expected, see [`BOX-DECODE.md`](BOX-DECODE.md).)
 
 ---
 

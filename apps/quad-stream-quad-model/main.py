@@ -26,7 +26,7 @@ version number:
 Get it wrong and the app still runs and still draws boxes — just decoded from the
 wrong channels.
 
-The zoo publishes no yolo26s-pose (only the nano yolo_26n_pose) and no YOLOX, which is
+The zoo publishes no yolo26s-pose (only the nano pose model, yolo_26n) and no YOLOX, which is
 why those two are self-compiled.
 """
 from __future__ import annotations
@@ -121,8 +121,7 @@ class Config:
     bitrate_kbps: int = 4000
     tcp: bool = True
     queue_depth: int = 3
-    # --- decoder admission --- LEASE fields, not GStreamer properties. They only apply because
-    # every stream's decoder lives in ONE graph/Run; Neat skips admission for a single decoder.
+    # --- hardware decoder --- set on each stream's SimaDecode (see make_decoder_graph).
     decoder_buffers: int = 16        # per-stream decoder OUTPUT pool
     decoder_input_buffers: int = 2   # per-stream compressed-INPUT pool
     decoder_tuning: str = "auto"     # auto | default | low-memory | throughput-low-latency
@@ -540,7 +539,7 @@ def make_rtsp_encoded_graph(cfg: Config, spec: StreamSpec):
     enc.tcp = cfg.tcp
     enc.drop_on_latency = cfg.rtsp_drop_on_latency
     enc.insert_queue = True
-    enc.h264_payload_type = 96
+    enc.payload_type = 96
     # With skip_rtsp_probe the configured caps ARE the source contract: pin them on the
     # parser instead of probing each stream at startup.
     enc.auto_caps_from_stream = not cfg.skip_rtsp_probe
@@ -565,8 +564,7 @@ def make_decoder_graph(cfg: Config, spec: StreamSpec):
     dec.dec_width = cfg.width
     dec.dec_height = cfg.height
     dec.dec_fps = cfg.fps
-    # Admission-lease inputs. Setting the equivalent GStreamer property on a lone
-    # un-admitted decoder does nothing useful; the lease is what matters.
+    # Per-stream decoder buffer pools and tuning profile.
     dec.num_buffers = cfg.decoder_buffers
     dec.input_buffers = cfg.decoder_input_buffers
     dec.decoder_tuning = cfg.decoder_tuning
@@ -585,18 +583,7 @@ def make_decoder_graph(cfg: Config, spec: StreamSpec):
 def make_combined_source_graph(cfg: Config, specs):
     """ONE Graph holding every stream's `rtsp -> decode -> Output("frame<i>")` chain.
 
-    This is what unlocks 60 fps per stream and it is not optional at four streams.
-
-    Neat requests a coordinated plan from the decoder daemon (/tmp/dec-admission-v2.sock)
-    ONLY when a single graph contains more than one H.264 decoder. One source graph per
-    stream -- the old layout -- never asks, so each decoder picks an uncoordinated default
-    without zero-copy output. Measured on this board with the C++ twin:
-
-        4 separate un-admitted source Runs   dec 38.5 fps/stream   152 fps aggregate
-        1 shared admitted source Run         dec 60.0 fps/stream   235 fps aggregate
-
-    Verify with SIMA_DECODER_ADMISSION_DEBUG=1 -> "admission_accepted streams=4"; the
-    admitted decoder also gains `zero-copy-output=true` in the backend dump.
+    All four decoders are built in one graph and one Run, the same layout as main.cpp.
 
     The branches are independent -- they share the graph, not any data path -- so each
     stream still pulls its own frames by its own endpoint name.
@@ -662,9 +649,8 @@ def make_model(cfg: Config, spec: StreamSpec):
     return pyneat.Model(spec.model_path, model_options(cfg, spec))
 
 
-# (build_source_graph removed. It built ONE rtsp_decoded_input graph -- and therefore
-# one Run -- PER STREAM, the layout that never gets a decoder-admission lease.
-# Replaced by make_combined_source_graph, matching main.cpp.)
+# (Sources are built by make_combined_source_graph: one graph and one Run for every
+# stream, matching main.cpp.)
 
 
 def build_model_graph(cfg: Config, spec: StreamSpec, w: int, h: int, fps: int):

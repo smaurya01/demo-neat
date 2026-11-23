@@ -9,7 +9,7 @@
 The Neat Library is the runtime that drives the accelerator. Installing it puts two things on the
 board:
 
-- **System packages** — `sima-neat` (the C++ library, `libsima_neat.so.6`), `sima-neat-dev`,
+- **System packages** — `sima-neat` (the C++ library, `libsima_neat.so.7`), `sima-neat-dev`,
   `neat-codecs` and the runtime services underneath them
 - **A Python virtual environment** at `~/pyneat`, containing the `pyneat` module
 
@@ -25,13 +25,13 @@ Log in first if you have not already this session:
 sima-cli login
 ```
 
-Then install the library, pinned to the version that matches board software 3.0.0:
+Then install the library, pinned to the version that matches board software 3.0.1:
 
 *On the board*
 
 ```bash
 cd /media/nvme && mkdir -p neat && cd neat
-sima-cli neat install core@v0.6.0
+sima-cli neat install core@v0.6.2
 ```
 
 > **Paired the board with the SDK already?** [Chapter 15](15-install-neat-sdk.md)'s setup installs
@@ -52,11 +52,11 @@ While you are here, install the example applications too:
 *On the board, in `/media/nvme/neat`*
 
 ```bash
-sima-cli neat install apps@v0.6.0
+sima-cli neat install apps@v0.6.2
 ```
 
-> **Versions are a matched set.** Neat Apps 0.6.0 goes with Neat Library 0.6.0, which goes with
-> board software 3.0.0 and Neat SDK 3.0.0.0. `sima-cli neat install` refuses a Neat Library that
+> **Versions are a matched set.** Neat Apps 0.6.2 goes with Neat Library 0.6.2, which goes with
+> board software 3.0.1 and Neat SDK 3.0.0.2. `sima-cli neat install` refuses a Neat Library that
 > does not match the board software. Mixing them is the usual cause of "it built but it won't run" — see the
 > [compatibility table](09-check-and-update-image.md#which-version-should-you-be-on).
 
@@ -73,13 +73,13 @@ dpkg -l | grep -E 'neat|sima-neat' | awk '{print $2, $3}'
 ```
 
 ```text
-neat-codecs 0.6.0
-neat-codecs-dev 0.6.0
-sima-neat 0.6.0
-sima-neat-dev 0.6.0
+neat-codecs 0.6.2
+neat-codecs-dev 0.6.2
+sima-neat 0.6.2
+sima-neat-dev 0.6.2
 ```
 
-Every Neat package should read `0.6.0`. The C++ library is ABI 6 — applications built against an older Neat Library must be rebuilt:
+Every Neat package should read `0.6.2`. The C++ library is ABI 7 — applications built against an older Neat Library must be rebuilt:
 
 *On the board*
 
@@ -88,8 +88,8 @@ ls /usr/lib/libsima_neat.so.*
 ```
 
 ```text
-/usr/lib/libsima_neat.so.3.0.0
-/usr/lib/libsima_neat.so.6
+/usr/lib/libsima_neat.so.3.0.1
+/usr/lib/libsima_neat.so.7
 ```
 
 Then check the Python side:
@@ -102,7 +102,7 @@ python3 -c "import pyneat; print(pyneat.__version__)"
 ```
 
 ```text
-0.6.0
+0.6.2
 ```
 
 ---

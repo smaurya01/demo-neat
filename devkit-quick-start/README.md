@@ -11,8 +11,8 @@ the way.
 Work through it in order the first time. After that, each chapter stands on its own — jump
 straight to the one you need.
 
-> **Versions referenced throughout:** DevKit software **3.0.0** · Neat SDK (Palette SDK) **3.0.0.0** ·
-> Neat Library **0.6.0** · Neat Apps **0.6.0** · Model Compiler **3.0.0**
+> **Versions referenced throughout:** DevKit software **3.0.1** · Neat SDK (Palette SDK) **3.0.0.2** ·
+> Neat Library **0.6.2** · Neat Apps **0.6.2** · Model Compiler **3.0.0**
 >
 > On DevKit software 2.1.3 with Neat Library 0.5.0? Use the
 > [`neat@0.5.0`](https://github.com/smaurya01/demo-neat/tree/neat@0.5.0) tag of this repository, or

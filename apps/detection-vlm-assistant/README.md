@@ -71,7 +71,7 @@ frame (RTSP NV12 -> BGR, or still image BGR)
   trigger gate (class allow-list + min score + min area) + dedup (IoU/cooldown) + rate limit
         |
         v
-  bounded background VLM worker  ->  pyneat.genai.VisionLanguageModel  ->  caption   <- expensive, gated
+  bounded background VLM worker  ->  VLM process (pyneat.genai.VisionLanguageModel)  ->  caption   <- expensive, gated
 ```
 
 References:
@@ -150,7 +150,7 @@ The two legs are validated differently on purpose:
 - **VLM leg:** needs a deployed VLM. Without one, run in **dry-run** mode: the app logs the
   selected crop and the **exact prompt that WOULD be sent**, and never loads or calls the VLM.
 
-Both legs were run end to end on Neat 0.5.0 (see "Verified" below).
+Both legs were run end to end on Neat 0.6.2 (see "Verified" below).
 
 Dry-run turns on automatically when `--no-vlm` is passed, when `vlm_enabled=false`, or when
 the configured `vlm_model_dir` is missing. This is also how you validate the detection leg
@@ -160,7 +160,7 @@ without a VLM present, and it is genuinely useful for tuning the trigger/prompt.
 
 ## Requirements
 
-Run on the DevKit. `pyneat` 0.5.0, `numpy`, and OpenCV (`cv2`) must be importable there.
+Run on the DevKit. `pyneat` 0.6.2, `numpy`, and OpenCV (`cv2`) must be importable there.
 `/workspace` is NFS-mounted on the board at the same path, so write host-side and run
 board-side — no copying.
 
@@ -176,7 +176,7 @@ cd /path/to/demo-neat/apps/detection-vlm-assistant
 
 ```bash
 cd assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n   # -> yolo_11n_mpk.tar.gz
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11n   # -> yolo_11n_mpk.tar.gz
 cd ../..
 ```
 
@@ -192,7 +192,7 @@ llima list                                             # confirm it is deployed
 
 It lands in `/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4`, which is what
 `vlm_model_dir` in the config points at. Another deployed VLM works too: pull it and point
-`vlm_model_dir` at its directory. `Qwen3-VL-4B-Instruct-GPTQ-a16w4` and the much smaller
+`vlm_model_dir` at its directory. `Qwen3-VL-2B-Instruct-GPTQ-a16w4` and the much smaller
 `LFM2.5-VL-450M-Autoround-a16w4` are alternatives. See
 [`llima/`](../../llima/README.md) for LLiMa itself.
 
@@ -318,20 +318,24 @@ With the shipped config on a 1280×720 30 fps source and the VLM deployed, the s
 
 ```text
 detector=yolo_11n_mpk.tar.gz decode=yolo11 vlm=/media/nvme/llima/models/Qwen3-VL-4B-Instruct-Autoround-a16w4
+vlm: loaded Qwen3-VL-4B-Instruct-Autoround-a16w4 accepts_image=True (8.3s)
 rtsp=<rtsp-url> stream=1280x720@30
 video=udp://<host-ip>:9000 (all boxes white, VLM pick red)
 viewer: gst-launch-1.0 -v udpsrc port=9000 ...
 ```
 
-The first caption loads the VLM (about 10 s) and prints a `vlm: loaded ...` line. After that, a
-60 s run (`dk ./main.py --duration 60`) prints lines like these:
+The VLM loads in its own process before streaming starts (about 8–10 s). A 60 s run
+(`dk ./main.py --duration 60`) then prints lines like these:
 
 ```text
-frame=1020 detections=9 fps=17.72
-vlm[CAR score=0.89 bbox=(261, 402, 650, 533)]: A white sedan with sleek alloy wheels and a modern design is parked beside a silver vehicle, its side profile captured in a street-side security camera shot.  (30 tok, 13.8 tok/s, ttft=0.64s)
-frame=1050 detections=10 fps=17.85
-frame=1080 detections=13 fps=18.02
-done: frames=1082 elapsed=60.1s avg_fps=18.00 vlm_captions=12 reconnects=0
+frame=1440 detections=6 fps=26.27
+vlm[CAR score=0.74 bbox=(1109, 475, 1279, 601)]: The image shows a dark gray SUV with a sleek, modern design, featuring a prominent front grille, sharp headlight contours, and a multi-spoke alloy wheel, likely a high-end model with visible branding on the wheel hub.  (46 tok, 14.2 tok/s, ttft=0.65s)
+frame=1470 detections=11 fps=26.28
+frame=1500 detections=7 fps=26.23
+frame=1530 detections=10 fps=26.20
+vlm[CAR score=0.88 bbox=(225, 393, 854, 613)]: A dark gray SUV with black rims is parked at an intersection, partially obscured by a pole, with its rear hatch open and a red taillight illuminated.  (32 tok, 14.0 tok/s, ttft=0.65s)
+frame=1560 detections=5 fps=26.22
+done: frames=1572 elapsed=60.0s avg_fps=26.20 vlm_captions=12 reconnects=0
 ```
 
 The `fps=` value is the running average since start; it cannot exceed the source rate. Captions,
@@ -404,8 +408,10 @@ every answer. The dry-run log prints the crop shape and reminds you of the conve
 
 <br>
 
-This app calls the VLM **in-process** via `pyneat.genai.VisionLanguageModel` — lowest
-latency, no network hop, one model handle holding LM weights + vision encoder resident.
+This app calls `pyneat.genai.VisionLanguageModel` directly — lowest latency, no network hop,
+one model handle holding LM weights + vision encoder resident. The model lives in a **separate
+process** that the app starts (`src/vlm_commenter.py`): a GenAI model and a Neat model graph cannot
+share one process, and the split also keeps the VLM off the detector's Python thread.
 Use `GenAIServer` (OpenAI-compatible HTTP) instead only when the boundary is a network: a
 browser UI or a separate service that should not link the Neat runtime. The upstream
 [`detection-to-vlm-assistant`](https://github.com/sima-neat/apps/tree/main/examples/genai/detection-to-vlm-assistant)
@@ -420,7 +426,7 @@ uses the HTTP path; see [`llima/05-genai-server`](../../llima/05-genai-server/).
 
 <br>
 
-With the shipped config, Neat 0.5.0, the Model Zoo `yolo_11n` and
+With the shipped config, Neat 0.6.0, the Model Zoo `yolo_11n` and
 `Qwen3-VL-4B-Instruct-Autoround-a16w4`, on a 1280×720 30 fps RTSP source, a 60 s run
 (the shipped config has no time limit, so pass `--duration`):
 
@@ -431,13 +437,13 @@ dk ./main.py --duration 60
 ends with:
 
 ```text
-done: frames=1082 elapsed=60.1s avg_fps=18.00 vlm_captions=12 reconnects=0
+done: frames=1572 elapsed=60.0s avg_fps=26.20 vlm_captions=12 reconnects=0
 ```
 
-- **Detections:** 7–15 per frame, one box per object (`YoloV8` decode, NMS on the device).
-- **VLM:** a caption every 5 s, as configured, at about 13.8 tok/s and 0.6–0.9 s to the first token.
-- **Frame rate:** the VLM shares the MLA, so each caption pauses detection. The average falls as the
-  caption rate rises.
+- **Detections:** 3–11 per frame, one box per object (`YoloV8` decode, NMS on the device).
+- **VLM:** a caption every 5 s, as configured, at about 14 tok/s and 0.6–0.9 s to the first token.
+- **Frame rate:** the VLM shares the MLA with the detector, so the average (26.2 fps here) stays
+  below the 30 fps source and falls as the caption rate rises.
 
 </details>
 

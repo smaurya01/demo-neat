@@ -45,7 +45,7 @@ and `llima pull <model-id>` for any you need.
 | Role | Example model ID |
 | --- | --- |
 | LLM (text) | `Qwen3-4B-Instruct-2507-GPTQ-a16w4` |
-| VLM (image+text) | `Qwen3-VL-4B-Instruct-GPTQ-a16w4` |
+| VLM (image+text) | `Qwen3-VL-4B-Instruct-Autoround-a16w4` |
 | VLM in `02_run_vlm` | `gemma-4-E2B-it-GPTQ-a16w4` |
 | ASR (audio) | `whisper-small-a16w8` |
 
@@ -57,6 +57,9 @@ and `llima` live on the DevKit, not in the SDK container, and so do the models. 
 paired with the board, `/workspace` is NFS-mounted on the board at the same path (check with
 `dk status` in the SDK: its `NFS mount path` line), so you can edit host-side and run board-side
 with no copying. Without the mount, copy this folder to the board first.
+
+`05-genai-server` calls the server with `requests`; install it once on the DevKit with
+`sudo apt install python3-requests`.
 
 Activate the pyneat environment, install Jupyter if needed, and start the notebook server:
 

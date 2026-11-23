@@ -39,7 +39,14 @@ cd model-compilation
   elsewhere: `export SIMA_QUANTIZE_COMPILE=/path/to/quantize_compile.py`.
 - **The DevKit.** The real-image test runs on the DevKit with `dk`
   ([Quick Start, Chapter 16](../devkit-quick-start/chapters/16-devkit-tool-dk.md)). `/workspace` is
-  NFS-mounted there at the same path, so nothing is copied.
+  NFS-mounted there at the same path, so nothing is copied. The test scripts read `models.yaml`,
+  so install the YAML parser on the DevKit once. pyneat's Python environment uses the system
+  packages, so the system package is enough:
+
+  ```bash
+  ssh sima@<devkit-ip>
+  sudo apt install python3-yaml
+  ```
 
 > ⚠️ **Compile one model at a time.** The compiler is memory-hungry; two compiles at once run out of
 > memory.
@@ -48,7 +55,7 @@ cd model-compilation
 
 ## Pick your model
 
-Click a model for its commands and expected output. All of them except `yolov8l` are also in the
+Click a model for its commands and expected output. All of them are also in the
 [prebuilt zip](#download-the-prebuilt-archives).
 
 | Model | Task | Precision |
@@ -57,7 +64,7 @@ Click a model for its commands and expected output. All of them except `yolov8l`
 | [`convnext_tiny`](COMPILE-COMMANDS.md#2-convnext_tiny--classification-no-surgery-bf16) | classification | bf16 |
 | [`densenet169`](COMPILE-COMMANDS.md#3-densenet169--classification-no-surgery) | classification | INT8 |
 | [`efficientnet_v2_s`](COMPILE-COMMANDS.md#4-efficientnet_v2_s--classification-no-surgery-384384-input) | classification | INT8 |
-| [`yolov8s`](COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) / `yolov8l` | detection | INT8 |
+| [`yolov8s`](COMPILE-COMMANDS.md#5-yolov8s--detection-surgery-head-at-model22-no-attention) | detection | INT8 |
 | [`yolo11n`](COMPILE-COMMANDS.md#6-yolo11n--detection-surgery) | detection | INT8 |
 | [`yolo11s`](COMPILE-COMMANDS.md#7-yolo11s--detection-surgery) | detection | INT8 |
 | [`yolo26n`](COMPILE-COMMANDS.md#8-yolo26n--detection-surgery-one-to-one-head-yolov26) | detection | INT8 |
@@ -106,8 +113,8 @@ accurate. A model can compile perfectly and still be wrong; only real images sho
 ## Download the prebuilt archives
 
 > **📦 [models.zip](https://drive.google.com/drive/folders/1t-itiF25pUWF8AEPSEPrCDcpFiVs2phY?usp=sharing)** (475 MB):
-> every model in the [table above](#pick-your-model) except `yolov8l`, built from the upstream
-> weights with these scripts.
+> every model in the [table above](#pick-your-model), built from the upstream weights with these
+> scripts.
 
 Unzip it inside `model-compilation/assets/`:
 
@@ -140,6 +147,7 @@ Two models also have extra builds, each in its own subfolder:
 | --- | --- |
 | `ModuleNotFoundError: ultralytics` | `pip install ultralytics`; it is not in the model-compiler environment |
 | `quantize_compile.py driver was not found` | set `SIMA_QUANTIZE_COMPILE`; see [Setup](#setup) |
+| `ModuleNotFoundError: No module named 'yaml'` from `dk compile/test_*.py` | run `sudo apt install python3-yaml` on the DevKit; see [Setup](#setup) |
 | compiler killed / out of memory | two compiles ran at once. Run one at a time |
 | `[FAIL] ... no _mpk.tar.gz produced` | the compile failed. Read the log `compiler.py` prints: `work/<ID>/reports/compile_<precision>.log` |
 | `so=1` or more, or `A65 : <non-zero>` in the log | part of the graph fell back to the host CPU. See [why surgery is needed](MODEL-COMPILATION.md#why-graph-surgery-is-needed) |
