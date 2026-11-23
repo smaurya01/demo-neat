@@ -52,9 +52,9 @@ One model, four ways of running it:
 
 The model is Ultralytics' published `yolo26s.pt` (10.0 M parameters,
 AGPL-3.0), downloaded by `compile/convert_to_onnx.py`. The bf16 and INT8 archives were compiled from
-it in the Neat SDK 2.1.3 and run on a Modalix DevKit with Neat 0.4.0.
-These numbers have not been re-measured on Neat 0.5.0 / SDK 2.1.3.1. The study decodes on the host,
-so the Neat 0.5.0 `YoloV26` decoder change does not affect it.
+it with an earlier Neat SDK and Model Compiler release and run on a Modalix DevKit.
+These numbers have not been re-measured on Neat 0.6.2 / SDK 3.0.0.2. The study decodes on the host,
+so changes to Neat's on-device decoders do not affect it.
 
 **Dataset:** COCO val2017 — **4,980 images, 36,178 objects** (not counting crowd regions). That is all 5,000 val2017 images
 except the 20 in `assets/calibration/`, which the INT8 build was calibrated on; a model should not be

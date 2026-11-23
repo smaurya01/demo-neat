@@ -71,9 +71,9 @@ packages once from the SDK shell:
 cd /path/to/demo-neat/apps/benchmark
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8m
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n_seg
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8n
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8m
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8n_seg
 cd ../..
 ```
 
@@ -88,7 +88,7 @@ Expected model files:
 ./assets/models/yolo_v8n_seg_mpk.tar.gz
 ```
 
-If your DevKit uses a different platform version, replace `2.1.3` with that release version.
+If your DevKit uses a different platform version, replace `3.0.0` with that release version.
 
 ## Model Assets
 
@@ -155,7 +155,7 @@ dk ./main.py \
 
 ## How To Read The Output
 
-Console output includes:
+The app prints five summary lines:
 
 ```text
 latency_ms=<average model latency>
@@ -165,7 +165,47 @@ energy_joules=<reported benchmark energy, if available>
 report_json=<written report path>
 ```
 
-Each JSON report stores:
+Neat also prints its own benchmark report, with board telemetry read from the Sentinel service.
+This is the YOLOv8n run above (`--frames 1000`) on Neat 0.6.0 / SDK 3.0.0:
+
+```text
+latency_ms=4.633171961538471
+fps=716.1118341231731
+avg_power_watts=11.6875
+energy_joules=16.32077483304056
+report_json=output/yolo_v8n_benchmark.json
+NEAT Benchmark
+Input: synthetic
+Samples: 1000
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 4.63 ms
+Latency window: 10.00 s, 2054 inputs
+FPS:     716.11 inferences/s
+Batch throughput: 716.11 batches/s
+Throughput window: 10.04 s, 7187 inputs
+Power:         11.69 W avg, 11.97 W peak (SoM)
+MLA power:     1.60 W avg, 1.75 W max
+Energy:        16.32 J for 1000 inputs
+Die temp:      56.15 °C
+CPU usage:     19.09 % avg, 21.82 % max
+MLA memory:    71.68 MiB
+EV74 memory:   17.58 MiB
+Linux memory:  820.45 MiB avg, 821.93 MiB max
+Telemetry:     Sentinel main:c15e70ddb9c3, 5 samples
+```
+
+- **Latency** and **FPS** are measured in two separate passes. Each pass runs until it has
+  measured `--frames` inputs **and** at least 10 s have passed, so a run takes about 20 s even
+  with a small `--frames`; the `window` lines show how many inputs each pass actually measured.
+- **Power** is the whole module (SoM); **MLA power** is the accelerator rail alone.
+  **Energy** is for `--frames` inputs.
+- **MLA / EV74 memory** is what the model uses on each processor; **Linux memory** is the
+  board-wide figure.
+- If the Sentinel service is not running, latency and FPS are still reported; the telemetry lines
+  say why they are missing.
+
+Only the five summary values go into the JSON report. Each JSON report stores:
 
 ```text
 benchmark.type

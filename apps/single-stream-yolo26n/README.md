@@ -51,7 +51,7 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz
 cd ../..
 ```
 

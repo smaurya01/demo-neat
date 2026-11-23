@@ -120,7 +120,7 @@ yolo26s   bf16           47.64   64.26    -0.07    4980   18.4 ms (DevKit MLA)
 yolo26s   int8           45.05   61.82    -2.67    4980   11.1 ms (DevKit MLA)
 ```
 
-These are the numbers measured on Neat 0.4.0 (see [`../ACCURACY.md`](../ACCURACY.md#what-was-compared)).
+These are the numbers measured on an earlier Neat release (see [`../ACCURACY.md`](../ACCURACY.md#what-was-compared)).
 `score` reads every file in `results/`, or only the files you name; a `--limit` run is compared
 with the FP32 run of the same size. What these numbers mean:
 [`../ACCURACY.md`](../ACCURACY.md#results).

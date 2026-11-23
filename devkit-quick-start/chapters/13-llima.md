@@ -86,12 +86,11 @@ llima list
 A board with a few models pulled looks like:
 
 ```text
-gemma-4-E2B-it-GPTQ-a16w4
-LFM2-VL-1.6B-a16w4
-Llama-3.2-3B-Instruct-a16w4
+LFM2.5-VL-450M-Autoround-a16w4
 Qwen3-4B-Instruct-2507-GPTQ-a16w4
+Qwen3-VL-2B-Instruct-GPTQ-a16w4
 Qwen3-VL-4B-Instruct-Autoround-a16w4
-Qwen3-VL-4B-Instruct-GPTQ-a16w4
+Qwen3.5-2B-Autoround-a16w4
 whisper-small-a16w8
 ```
 

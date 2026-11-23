@@ -121,9 +121,9 @@ folder **on the DevKit**:
 ```bash
 mkdir -p assets/models
 cd assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get resnet_50   # I-easy/04
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8s    # I-easy/05, I-easy/06
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_v8n    # II-medium/01, II-medium/07
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get resnet_50   # I-easy/04
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8s    # I-easy/05, I-easy/06
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_v8n    # II-medium/01, II-medium/07
 cd ../..
 ```
 

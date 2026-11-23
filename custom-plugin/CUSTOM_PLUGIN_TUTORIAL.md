@@ -115,7 +115,7 @@ custom-plugin/
 
 | Item | Used for | Check it with |
 |---|---|---|
-| **Neat Development Environment (SDK)** v2.1.3 or newer | Cross-compiling the plugin and the apps | `echo $SDK_IMAGE_TAG`, `echo $SYSROOT` (should print `/opt/toolchain/aarch64/modalix`) |
+| **Neat Development Environment (SDK)** v3.0.0.2 or newer | Cross-compiling the plugin and the apps | `echo $SDK_IMAGE_TAG`, `echo $SYSROOT` (should print `/opt/toolchain/aarch64/modalix`) |
 | **Modalix DevKit** reachable over SSH | Running everything | `ssh sima@<devkit-ip> uname -m` prints `aarch64` |
 | **Neat Insight** (bundled in the SDK) | The RTSP test source and the video viewer | `insight-admin status`, `neat --json` |
 | **pyneat** on the DevKit (Python example only) | Python bindings | `source ~/pyneat/bin/activate && python3 -c "import pyneat"` |
@@ -340,7 +340,7 @@ plugins.
 
 The SDK shell already sets `CC`, `CFLAGS`, `LDFLAGS`, `SYSROOT` and the `PKG_CONFIG_*` variables
 to point at the Modalix sysroot. A plain CMake build therefore **cross-compiles for the DevKit**
-with no toolchain file. The sysroot includes GStreamer 1.22 headers and libraries
+with no toolchain file. The sysroot includes GStreamer 1.26 headers and libraries
 (`gstreamer-1.0`, `gstreamer-base-1.0`, `gstreamer-video-1.0`).
 
 **In the SDK:**
@@ -687,7 +687,7 @@ with `sima-cli`:
 
 ```bash
 cd /path/to/demo-neat/custom-plugin
-export MODELZOO_VERSION="2.1.3"
+export MODELZOO_VERSION="3.0.0"
 export SIMA_CLI_CHECK_FOR_UPDATE=0   # otherwise a pending sima-cli update prompt can abort the download
 mkdir -p models && cd models
 sima-cli download "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz"
@@ -714,7 +714,7 @@ source scripts/env.sh
 ```
 
 Extra options: `--min-score 0.35` (detection threshold), `--metadata-port-base 9100`,
-`--no-frame-timestamps` (see the README's note on 60 fps sources) and `--labels` (defaults to
+`--no-frame-timestamps` (see the README's note on frame timestamps) and `--labels` (defaults to
 `coco_labels.txt` in the app's own folder, `apps/build/`). The options from Example 1 apply too,
 with these differences: there is no `--custom`, `--mode` defaults to `none` and `--color` to
 `0xFF0000`.

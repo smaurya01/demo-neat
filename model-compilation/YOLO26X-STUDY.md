@@ -1,14 +1,14 @@
 # yolo26x INT8 on Modalix: compile and runtime study
 
 Ultralytics **yolo26x** (the largest YOLO26 detector), compiled to INT8 for Modalix and measured
-on a DevKit with Neat 0.5.0. Two kinds of runtime numbers, side by side:
+on a DevKit. Two kinds of runtime numbers, side by side:
 
 1. **Image in → image out**, step by step, on 60 real 1280×720 frames: `compile/profile_model.py`.
 2. **`model-benchmark`**, the Neat Apps benchmark (`pyneat.Model.benchmark()`, synthetic input),
    run unmodified from `apps/examples/benchmarking/model-benchmark`.
 
-Board: DevKit (Modalix), Neat 0.5.0, SDK 2.1.3.1 (DevKit software 2.1.3). Compiler: Model Compiler
-2.1.3, on a 24-core x86 host with 78 GB of RAM.
+Board: DevKit (Modalix), measured with an earlier Neat SDK and Model Compiler release; not
+re-measured on Neat 0.6.2 / SDK 3.0.0.2. Compiler host: a 24-core x86 machine with 78 GB of RAM.
 
 ## Summary
 
@@ -48,7 +48,7 @@ The two methods agree:
 **Compile:**
 - Command: `quantize_compile.py`, INT8, `mse` calibration, `sima` requant, 20 real COCO images,
   input `1,3,640,640`, Modalix.
-- Where: an x86 host, in a Docker container with Model Compiler 2.1.3.
+- Where: an x86 host, in a Docker container with the Model Compiler.
 
 | phase | time |
 |---|---|
@@ -162,7 +162,7 @@ counter includes per-call overhead that overlaps when calls are pipelined).
   MLA. yolo26x costs about 2.5× the MLA time of yolo26m.
 - **SiMa Model Zoo `yolo26x-det-bf16-mla_tess-b1`:** 39.77 ms / 27.98 fps in the Apps'
   [`BENCHMARK_RESULTS.md`](https://github.com/sima-neat/apps/blob/main/examples/benchmarking/model-benchmark/BENCHMARK_RESULTS.md).
-  That is bf16, on Neat 0.4.0, so it is not a like-for-like comparison. INT8 here is
+  That is bf16, on an earlier Neat release, so it is not a like-for-like comparison. INT8 here is
   about 2.6× the throughput; the accuracy trade-off is not measured.
 
 ## 6. Detections and accuracy
@@ -186,7 +186,7 @@ three-attention-block surgery spec from section 1.
 
 The study ran outside this repo's normal flow, because `yolo26x` is not in `models.yaml`:
 
-- **Compile:** Model Compiler 2.1.3 in Docker, with `quantize_compile.py`
+- **Compile:** the Model Compiler in Docker, with `quantize_compile.py`
   called directly on `yolo26x.compile_ready.onnx` (the surgery spec in section 1) and the 20
   images in `assets/calibration/`.
 - **Profile:** the repo's `profile_model.py` and `common.py`, with a one-model `models.yaml` holding

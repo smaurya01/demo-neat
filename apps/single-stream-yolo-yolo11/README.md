@@ -53,7 +53,7 @@ YOLO11 is published in the SiMa model zoo, so just download it:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11n
 cd ../..
 ```
 

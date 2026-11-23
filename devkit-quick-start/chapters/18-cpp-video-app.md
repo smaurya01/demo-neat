@@ -27,7 +27,7 @@ Insight draw each box on the frame it came from.
 
 | Requirement | Chapter |
 |---|---|
-| Board on the network, software 3.0.0 | [6](06-connect-to-router.md) · [9](09-check-and-update-image.md) |
+| Board on the network, software 3.0.1 | [6](06-connect-to-router.md) · [9](09-check-and-update-image.md) |
 | NVMe mounted at `/media/nvme` | [8](08-mount-nvme.md) |
 | Neat SDK installed and paired | [15](15-install-neat-sdk.md) |
 | `dk status` names your DevKit | [16](16-devkit-tool-dk.md) |

@@ -12,7 +12,7 @@ dk compile/test_box_decode.py --model-id yolov8s
 ```
 
 It takes the same `--precision` flag as `compiler.py`. It skips batched archives (see
-[`MULTI-BATCH.md`](MULTI-BATCH.md#8-what-neat-050-can-do-with-a-batched-archive)).
+[`MULTI-BATCH.md`](MULTI-BATCH.md#8-what-neat-can-do-with-a-batched-archive)).
 
 ## The decode type per model
 
@@ -21,7 +21,7 @@ It takes the same `--precision` flag as `compiler.py`. It skips batched archives
 
 | Archive | `decode_type` | `decode_type_option` | Head the surgery exposes |
 | --- | --- | --- | --- |
-| `yolov8s`, `yolov8l`, `yolo11n`, `yolo11s`, `yolov8s-worldv2` | `YoloV8` | `GroupedByRoleLogit` | raw 64-channel DFL bbox heads + class logits |
+| `yolov8s`, `yolo11n`, `yolo11s`, `yolov8s-worldv2` | `YoloV8` | `GroupedByRoleLogit` | raw 64-channel DFL bbox heads + class logits |
 | `yolo11s-seg` | `YoloV8Seg` | `GroupedByRoleLogit` | the same, plus mask coefficients and protos |
 | `yolo26n`, `yolo26s`, `yolo26m` | `YoloV26` | `Auto` | one-to-one heads, 4 distance channels |
 | `yolo26s-pose` | `YoloV26Pose` | `Auto` | one-to-one heads plus keypoints |
@@ -32,8 +32,8 @@ any other value), and the preprocess preset `NormalizePreset.None` for `yolox_s`
 0–255 pixels (the Ultralytics models use `COCO_YOLO`).
 
 Why the family matters: YOLOv8 and YOLO11 heads are **one-to-many** (several anchors fire per
-object) and need NMS, which `YoloV8` runs on the board. YOLO26 heads are **one-to-one**, and since
-Neat 0.5.0 `YoloV26` skips NMS by design. A YOLO11 decoded as `YoloV26` therefore returns a stack of
+object) and need NMS, which `YoloV8` runs on the board. YOLO26 heads are **one-to-one**, and
+`YoloV26` skips NMS by design. A YOLO11 decoded as `YoloV26` therefore returns a stack of
 near-identical boxes per object. `GroupedByRoleLogit` tells `YoloV8` the class heads are logits (the
 surgery cuts before Ultralytics' sigmoid; keeping logits through INT8 preserves recall), so the
 decoder applies the sigmoid itself. Without it, scores come out above 1.

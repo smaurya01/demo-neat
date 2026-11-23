@@ -80,7 +80,7 @@ YOLO11 is published in the SiMa model zoo, so just download it:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli modelzoo -v 2.1.3 --boardtype modalix get yolo_11n
+sima-cli modelzoo -v 3.0.0 --boardtype modalix get yolo_11n
 cd ../..
 ```
 
@@ -289,8 +289,7 @@ the newest frame instead (boxes trail fast-moving objects by the pipeline latenc
 
 An app whose encoded video keeps the source timestamp should send it: `sample.pts_ns / 1'000'000`.
 The custom-plugin `detect_to_insight` example and quick-start chapter 18 do; their boxes stay
-frame-locked on a 30 fps source. (With Insight 0.0.8, the browser fails to match a 60 fps stream this way; see the
-custom-plugin README.)
+frame-locked.
 
 </details>
 
@@ -307,7 +306,7 @@ The zoo `yolo_11n` archive exposes raw 64-channel DFL heads and decodes with
 emits class **logits** instead of probabilities: keep `BoxDecodeType.YoloV8` and set
 `decode_type_option = BoxDecodeTypeOption.GroupedByRoleLogit` in `make_model()`. Without the option
 the logits are read as probabilities, so scores exceed 1 and the threshold is meaningless. Never
-decode a YOLO11 with `YoloV26`: since Neat 0.5.0 that decoder skips NMS, and you get a stack of
+decode a YOLO11 with `YoloV26`: that decoder skips NMS, and you get a stack of
 duplicate boxes per object.
 
 </details>

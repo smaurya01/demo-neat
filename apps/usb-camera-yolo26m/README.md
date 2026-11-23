@@ -20,7 +20,6 @@
 - [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile)
   - [The live line](#the-live-line)
   - [The exit summary](#the-exit-summary)
-  - [The bottleneck line](#the-bottleneck-line)
   - [Tuning](#tuning)
 - [Appendix: Verifying It Works](#appendix-verifying-it-works)
 - [Appendix: Known Limitations](#appendix-known-limitations)
@@ -34,8 +33,9 @@ This demo runs a USB (UVC) webcam through the SiMa YOLO26m detection model, draw
 publishes one annotated H.264/RTP UDP stream. It is the only app in this repo whose input is a
 **camera on the board**, not an RTSP stream.
 
-It sustains **1920x1080 @ 30 fps** — the camera's full rate. The MLA is not the bottleneck; the
-camera is.
+With the default bf16 model it runs at **about 28 fps** at 1920x1080: bf16 inference (about 30 ms
+per frame) is just over the camera's 33 ms frame period. With the INT8 model it sustains the
+camera's full **30 fps**.
 
 ## About Project
 
@@ -44,7 +44,8 @@ camera is.
 - Input: USB/UVC camera, MJPEG 1920x1080@30 (`/dev/video96` in the shipped config; the node number varies)
 - Output: one UDP/RTP H.264 stream with labeled boxes; optional detection JSON to Neat Insight
 - Runtime config: `./config/default.conf`
-- Validated on: Modalix DevKit, Logitech Brio 100 (`046d:094c`): 30.0 fps C++, 28.4 fps Python.
+- Validated on: Modalix DevKit, Logitech BRIO (`046d:085e`): bf16 27.9 fps C++ and 23.8 fps Python;
+  INT8 30.1 fps C++.
 
 Pipeline:
 
@@ -90,7 +91,7 @@ Run this in the SDK shell:
 ```bash
 mkdir -p ./assets/models
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz
 cd ../..
 ```
 
@@ -105,7 +106,7 @@ Optionally also fetch the INT8 build — faster on the MLA, but its confidence s
 
 ```bash
 cd ./assets/models
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz
+sima-cli download https://docs.sima.ai/pkg_downloads/SDK3.0.0/models/modalix/yolo26-detection/yolo26m-det-int8-b1.tar.gz
 cd ../..
 ```
 
@@ -167,7 +168,7 @@ are NMS-free).
 
 `bitrate_kbps`: H.264 output encoder bitrate in kbps.
 
-`overlay`: Draw detection boxes onto the streamed video. Costs ~1.5–4 ms/frame on the CPU. Set `false`
+`overlay`: Draw detection boxes onto the streamed video. Costs ~5 ms/frame on the CPU (C++). Set `false`
 if you render overlays downstream instead.
 
 `metadata_host`: Optional host running Neat Insight. The app then sends each frame's detections as
@@ -183,7 +184,7 @@ port `9100 + N` (channel N), so with `udp_port=9000` keep `metadata_port=9100`.
 runtimes without `neatcamerabridge`. See [Appendix: Known Limitations](#appendix-known-limitations).
 
 `camera_bridge`: Append the `neatcamerabridge` element. Requires a runtime that ships it (check with
-`strings /usr/lib/libsima_neat.so.5 | grep -c neatcamerabridge` on the DevKit; `0` means it does not).
+`strings /usr/lib/libsima_neat.so.7 | grep -c neatcamerabridge` on the DevKit; `0` means it does not).
 
 `frames`: Number of frames to process. Use `0` to run until interrupted.
 
@@ -247,23 +248,21 @@ dk ./main.py ./config/default.conf
 
 Bounded smoke test: set `frames=200` in the config, then run the same command.
 
-Expected output — **identical in C++ and Python**:
+Expected output (C++, default bf16 model, `frames=900`). Python prints the same lines; its
+`overlay` stage costs more, so it runs at about 24 fps:
 
 ```text
-frame=776 fps=30.1 boxes=1 ms(capture=2.3 infer=29.4 overlay=1.5 encode=0.1 total=33.3) person(0.93)
-frame=806 fps=30.1 boxes=2 ms(capture=2.3 infer=29.4 overlay=1.5 encode=0.1 total=33.3) person(0.93) laptop(0.31)
-^C
+frame=889 fps=28.2 boxes=1 ms(capture=0.0 infer=30.1 overlay=5.1 encode=0.1 total=35.4) laptop(0.35)
+...
 ── time profile ──────────────────────────────
 stage        mean ms    p95 ms
-capture         2.31      3.10
-infer          29.41     31.02
-overlay         1.52      2.01
-encode          0.09      0.14
-total          33.33     35.20
+capture         0.04      0.04
+infer          34.06     30.61
+overlay         5.10      5.35
+encode          0.16      0.13
+total          39.42     36.38
 
-frames 6207   elapsed 206.2s   steady-state 30.10 fps
-bottleneck: THE CAMERA. Inference takes 29.4 ms, so the MLA could sustain ~34.0 fps;
-you are getting 30.1. A smaller/faster model will not help.
+frames 900   elapsed 32.1s   resolution 1920x1080   steady-state 27.97 fps
 ```
 
 See [Appendix: Reading The Time Profile](#appendix-reading-the-time-profile).
@@ -336,19 +335,18 @@ Both packages can sit in `./assets/models/`; the `model_path` line switches betw
 | --- | --- | --- |
 | Package | `yolo26m-det-bf16-mla_tess-b1` | `yolo26m-det-int8-b1` |
 | Size | 66 MB | 35 MB |
-| Inference | 30.3 ms | **15.9 ms** (~2x faster) |
-| End-to-end | ~30 fps (camera-limited) | ~30 fps (camera-limited) |
+| Inference | ~30 ms | **~11.5 ms** (~2.6x faster) |
+| End-to-end (C++) | ~28 fps (inference-limited) | **30 fps** (camera-limited) |
 | Boxes / classes | correct | correct — identical to bf16 |
 | Confidence scores | **0.0 – 1.0** | **capped at 0.50** |
 | Stages | `CVU preproc -> MLA` | `CVU quanttess -> MLA -> CVU detess+dequant` |
 
-**Use bf16 unless you have a specific reason not to.** It is the only one with usable confidence
-scores, and it is *not* the slower choice in practice: this pipeline is **camera-limited at 30 fps**,
-and bf16 already infers in 30 ms (~33 fps of headroom). INT8's 2x faster inference buys essentially
-**zero end-to-end fps** — it just leaves the MLA idle longer.
+**Use bf16 when you need usable confidence scores.** It is the only one with them. Its inference
+(about 30 ms) is just over the camera's 33 ms frame period once overlay is added, so it delivers
+about 28 fps instead of 30.
 
-**Use INT8** when you want that MLA headroom for something else — a second model, more camera
-streams, a faster sensor — and can live with the score limitation.
+**Use INT8 when you need the camera's full 30 fps**, or MLA headroom for something else — a second
+model, more camera streams — and can live with the score limitation.
 
 ### The INT8 score ceiling
 
@@ -386,12 +384,12 @@ Both the C++ and the Python version print the same profile. `profile_interval` c
 ### The live line
 
 ```text
-frame=776 fps=30.1 boxes=2 ms(capture=2.3 infer=29.4 overlay=1.5 encode=0.1 total=33.3) person(0.93)
+frame=889 fps=28.2 boxes=1 ms(capture=0.0 infer=30.1 overlay=5.1 encode=0.1 total=35.4) laptop(0.35)
 ```
 
 | Stage | What it measures | Runs on |
 | --- | --- | --- |
-| `capture` | Blocking wait for the next camera frame. **High here = the camera is pacing you** (which is the healthy state — see below). | — |
+| `capture` | Blocking wait for the next camera frame. **High here = the camera is pacing the pipeline.** | — |
 | `infer` | CVU letterbox/colour-convert + MLA + EV74 box decode. The only stage on the accelerator. | CVU / MLA / EV74 |
 | `overlay` | NV12 copy + drawing the boxes. | CPU |
 | `encode` | Pushing the annotated frame into the H.264 encoder graph. Async — this is the *push*, not the encode itself. | HW encoder |
@@ -403,41 +401,34 @@ shows up on the next line instead of being averaged away.
 
 ### The exit summary
 
+With the INT8 model (C++, `frames=900`):
+
 ```text
 ── time profile ──────────────────────────────
 stage        mean ms    p95 ms
-capture         2.31      3.10
-infer          29.41     31.02
-overlay         1.52      2.01
-encode          0.09      0.14
-total          33.33     35.20
+capture        16.21     19.60
+infer          13.57     11.54
+overlay         5.04      5.30
+encode          0.16      0.12
+total          35.04     36.19
 
-frames 6207   elapsed 206.2s   steady-state 30.10 fps
-bottleneck: THE CAMERA. Inference takes 29.4 ms, so the MLA could sustain ~34.0 fps;
-you are getting 30.1. A smaller/faster model will not help.
+frames 900   elapsed 29.9s   resolution 1920x1080   steady-state 30.10 fps
 ```
+
+The mean includes the first frames, which are slower while the pipeline warms up; that is why a
+mean can sit above its p95.
 
 **p95 is the number a mean will never tell you.** A stage that is fine on average but occasionally
 stalls shows up here and nowhere else. (p95 is computed over the most recent 20 000 frames — about
 11 minutes at 30 fps — so memory stays flat on an open-ended run.)
 
-### The bottleneck line
-
-`infer` is the only stage on the accelerator, so `1000 / infer_ms` is the MLA's ceiling. The app
-compares that against what you are actually delivering and tells you which one is the constraint:
-
-- **`bottleneck: THE CAMERA`** — the MLA has headroom and the sensor is pacing the pipeline. This is
-  the expected state here: inference is ~29 ms while the camera delivers a frame every 33 ms.
-  **A smaller or faster model will not gain you a single frame.** (This is exactly why the INT8
-  model — 2× faster inference — buys ~0 end-to-end fps. See the bf16-vs-INT8 appendix.)
-- **`bottleneck: INFERENCE`** — the MLA is the constraint. Now a smaller model *would* help.
-
 ### Tuning
 
-- `overlay=false` frees ~1.5–4 ms/frame of CPU. Point `metadata_host` at Neat Insight and let it render
+- `overlay=false` frees ~5 ms/frame of CPU in C++ and ~9–10 ms in Python (with 2–4 labeled boxes). Point `metadata_host` at Neat Insight and let it render
   the boxes instead.
 - `profile_interval=0` silences the live lines for a clean run; the exit summary still prints.
-- Python measures within ~2 fps of C++ (28.4 vs 30.0 fps) and returns identical boxes.
+- Python returns the same boxes as C++ but runs slower with the overlay on (23.8 vs 27.9 fps with
+  bf16): it draws the labels in Python. With `overlay=false` it matches C++ (28.5 fps).
 
 </details>
 
@@ -481,7 +472,7 @@ is just hard (dim, or no COCO objects in view). Run this before debugging weak d
 - **`pipeline_mode=graph` returns zero detections** on runtimes without `neatcamerabridge`. The
   zero-copy branch topology builds and runs at full speed, but the CVU reads system-memory buffers
   as black frames. Check your runtime with
-  `strings /usr/lib/libsima_neat.so.5 | grep -c neatcamerabridge` (`0` means it is missing). Keep
+  `strings /usr/lib/libsima_neat.so.7 | grep -c neatcamerabridge` (`0` means it is missing). Keep
   `pipeline_mode=push`.
 - **The stream cannot be viewed on the DevKit itself.** No `avdec_h264`; `openh264dec` fails on
   RTP-depayed H.264 (including a synthetic control). View it in Insight from a desktop browser.

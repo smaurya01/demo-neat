@@ -66,13 +66,14 @@ they differ from Ultralytics' published numbers: [`ACCURACY.md`](ACCURACY.md).
 | `precision:` in `models.yaml` | Models |
 | --- | --- |
 | **`bf16`** | `convnext_tiny`, `yolo26m`, `yolov8s-worldv2` |
-| **`int8`** | `resnet50`, `densenet169`, `efficientnet_v2_s`, `yolov8s`, `yolov8l`, `yolo11n`, `yolo11s`, `yolo26n`, `yolo26s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` |
+| **`int8`** | `resnet50`, `densenet169`, `efficientnet_v2_s`, `yolov8s`, `yolo11n`, `yolo11s`, `yolo26n`, `yolo26s`, `yolo11s-seg`, `yolo26s-pose`, `yolox_s` |
 
 ### Why these three are bf16
 
-- **`convnext_tiny`**: with Model Compiler 2.1.3 its INT8 build compiles cleanly (1 `.elf`, 0 `.so`)
-  but loses most of its accuracy. On `000000000885.jpg` it scores racket 0.20, against 0.73 for the
-  FP32 ONNX; the bf16 build scores 0.75. The other three classifiers are fine in INT8.
+- **`convnext_tiny`**: bf16 scores racket 0.75 on `000000000885.jpg`, against 0.73 for the FP32
+  ONNX. With Model Compiler 3.0.0 the INT8 build is close too (racket 0.78), so
+  `--precision int8` is a reasonable choice; with earlier compiler releases INT8 lost most of the
+  accuracy (racket 0.20). The other three classifiers are fine in INT8.
 - **`yolov8s-worldv2`**: INT8 **fails the compile**. The graph places as a single MLA segment in both
   precisions, but INT8 fails the compiler's sim/bit-accuracy check: the rewritten attention exposes
   wide-range text-similarity score maps as intermediate INT8 tensors (saturation warnings on the attn

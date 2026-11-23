@@ -149,7 +149,8 @@ class Profile:
             s.reset_window()
 
 
-def print_profile_summary(prof: Profile, frames: int, elapsed_s: float) -> None:
+def print_profile_summary(prof: Profile, frames: int, elapsed_s: float, width: int,
+                          height: int) -> None:
     if frames < 2 or elapsed_s <= 0:
         return
 
@@ -166,25 +167,8 @@ def print_profile_summary(prof: Profile, frames: int, elapsed_s: float) -> None:
     ):
         print(f"{name:<10}{stat.mean():>10.2f}{stat.p95():>10.2f}")
 
-    print(f"\nframes {frames}   elapsed {elapsed_s:.1f}s   steady-state {fps:.2f} fps")
-
-    # Say plainly what is holding the pipeline back. `infer` is the only stage on the
-    # accelerator, so its mean is the MLA's ceiling. If we deliver well under that,
-    # something upstream (the camera) is the constraint -- not the SoC.
-    infer_ms = prof.infer.mean()
-    if infer_ms > 0:
-        ceiling = 1000.0 / infer_ms
-        if ceiling > fps * 1.05:
-            print(
-                f"bottleneck: THE CAMERA. Inference takes {infer_ms:.1f} ms, so the MLA "
-                f"could sustain ~{ceiling:.1f} fps; you are getting {fps:.1f}. "
-                f"A smaller/faster model will not help."
-            )
-        else:
-            print(
-                f"bottleneck: INFERENCE. The MLA tops out near {ceiling:.1f} fps and you "
-                f"are delivering {fps:.1f}. A smaller model would raise this."
-            )
+    print(f"\nframes {frames}   elapsed {elapsed_s:.1f}s   resolution {width}x{height}   "
+          f"steady-state {fps:.2f} fps")
 
 
 @dataclass
@@ -381,9 +365,10 @@ def make_nv12_input_options(cfg: Config) -> pyneat.InputOptions:
         f"video/x-raw,format=NV12,width={cfg.width},height={cfg.height}"
         f",framerate={cfg.fps}/1"
     )
-    # Was `use_simaai_pool = False`, deprecated in NEAT 0.4.0. Input.h documents the
-    # exact mapping: False -> InputMemoryPolicy.SystemMemory. Behaviour-identical.
-    opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
+    # Auto, not SystemMemory: the frames are CPU copies, and Neat 0.6.0's on-device
+    # preprocess rejects a system-memory input (neatkernelrunner.invalid_binding).
+    # Auto lets Neat move each frame into device memory before the model.
+    opt.memory_policy = pyneat.InputMemoryPolicy.Auto
     return opt
 
 
@@ -853,7 +838,8 @@ def run_push(cfg: Config) -> int:
                 last_log = now
                 last_log_frames = processed
 
-        print_profile_summary(prof, processed, time.monotonic() - steady_start)
+        print_profile_summary(prof, processed, time.monotonic() - steady_start, cfg.width,
+                              cfg.height)
     finally:
         close_runs(runs)
     return 130 if _stop else 0
@@ -946,7 +932,8 @@ def run_graph(cfg: Config) -> int:
                 last_log = now
                 last_log_frames = processed
 
-        print_profile_summary(prof, processed, time.monotonic() - steady_start)
+        print_profile_summary(prof, processed, time.monotonic() - steady_start, cfg.width,
+                              cfg.height)
     finally:
         close_runs(runs)
     return 130 if _stop else 0

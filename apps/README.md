@@ -4,7 +4,7 @@ Runnable reference applications for the Modalix DevKit, built on the SiMa Neat L
 is self-contained: its own `main.cpp` and/or `main.py`, `config/default.conf`, `assets/models/`,
 and a README with the exact build and run commands.
 
-All apps are tested on **Neat 0.5.0 / SDK 2.1.3.1** (DevKit software 2.1.3).
+All apps are tested on **Neat 0.6.2 / SDK 3.0.0.2** (DevKit software 3.0.1).
 
 For the API these apps use (`Graph`/`Run`, nodes, node groups, `Model` options, enums, and the
 C++ ↔ Python naming map), see **[NEAT-API-REFERENCE.md](NEAT-API-REFERENCE.md)**.
@@ -87,11 +87,12 @@ passed differ between apps. The shape is always the same:
 ## Test source
 
 Unless stated otherwise, the figures in these READMEs use the same input: **1280×720 H.264 at
-59.94 fps (60000/1001)**, served over RTSP.
+60 fps**, served over RTSP from Insight. The Insight catalog clip
+`catalog/sj_almaden_street/sj_almaden_street_720p60_60fps_h264.mp4` is one; this
+[1280x720 @ 59.94 fps test video](https://drive.google.com/file/d/10Bmi_a_6zA_dyRV-GGPuYkqwj3Llbl7O/view?usp=sharing)
+works the same way.
 
-> **Test video:** [1280x720 @ 59.94 fps](https://drive.google.com/file/d/10Bmi_a_6zA_dyRV-GGPuYkqwj3Llbl7O/view?usp=sharing)
-
-Upload it to Insight, serve it as an RTSP source, and put that URL and the Insight host in the
+Serve the clip as an RTSP source from Insight, and put that URL and the Insight host in the
 app's `config/default.conf`. **Check the source's frame rate first** (Insight's `/api/media-info`,
 see [`appendix.md`](../appendix.md#13-confirm-the-source-before-blaming-the-app)), because it is
 the hard ceiling on any fps you can claim.
@@ -115,14 +116,14 @@ push/pull marshalling, the NumPy→Tensor copy for the video sender, and overlay
 GIL.
 
 That overhead is invisible when there is headroom and decisive when there is not. Measured on
-Neat 0.5.0 / SDK 2.1.3.1 against the 59.94 fps test source:
+Neat 0.6.0 / SDK 3.0.0 against a 1280×720 60 fps source (steady-state fps):
 
 | app | C++ | Python | note |
 | --- | ---: | ---: | --- |
-| `single-stream-yolo-yolo11` | **59.94 fps** | 59.94 fps | both at the source rate |
-| `single-stream-yolo-yolov8m` | **59.94 fps** | 53–57 fps | heaviest model; C++ at the source rate, Python still runs short of budget |
-| `quad-stream-quad-model` | **~240 fps** agg | ~75–88 fps agg | four models on one MLA; Python is overlay-bound |
+| `single-stream-yolo-yolo11` | **60.2 fps** | 59.0 fps | both at the source rate |
+| `single-stream-yolo-yolov8m` | **59.9 fps** | 55.8 fps | heaviest model; C++ at the source rate, Python runs short of budget |
+| `quad-stream-quad-model` | **240.0 fps** agg | 86.2 fps agg | four models on one MLA; Python is overlay-bound |
 
-The frame budget at 59.94 fps is 16.7 ms. Light models leave enough slack to absorb Python's
-overhead. `yolov8m` spends 13.2 ms in inference alone, so Python's extra cost pushes the total
-well past it. Use Python to read and modify, C++ to ship.
+The frame budget at 60 fps is 16.7 ms. Light models leave enough slack to absorb Python's
+overhead. `yolov8m` spends about 9 ms in inference in C++ and 10.4 ms in Python, so Python's extra
+cost pushes the total past the budget. Use Python to read and modify, C++ to ship.

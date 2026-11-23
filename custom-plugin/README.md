@@ -8,8 +8,8 @@ called **`framemarker`**, load it on a Modalix DevKit, put it inside a real Neat
 If you have never written a GStreamer plugin before, start here. Every step is explained, and
 every command is one you can copy.
 
-> Requires: a Modalix DevKit on board software 2.1.3 (eLxr), Neat Library 0.5.0 and Neat SDK 2.1.3.1
-> (GStreamer 1.22).
+> Requires: a Modalix DevKit on board software 3.0.1 (eLxr), Neat Library 0.6.2 and Neat SDK 3.0.0.2
+> (GStreamer 1.26).
 
 ---
 
@@ -142,7 +142,7 @@ custom-plugin/
 
 | You need | Used for | Quick check |
 |---|---|---|
-| **Neat SDK** (Neat Development Environment) v2.1.3+ | Building the plugin and the apps | `echo $SDK_IMAGE_TAG` and `echo $SYSROOT` → `/opt/toolchain/aarch64/modalix` |
+| **Neat SDK** (Neat Development Environment) v3.0.0.2+ | Building the plugin and the apps | `echo $SDK_IMAGE_TAG` and `echo $SYSROOT` → `/opt/toolchain/aarch64/modalix` |
 | **Modalix DevKit** reachable over SSH | Running everything | `ssh sima@<devkit-ip> uname -m` → `aarch64` |
 | **Neat Insight** (bundled with the SDK) | The test video source (RTSP) and the viewer | `insight-admin status`; open `https://<sdk-host-ip>:9900` |
 | **pyneat** on the DevKit (only for the Python example) | Python bindings | `source ~/pyneat/bin/activate && python3 -c "import pyneat"` |
@@ -304,7 +304,7 @@ python3 apps/stream_to_insight/main.py \
 Download the model once:
 
 ```bash
-export MODELZOO_VERSION="2.1.3"
+export MODELZOO_VERSION="3.0.0"
 export SIMA_CLI_CHECK_FOR_UPDATE=0   # otherwise a pending sima-cli update prompt can abort the download
 mkdir -p models && (cd models && sima-cli download \
   "https://docs.sima.ai/pkg_downloads/SDK${MODELZOO_VERSION}/models/modalix/yolo26-detection/yolo26m-det-bf16-mla_tess-b1.tar.gz")
@@ -326,9 +326,9 @@ Expected console output (numbers vary):
 ```
 source=rtsp://<sdk-host-ip>:8554/src1 1280x720@30 model=models/yolo26m-det-bf16-mla_tess-b1.tar.gz insight=<sdk-host-ip> video=9000 metadata=9100 channel=0
 Press Ctrl-C to stop.
-frames=82 fps=16.4 avg_boxes=10.5
-frames=233 fps=30.1 avg_boxes=11.2
-frames=383 fps=30.0 avg_boxes=9.5
+frames=182 fps=36.2 avg_boxes=10.3
+frames=328 fps=29.0 avg_boxes=8.7
+frames=475 fps=29.2 avg_boxes=8.6
 ```
 
 `--labels` can be left out: the app reads `coco_labels.txt` from its own folder (`apps/build/`).
@@ -340,11 +340,9 @@ The viewer shows colour video with a **red border and bar** (the plugin) and **l
 (YOLO26). Try `--mode grayscale`: the picture turns gray but the boxes don't change, because the
 model receives the clean frames on its own branch.
 
-> **60 fps sources.** The app stamps each metadata message with its frame's timestamp, so the boxes
-> stay locked to the frame they belong to. That works on a 30 fps stream. With Insight 0.0.8 the
-> viewer draws no boxes on a **60 fps** stream. Use a 30 fps source, or add
-> **`--no-frame-timestamps`**: the viewer then pairs each message with the newest frame, and boxes
-> trail fast-moving objects slightly.
+> **Frame timestamps.** The app stamps each metadata message with its frame's timestamp, so the
+> boxes stay locked to the frame they belong to. With **`--no-frame-timestamps`** the viewer pairs
+> each message with the newest frame instead, and boxes trail fast-moving objects slightly.
 
 ### I. Watch it in Insight (any browser)
 

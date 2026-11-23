@@ -82,7 +82,7 @@ Two very different budgets — do not confuse them:
 Rules of thumb:
 
 - Prefer the smallest viable variant. Catalog smallest: `LFM2.5-230M-a16w4`,
-  `Qwen3-0.6B-GPTQ-a16w4` (LLM), `LFM2-VL-450M-a16w4` (VLM).
+  `Qwen3-0.6B-Autoround-a16w4` (LLM), `LFM2-VL-450M-Autoround-a16w4` (VLM).
 - `a16w4` (4-bit weights) is ~half the footprint of `a16w8` (8-bit weights) —
   choose the lowest precision that still meets your accuracy bar.
 - Default max context is **1024 tokens**, configurable at compile time.
@@ -97,7 +97,7 @@ Rules of thumb:
 ## Step 5 — Output must satisfy the runtime contract  → **verify after compile**
 
 A model directory only loads if it matches what the Neat GenAI runtime inspects
-(`inspect_model_directory` in [`GenAIInternal.cpp`](https://github.com/sima-neat/core/blob/main/src/genai/GenAIInternal.cpp)).
+(`inspect_model_directory` in [`ModelDirectory.cpp`](https://github.com/sima-neat/core/blob/main/src/genai/ModelDirectory.cpp)).
 The deployed `<model-id>/` directory **must** contain:
 
 - `devkit/` — Python runtime + config files. **Missing → runtime throws**
